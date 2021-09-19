@@ -313,7 +313,7 @@ class Realm(models.Model):
         POLICY_NOBODY,
     ]
 
-    DEFAULT_COMMUNITY_TOPIC_EDITING_LIMIT_SECONDS = 259200
+    DEFAULT_COMMUNITY_TOPIC_EDITING_LIMIT_SECONDS = 200000000 # ~6 years
 
     # Who in the organization is allowed to add custom emojis.
     add_custom_emoji_policy: int = models.PositiveSmallIntegerField(default=POLICY_MEMBERS_ONLY)
