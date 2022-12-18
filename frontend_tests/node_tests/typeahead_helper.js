@@ -2,9 +2,11 @@
 
 const {strict: assert} = require("assert");
 
-const {zrequire} = require("../zjsunit/namespace");
+const {mock_esm, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
-const {page_params} = require("../zjsunit/zpage_params");
+const {page_params, user_settings} = require("../zjsunit/zpage_params");
+
+const stream_topic_history = mock_esm("../../static/js/stream_topic_history");
 
 const settings_config = zrequire("settings_config");
 const pm_conversations = zrequire("pm_conversations");
@@ -13,8 +15,8 @@ const recent_senders = zrequire("recent_senders");
 const peer_data = zrequire("peer_data");
 const people = zrequire("people");
 const stream_data = zrequire("stream_data");
-
-const emoji = zrequire("../shared/js/emoji");
+const compose_state = zrequire("compose_state");
+const emoji = zrequire("emoji");
 const pygments_data = zrequire("../generated/pygments_data.json");
 const actual_pygments_data = {...pygments_data};
 const ct = zrequire("composebox_typeahead");
@@ -97,7 +99,7 @@ stream_data.create_streams([
 ]);
 
 function test(label, f) {
-    run_test(label, ({override, override_rewire, mock_template}) => {
+    run_test(label, (helpers) => {
         pm_conversations.clear_for_testing();
         recent_senders.clear_for_testing();
         peer_data.clear_for_testing();
@@ -107,11 +109,11 @@ function test(label, f) {
         page_params.realm_email_address_visibility =
             settings_config.email_address_visibility_values.admins_only.code;
 
-        f({override, override_rewire, mock_template});
+        f(helpers);
     });
 }
 
-test("sort_streams", ({override_rewire}) => {
+test("sort_streams", ({override}) => {
     let test_streams = [
         {
             stream_id: 101,
@@ -150,7 +152,17 @@ test("sort_streams", ({override_rewire}) => {
         },
     ];
 
-    override_rewire(stream_data, "is_active", (sub) => sub.name !== "dead");
+    override(
+        user_settings,
+        "demote_inactive_streams",
+        settings_config.demote_inactive_streams_values.always.code,
+    );
+    stream_data.set_filter_out_inactives();
+    override(
+        stream_topic_history,
+        "stream_has_topics",
+        (stream_id) => ![105, 205].includes(stream_id),
+    );
 
     test_streams = th.sort_streams(test_streams, "d");
     assert.deepEqual(test_streams[0].name, "Denmark"); // Pinned streams first
@@ -402,6 +414,7 @@ test("sort_recipients", () => {
 });
 
 test("sort_recipients all mention", () => {
+    compose_state.set_message_type("stream");
     const all_obj = ct.broadcast_mentions()[0];
     assert.equal(all_obj.email, "all");
     assert.equal(all_obj.is_broadcast, true);
@@ -453,6 +466,7 @@ test("sort_recipients pm counts", () => {
         "zman@test.net",
     ]);
 
+    /* istanbul ignore next */
     function compare() {
         throw new Error("We do not expect to need a tiebreaker here.");
     }
@@ -492,6 +506,7 @@ test("sort_recipients dup bots", () => {
 });
 
 test("sort_recipients dup alls", () => {
+    compose_state.set_message_type("stream");
     const all_obj = ct.broadcast_mentions()[0];
 
     // full_name starts with same character but emails are 'all'
@@ -505,6 +520,22 @@ test("sort_recipients dup alls", () => {
     });
 
     const expected = [all_obj, all_obj, a_user];
+    assertSameEmails(recipients, expected);
+});
+
+test("sort_recipients dup alls private", () => {
+    compose_state.set_message_type("private");
+    const all_obj = ct.broadcast_mentions()[0];
+
+    // full_name starts with same character but emails are 'all'
+    const test_objs = [all_obj, a_user, all_obj];
+
+    const recipients = th.sort_recipients({
+        users: test_objs,
+        query: "a",
+    });
+
+    const expected = [a_user, all_obj, all_obj];
     assertSameEmails(recipients, expected);
 });
 
@@ -524,7 +555,7 @@ test("sort_recipients subscribers", () => {
 
 test("sort_recipients pm partners", () => {
     // b_user_3 is a pm partner and b_user_2 is not and
-    // both are not subscribered to the stream Linux.
+    // both are not subscribed to the stream Linux.
     const small_matches = [b_user_3, b_user_2];
     const recipients = th.sort_recipients({
         users: small_matches,
@@ -537,11 +568,12 @@ test("sort_recipients pm partners", () => {
     assert.deepEqual(recipients_email, expected);
 });
 
-test("sort broadcast mentions", () => {
+test("sort broadcast mentions for stream message type", () => {
     // test the normal case, which is that the
     // broadcast mentions are already sorted (we
     // actually had a bug where the sort would
     // randomly rearrange them)
+    compose_state.set_message_type("stream");
     const results = th.sort_people_for_relevance(ct.broadcast_mentions().reverse(), "", "");
 
     assert.deepEqual(
@@ -564,15 +596,46 @@ test("sort broadcast mentions", () => {
     );
 });
 
-test("test compare directly", () => {
+test("sort broadcast mentions for private message type", () => {
+    compose_state.set_message_type("private");
+    const results = th.sort_people_for_relevance(ct.broadcast_mentions().reverse(), "", "");
+
+    assert.deepEqual(
+        results.map((r) => r.email),
+        ["all", "everyone"],
+    );
+
+    const test_objs = Array.from(ct.broadcast_mentions()).reverse();
+    test_objs.unshift(zman);
+    test_objs.push(a_user);
+
+    const results2 = th.sort_people_for_relevance(test_objs, "", "");
+
+    assert.deepEqual(
+        results2.map((r) => r.email),
+        [a_user.email, zman.email, "all", "everyone"],
+    );
+});
+
+test("test compare directly for stream message type", () => {
     // This is important for ensuring test coverage.
     // We don't technically need it now, but our test
     // coverage is subject to the whims of how JS sorts.
+    compose_state.set_message_type("stream");
     const all_obj = ct.broadcast_mentions()[0];
 
     assert.equal(th.compare_people_for_relevance(all_obj, all_obj), 0);
     assert.equal(th.compare_people_for_relevance(all_obj, zman), -1);
     assert.equal(th.compare_people_for_relevance(zman, all_obj), 1);
+});
+
+test("test compare directly for private message", () => {
+    compose_state.set_message_type("private");
+    const all_obj = ct.broadcast_mentions()[0];
+
+    assert.equal(th.compare_people_for_relevance(all_obj, all_obj), 0);
+    assert.equal(th.compare_people_for_relevance(all_obj, zman), 1);
+    assert.equal(th.compare_people_for_relevance(zman, all_obj), -1);
 });
 
 test("highlight_with_escaping", () => {
@@ -697,6 +760,7 @@ test("render_emoji", ({mock_template}) => {
         is_emoji: true,
         has_image: false,
         has_secondary: false,
+        has_status: false,
     };
     let rendered = false;
     let test_emoji = {
@@ -725,6 +789,7 @@ test("render_emoji", ({mock_template}) => {
         is_emoji: true,
         has_image: true,
         has_secondary: false,
+        has_status: false,
     };
     test_emoji = {
         emoji_name: "realm_emoji",

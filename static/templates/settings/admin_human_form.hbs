@@ -2,13 +2,15 @@
     <form class="form-horizontal name-setting">
         <input type="hidden" name="is_full_name" value="true" />
         <div class="input-group name_change_container">
-            <label for="full_name">{{t "Full name" }}</label>
-            <input type="text" autocomplete="off" name="full_name" value="{{ full_name }}" />
+            <label for="edit_user_full_name">{{t "Full name" }}</label>
+            <input type="text" autocomplete="off" name="full_name" id="edit_user_full_name" value="{{ full_name }}" />
         </div>
+        {{#if email}}
         <div class="input-group email_change_container">
             <label for="email">{{t "Email" }}</label>
             <input type="text" autocomplete="off" name="email" value="{{ email }}" readonly/>
         </div>
+        {{/if}}
         <div class="input-group user_id_container">
             <label for="user_id">{{t "User ID" }}</label>
             <input type="text" autocomplete="off" name="user_id" value="{{ user_id }}" readonly/>
@@ -23,4 +25,9 @@
         </div>
         <div class="custom-profile-field-form"></div>
     </form>
+    <div class="input-group new-style">
+        <button class="button rounded btn-danger deactivate_user_button">
+            {{t 'Deactivate user' }}
+        </button>
+    </div>
 </div>

@@ -26,8 +26,9 @@ message_lists.current = {};
 
 const peer_data = zrequire("peer_data");
 const people = zrequire("people");
-const stream_data = zrequire("stream_data");
 const server_events_dispatch = zrequire("server_events_dispatch");
+const stream_data = zrequire("stream_data");
+const sub_store = zrequire("sub_store");
 
 const noop = () => {};
 
@@ -44,9 +45,9 @@ people.initialize_current_user(me.user_id);
 const dispatch = server_events_dispatch.dispatch_normal_event;
 
 function test(label, f) {
-    run_test(label, ({override, override_rewire}) => {
+    run_test(label, (helpers) => {
         stream_data.clear_subscriptions();
-        f({override, override_rewire});
+        f(helpers);
     });
 }
 
@@ -173,6 +174,7 @@ test("stream update", ({override}) => {
     const stub = make_stub();
     override(stream_events, "update_property", stub.f);
     override(settings_streams, "update_default_streams_table", noop);
+    override(stream_list, "update_subscribe_to_more_streams_link", noop);
     dispatch(event);
     assert.equal(stub.num_calls, 1);
     const args = stub.get_args("stream_id", "property", "value");
@@ -181,23 +183,22 @@ test("stream update", ({override}) => {
     assert.equal(args.value, event.value);
 });
 
-test("stream create", ({override, override_rewire}) => {
+test("stream create", ({override}) => {
+    assert.equal(sub_store.get(101), undefined);
+    assert.equal(sub_store.get(102), undefined);
+
     const event = event_fixtures.stream__create;
 
-    const stub = make_stub();
-    override_rewire(stream_data, "create_streams", stub.f);
     override(stream_settings_ui, "add_sub_to_table", noop);
+    override(stream_list, "update_subscribe_to_more_streams_link", noop);
     override(overlays, "streams_open", () => true);
     dispatch(event);
-    assert.equal(stub.num_calls, 1);
-    const args = stub.get_args("streams");
-    assert.deepEqual(
-        args.streams.map((stream) => stream.stream_id),
-        [101, 102],
-    );
+
+    assert.deepEqual(sub_store.get(101).name, "devel");
+    assert.deepEqual(sub_store.get(102).name, "test");
 });
 
-test("stream delete (normal)", ({override, override_rewire}) => {
+test("stream delete (normal)", ({override}) => {
     const event = event_fixtures.stream__delete;
 
     for (const stream of event.streams) {
@@ -206,7 +207,6 @@ test("stream delete (normal)", ({override, override_rewire}) => {
 
     stream_data.subscribe_myself(event.streams[0]);
 
-    override_rewire(stream_data, "delete_sub", noop);
     override(settings_streams, "update_default_streams_table", noop);
 
     narrow_state.is_for_stream_id = () => true;
@@ -226,6 +226,7 @@ test("stream delete (normal)", ({override, override_rewire}) => {
     override(stream_list, "remove_sidebar_row", () => {
         removed_sidebar_rows += 1;
     });
+    override(stream_list, "update_subscribe_to_more_streams_link", noop);
 
     dispatch(event);
 
@@ -255,6 +256,7 @@ test("stream delete (special streams)", ({override}) => {
     override(settings_streams, "update_default_streams_table", noop);
     override(message_lists.current, "update_trailing_bookend", noop);
     override(stream_list, "remove_sidebar_row", noop);
+    override(stream_list, "update_subscribe_to_more_streams_link", noop);
 
     dispatch(event);
 

@@ -5,6 +5,7 @@ import render_admin_default_streams_list from "../templates/settings/admin_defau
 import * as channel from "./channel";
 import * as hash_util from "./hash_util";
 import {$t_html} from "./i18n";
+import * as keydown_util from "./keydown_util";
 import * as ListWidget from "./list_widget";
 import * as loading from "./loading";
 import {page_params} from "./page_params";
@@ -33,12 +34,12 @@ export function maybe_disable_widgets() {
 }
 
 export function build_default_stream_table() {
-    const table = $("#admin_default_streams_table").expectOne();
+    const $table = $("#admin_default_streams_table").expectOne();
 
     const stream_ids = stream_data.get_default_stream_ids();
     const subs = stream_ids.map((stream_id) => sub_store.get(stream_id));
 
-    ListWidget.create(table, subs, {
+    ListWidget.create($table, subs, {
         name: "default_streams_list",
         modifier(item) {
             return render_admin_default_streams_list({
@@ -47,17 +48,17 @@ export function build_default_stream_table() {
             });
         },
         filter: {
-            element: table.closest(".settings-section").find(".search"),
+            $element: $table.closest(".settings-section").find(".search"),
             predicate(item, query) {
                 return item.name.toLowerCase().includes(query.toLowerCase());
             },
             onupdate() {
-                ui.reset_scrollbar(table);
+                ui.reset_scrollbar($table);
             },
         },
-        parent_container: $("#admin-default-streams-list").expectOne(),
+        $parent_container: $("#admin-default-streams-list").expectOne(),
         init_sort: ["alphabetic", "name"],
-        simplebar_container: $("#admin-default-streams-list .progressive-table-wrapper"),
+        $simplebar_container: $("#admin-default-streams-list .progressive-table-wrapper"),
     });
 
     loading.destroy_indicator($("#admin_page_default_streams_loading_indicator"));
@@ -74,27 +75,27 @@ function make_stream_default(stream_id) {
     const data = {
         stream_id,
     };
-    const default_stream_status = $("#admin-default-stream-status");
-    default_stream_status.hide();
+    const $default_stream_status = $("#admin-default-stream-status");
+    $default_stream_status.hide();
 
     channel.post({
         url: "/json/default_streams",
         data,
         error(xhr) {
-            ui_report.error($t_html({defaultMessage: "Failed"}), xhr, default_stream_status);
-            default_stream_status.show();
+            ui_report.error($t_html({defaultMessage: "Failed"}), xhr, $default_stream_status);
+            $default_stream_status.show();
         },
     });
 }
 
-export function delete_default_stream(stream_id, default_stream_row, alert_element) {
+export function delete_default_stream(stream_id, $default_stream_row, $alert_element) {
     channel.del({
         url: "/json/default_streams?" + $.param({stream_id}),
         error(xhr) {
-            ui_report.generic_row_button_error(xhr, alert_element);
+            ui_report.generic_row_button_error(xhr, $alert_element);
         },
         success() {
-            default_stream_row.remove();
+            $default_stream_row.remove();
         },
     });
 }
@@ -110,12 +111,12 @@ export function build_page() {
     update_default_streams_table();
 
     $(".create_default_stream").on("keypress", (e) => {
-        if (e.key === "Enter") {
+        if (keydown_util.is_enter_event(e)) {
             e.preventDefault();
             e.stopPropagation();
-            const default_stream_input = $(".create_default_stream");
-            make_stream_default(stream_data.get_stream_id(default_stream_input.val()));
-            default_stream_input[0].value = "";
+            const $default_stream_input = $(".create_default_stream");
+            make_stream_default(stream_data.get_stream_id($default_stream_input.val()));
+            $default_stream_input[0].value = "";
         }
     });
 
@@ -133,15 +134,15 @@ export function build_page() {
     $(".default-stream-form").on("click", "#do_submit_stream", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const default_stream_input = $(".create_default_stream");
-        make_stream_default(stream_data.get_stream_id(default_stream_input.val()));
+        const $default_stream_input = $(".create_default_stream");
+        make_stream_default(stream_data.get_stream_id($default_stream_input.val()));
         // Clear value inside input box
-        default_stream_input[0].value = "";
+        $default_stream_input[0].value = "";
     });
 
     $("body").on("click", ".default_stream_row .remove-default-stream", function (e) {
-        const row = $(this).closest(".default_stream_row");
-        const stream_id = Number.parseInt(row.attr("data-stream-id"), 10);
-        delete_default_stream(stream_id, row, $(e.target));
+        const $row = $(this).closest(".default_stream_row");
+        const stream_id = Number.parseInt($row.attr("data-stream-id"), 10);
+        delete_default_stream(stream_id, $row, $(e.target));
     });
 }

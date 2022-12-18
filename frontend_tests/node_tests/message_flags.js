@@ -2,7 +2,7 @@
 
 const {strict: assert} = require("assert");
 
-const {mock_esm, set_global, with_field_rewire, zrequire} = require("../zjsunit/namespace");
+const {mock_esm, set_global, with_overrides, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 
 const channel = mock_esm("../../static/js/channel");
@@ -151,7 +151,8 @@ run_test("read", ({override}) => {
 
     // For testing purpose limit the batch size value to 5 instead of 1000
     function send_read(messages) {
-        with_field_rewire(message_flags, "_unread_batch_size", 5, () => {
+        with_overrides(({override_rewire}) => {
+            override_rewire(message_flags, "_unread_batch_size", 5);
             message_flags.send_read(messages);
         });
     }
@@ -168,7 +169,6 @@ run_test("read", ({override}) => {
     send_read(msgs_to_flag_read);
     assert.deepEqual(channel_post_opts, {
         url: "/json/messages/flags",
-        idempotent: true,
         data: {
             messages: "[1,2,3,4,5]",
             op: "add",
@@ -184,7 +184,6 @@ run_test("read", ({override}) => {
     channel_post_opts.success(success_response_data);
     assert.deepEqual(channel_post_opts, {
         url: "/json/messages/flags",
-        idempotent: true,
         data: {
             messages: "[6,7]",
             op: "add",
@@ -212,7 +211,6 @@ run_test("read", ({override}) => {
     send_read(msgs_to_flag_read);
     assert.deepEqual(channel_post_opts, {
         url: "/json/messages/flags",
-        idempotent: true,
         data: {
             messages: "[3,4,5,6,7]",
             op: "add",
@@ -238,7 +236,7 @@ run_test("read", ({override}) => {
     channel_post_opts.success(success_response_data);
     assert.ok(events.timer_set);
 
-    // Mark them non local
+    // Mark them non-local
     local_msg_1.locally_echoed = false;
     local_msg_2.locally_echoed = false;
 
@@ -251,13 +249,23 @@ run_test("read", ({override}) => {
     // Former locally echoed messages flagging retried
     assert.deepEqual(channel_post_opts, {
         url: "/json/messages/flags",
-        idempotent: true,
         data: {
             messages: "[1,2]",
             op: "add",
             flag: "read",
         },
         success: channel_post_opts.success,
+    });
+
+    msgs_to_flag_read = [1, 2, 3, 4, 5];
+    message_flags.mark_as_read(msgs_to_flag_read);
+    assert.deepEqual(channel_post_opts, {
+        url: "/json/messages/flags",
+        data: {
+            messages: "[1,2,3,4,5]",
+            op: "add",
+            flag: "read",
+        },
     });
 });
 
@@ -270,7 +278,8 @@ run_test("read_empty_data", ({override}) => {
 
     // For testing purpose limit the batch size value to 5 instead of 1000
     function send_read(messages) {
-        with_field_rewire(message_flags, "_unread_batch_size", 5, () => {
+        with_overrides(({override_rewire}) => {
+            override_rewire(message_flags, "_unread_batch_size", 5);
             message_flags.send_read(messages);
         });
     }
@@ -302,7 +311,6 @@ run_test("collapse_and_uncollapse", ({override}) => {
 
     assert.deepEqual(channel_post_opts, {
         url: "/json/messages/flags",
-        idempotent: true,
         data: {
             messages: "[5]",
             op: "add",
@@ -314,11 +322,31 @@ run_test("collapse_and_uncollapse", ({override}) => {
 
     assert.deepEqual(channel_post_opts, {
         url: "/json/messages/flags",
-        idempotent: true,
         data: {
             messages: "[5]",
             op: "remove",
             flag: "collapsed",
+        },
+    });
+});
+
+run_test("mark_as_unread", ({override}) => {
+    // Way to capture posted info in every request
+    let channel_post_opts;
+    override(channel, "post", (opts) => {
+        channel_post_opts = opts;
+    });
+
+    const msg = {id: 5};
+
+    message_flags.mark_as_unread([msg.id]);
+
+    assert.deepEqual(channel_post_opts, {
+        url: "/json/messages/flags",
+        data: {
+            messages: "[5]",
+            op: "remove",
+            flag: "read",
         },
     });
 });

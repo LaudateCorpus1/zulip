@@ -4,44 +4,55 @@
 
 name: Zulip CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches: ["*.x", chat.zulip.org, main]
+    tags: ["*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.head_ref || github.run_id }}"
+  cancel-in-progress: true
 
 defaults:
   run:
     shell: bash
+
+permissions:
+  contents: read
 
 jobs:
   tests:
     strategy:
       fail-fast: false
       matrix:
+        include_documentation_tests: [false]
+        include_frontend_tests: [false]
         include:
           # Base images are built using `tools/ci/Dockerfile.prod.template`.
           # The comments at the top explain how to build and upload these images.
-          # Debian 10 ships with Python 3.7.3.
-          - docker_image: zulip/ci:buster
-            name: Debian 10 Buster (Python 3.7, backend + frontend)
-            os: buster
-            include_frontend_tests: true
-          # Focal ships with Python 3.8.2.
+          # Ubuntu 20.04 ships with Python 3.8.10.
           - docker_image: zulip/ci:focal
-            name: Ubuntu 20.04 Focal (Python 3.8, backend)
+            name: Ubuntu 20.04 (Python 3.8, backend + frontend)
             os: focal
-            is_focal: true
-            include_frontend_tests: false
-          # Bullseye ships with Python 3.9.2.
+            include_frontend_tests: true
+          # Debian 11 ships with Python 3.9.2.
           - docker_image: zulip/ci:bullseye
-            name: Debian 11 Bullseye (Python 3.9, backend)
+            name: Debian 11 (Python 3.9, backend + documentation)
             os: bullseye
-            is_bullseye: true
-            include_frontend_tests: false
+            include_documentation_tests: true
+          # Ubuntu 22.04 ships with Python 3.10.4.
+          - docker_image: zulip/ci:jammy
+            name: Ubuntu 22.04 (Python 3.10, backend)
+            os: jammy
 
     runs-on: ubuntu-latest
     name: ${{ matrix.name }}
     container: ${{ matrix.docker_image }}
     env:
       # GitHub Actions sets HOME to /github/home which causes
-      # problem later in provison and frontend test that runs
+      # problem later in provision and frontend test that runs
       # tools/setup/postgresql-init-dev-db because of the .pgpass
       # location. PostgreSQL (psql) expects .pgpass to be at
       # /home/github/.pgpass and setting home to `/home/github/`
@@ -49,7 +60,7 @@ jobs:
       HOME: /home/github/
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - name: Create cache directories
         run: |
@@ -58,24 +69,24 @@ jobs:
           sudo chown -R github "${dirs[@]}"
 
       - name: Restore node_modules cache
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: /srv/zulip-npm-cache
-          key: v1-yarn-deps-${{ matrix.os }}-${{ hashFiles('package.json') }}-${{ hashFiles('yarn.lock') }}
+          key: v1-yarn-deps-${{ matrix.os }}-${{ hashFiles('package.json', 'yarn.lock') }}
           restore-keys: v1-yarn-deps-${{ matrix.os }}
 
       - name: Restore python cache
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: /srv/zulip-venv-cache
           key: v1-venv-${{ matrix.os }}-${{ hashFiles('requirements/dev.txt') }}
           restore-keys: v1-venv-${{ matrix.os }}
 
       - name: Restore emoji cache
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: /srv/zulip-emoji-cache
-          key: v1-emoji-${{ matrix.os }}-${{ hashFiles('tools/setup/emoji/emoji_map.json') }}-${{ hashFiles('tools/setup/emoji/build_emoji') }}-${{ hashFiles('tools/setup/emoji/emoji_setup_utils.py') }}-${{ hashFiles('tools/setup/emoji/emoji_names.py') }}-${{ hashFiles('package.json') }}
+          key: v1-emoji-${{ matrix.os }}-${{ hashFiles('tools/setup/emoji/emoji_map.json', 'tools/setup/emoji/build_emoji', 'tools/setup/emoji/emoji_setup_utils.py', 'tools/setup/emoji/emoji_names.py', 'package.json') }}
           restore-keys: v1-emoji-${{ matrix.os }}
 
       - name: Install dependencies
@@ -126,8 +137,9 @@ jobs:
         run: |
           source tools/ci/activate-venv
 
-          # Currently our compiled requirements files will differ for different python versions
-          # so we will run test-locked-requirements only for Debian 10.
+          # Currently our compiled requirements files will differ for different
+          # Python versions, so we will run test-locked-requirements only on the
+          # platform with the oldest one.
           # ./tools/test-locked-requirements
           # ./tools/test-run-dev  # https://github.com/zulip/zulip/pull/14233
           #
@@ -139,7 +151,15 @@ jobs:
           ./tools/setup/optimize-svg --check
           ./tools/setup/generate_integration_bots_avatars.py --check-missing
 
+          # Ban check-database-compatibility.py from transitively
+          # relying on static/generated, because it might not be
+          # up-to-date at that point in upgrade-zulip-stage-2.
+          chmod 000 static/generated
+          ./scripts/lib/check-database-compatibility.py
+          chmod 755 static/generated
+
       - name: Run documentation and api tests
+        if: ${{ matrix.include_documentation_tests }}
         run: |
           source tools/ci/activate-venv
           # In CI, we only test links we control in test-documentation to avoid flakes
@@ -187,7 +207,7 @@ jobs:
           fi
 
       - name: Test locked requirements
-        if: ${{ matrix.os == 'buster' }}
+        if: ${{ matrix.os == 'focal' }}
         run: |
           . /srv/zulip-py3-venv/bin/activate && \
           ./tools/test-locked-requirements
@@ -195,23 +215,22 @@ jobs:
       - name: Upload coverage reports
 
         # Only upload coverage when both frontend and backend
-        # tests are ran.
+        # tests are run.
         if: ${{ matrix.include_frontend_tests }}
-        uses: codecov/codecov-action@v2
+        uses: codecov/codecov-action@v3
         with:
           files: var/coverage.xml,var/node-coverage/lcov.info
 
       - name: Store Puppeteer artifacts
         # Upload these on failure, as well
         if: ${{ always() && matrix.include_frontend_tests }}
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: puppeteer
           path: ./var/puppeteer
           retention-days: 60
 
       - name: Check development database build
-        if: ${{ matrix.is_focal || matrix.is_bullseye }}
         run: ./tools/ci/setup-backend
 
       - name: Report status

@@ -7,10 +7,16 @@ from django.db.models import Q
 
 from zerver.models import UserGroup, UserProfile, get_linkable_streams
 
+BEFORE_MENTION_ALLOWED_REGEX = r"(?<![^\s\'\"\(\{\[\/<])"
+
 # Match multi-word string between @** ** or match any one-word
 # sequences after @
-MENTIONS_RE = re.compile(r"(?<![^\s\'\"\(,:<])@(?P<silent>_?)(\*\*(?P<match>[^\*]+)\*\*)")
-USER_GROUP_MENTIONS_RE = re.compile(r"(?<![^\s\'\"\(,:<])@(?P<silent>_?)(\*(?P<match>[^\*]+)\*)")
+MENTIONS_RE = re.compile(
+    rf"{BEFORE_MENTION_ALLOWED_REGEX}@(?P<silent>_?)(\*\*(?P<match>[^\*]+)\*\*)"
+)
+USER_GROUP_MENTIONS_RE = re.compile(
+    rf"{BEFORE_MENTION_ALLOWED_REGEX}@(?P<silent>_?)(\*(?P<match>[^\*]+)\*)"
+)
 
 wildcards = ["all", "everyone", "stream"]
 
@@ -87,8 +93,7 @@ class MentionBackend:
             # We expect callers who take advantage of our cache to supply both
             # id and full_name in the user mentions in their messages.
             for user in user_list:
-                if user.id is not None and user.full_name is not None:
-                    self.user_cache[(user.id, user.full_name)] = user
+                self.user_cache[(user.id, user.full_name)] = user
 
             result += user_list
 

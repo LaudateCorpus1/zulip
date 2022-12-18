@@ -1,8 +1,9 @@
 import logging
 from argparse import ArgumentParser
-from typing import Any, List
+from typing import Any, Collection
 
 from django.conf import settings
+from django.core.management.base import CommandError
 from django.db import transaction
 
 from zerver.lib.logging_util import log_to_file
@@ -14,10 +15,10 @@ from zproject.backends import ZulipLDAPException, sync_user_from_ldap
 logger = logging.getLogger("zulip.sync_ldap_user_data")
 log_to_file(logger, settings.LDAP_SYNC_LOG_PATH)
 
-# Run this on a cronjob to pick up on name changes.
+# Run this on a cron job to pick up on name changes.
 @transaction.atomic
 def sync_ldap_user_data(
-    user_profiles: List[UserProfile], deactivation_protection: bool = True
+    user_profiles: Collection[UserProfile], deactivation_protection: bool = True
 ) -> None:
     logger.info("Starting update.")
     try:
@@ -76,5 +77,18 @@ class Command(ZulipBaseCommand):
             realm = self.get_realm(options)
             user_profiles = self.get_users(options, realm, is_bot=False, include_deactivated=True)
         else:
-            user_profiles = UserProfile.objects.select_related().filter(is_bot=False)
+            user_profile_query = UserProfile.objects.select_related().filter(is_bot=False)
+
+            if not user_profile_query.exists():
+                # This case provides a special error message if one
+                # tries setting up LDAP sync before creating a realm.
+                raise CommandError("Zulip server contains no users. Have you created a realm?")
+            user_profiles = list(user_profile_query)
+
+        if len(user_profiles) == 0:
+            # We emphasize that this error is purely about the
+            # command-line parameters, since this has nothing to do
+            # with your LDAP configuration.
+            raise CommandError("Zulip server contains no users matching command-line parameters.")
+
         sync_ldap_user_data(user_profiles, not options["force"])

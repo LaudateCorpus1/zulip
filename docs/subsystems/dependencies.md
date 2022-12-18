@@ -43,8 +43,8 @@ In `version.py`, we have a special parameter, `PROVISION_VERSION`,
 which is used to help ensure developers don't spend time debugging
 test/linter/etc. failures that actually were caused by the developer
 rebasing and forgetting to provision". `PROVISION_VERSION` has a
-format of `x.y`; when `x` doesn't match the value from the last time
-the user provisioned, or `y` is higher than than the value from last
+format of `(x, y)`; when `x` doesn't match the value from the last time
+the user provisioned, or `y` is higher than the value from last
 time, most Zulip tools will crash early and ask the user to provision.
 This has empirically made a huge impact on how often developers spend
 time debugging a "weird failure" after rebasing that had an easy
@@ -90,7 +90,7 @@ the backend, but does in JavaScript.
 
 ## System packages
 
-For the third-party services like PostgreSQL, Redis, Nginx, and RabbitMQ
+For the third-party services like PostgreSQL, Redis, nginx, and RabbitMQ
 that are documented in the
 [architecture overview](../overview/architecture-overview.md), we rely on the
 versions of those packages provided alongside the Linux distribution
@@ -120,8 +120,8 @@ extension, used by our [full-text search](full-text-search.md).
 ## Python packages
 
 Zulip uses the version of Python itself provided by the host OS for
-the Zulip server. We currently support Python 3.7 and newer, with
-Debian 10 being the platform requiring 3.7 support. The comments
+the Zulip server. We currently support Python 3.8 and newer, with
+Ubuntu 20.04 being the platform requiring 3.8 support. The comments
 in `.github/workflows/zulip-ci.yml` document the Python versions used
 by each supported platform.
 
@@ -232,7 +232,7 @@ reasoning here.
   dependencies in the `yarn.lock` file; `yarn install` updates the
   `yarn.lock` files.
 - `tools/update-prod-static`. This process is discussed in detail in
-  the [static asset pipeline](../subsystems/html-css.html#static-asset-pipeline)
+  the [static asset pipeline](html-css.md#static-asset-pipeline)
   article, but we don't use the `node_modules` directories directly in
   production. Instead, static assets are compiled using our static
   asset pipeline and it is the compiled assets that are served
@@ -290,7 +290,7 @@ Zulip uses the [iamcal emoji data package][iamcal] for its emoji data
 and sprite sheets. We download this dependency using `npm`, and then
 have a tool, `tools/setup/build_emoji`, which reformats the emoji data
 into the files under `static/generated/emoji`. Those files are in
-turn used by our [Markdown processor](../subsystems/markdown.md) and
+turn used by our [Markdown processor](markdown.md) and
 `tools/update-prod-static` to make Zulip's emoji work in the various
 environments where they need to be displayed.
 

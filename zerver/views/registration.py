@@ -1,20 +1,20 @@
 import logging
 import urllib
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_backends
+from django.contrib.sessions.backends.base import SessionBase
 from django.core import validators
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import redirect, render
 from django.urls import reverse
-from django.utils.translation import gettext as _
+from django.utils.translation import get_language
 from django_auth_ldap.backend import LDAPBackend, _LDAPUser
 
-from confirmation import settings as confirmation_settings
 from confirmation.models import (
     Confirmation,
     ConfirmationKeyException,
@@ -24,8 +24,16 @@ from confirmation.models import (
     render_confirmation_key_error,
     validate_key,
 )
+from zerver.actions.create_realm import do_create_realm
+from zerver.actions.create_user import do_activate_mirror_dummy_user, do_create_user
+from zerver.actions.default_streams import lookup_default_stream_groups
+from zerver.actions.user_settings import (
+    do_change_full_name,
+    do_change_password,
+    do_change_user_setting,
+)
 from zerver.context_processors import get_realm_from_request, login_context
-from zerver.decorator import do_login, rate_limit_request_by_ip, require_post
+from zerver.decorator import do_login, require_post
 from zerver.forms import (
     FindMyTeamForm,
     HomepageForm,
@@ -33,20 +41,11 @@ from zerver.forms import (
     RealmRedirectForm,
     RegistrationForm,
 )
-from zerver.lib.actions import (
-    bulk_add_subscriptions,
-    do_activate_mirror_dummy_user,
-    do_change_full_name,
-    do_change_password,
-    do_change_user_setting,
-    do_create_realm,
-    do_create_user,
-    lookup_default_stream_groups,
-)
 from zerver.lib.email_validation import email_allowed_for_realm, validate_email_not_already_in_realm
 from zerver.lib.exceptions import RateLimited
-from zerver.lib.onboarding import send_initial_realm_messages, setup_realm_internal_bots
+from zerver.lib.i18n import get_default_language_for_new_user
 from zerver.lib.pysa import mark_sanitized
+from zerver.lib.rate_limiter import rate_limit_request_by_ip
 from zerver.lib.request import REQ, has_request_variables
 from zerver.lib.send_email import EmailNotDeliveredException, FromAddress, send_email
 from zerver.lib.sessions import get_expirable_session_var
@@ -136,10 +135,12 @@ def check_prereg_key(request: HttpRequest, confirmation_key: str) -> Preregistra
         Confirmation.REALM_CREATION,
     ]
 
-    prereg_user = get_object_from_key(confirmation_key, confirmation_types, activate_object=False)
+    prereg_user = get_object_from_key(confirmation_key, confirmation_types, mark_object_used=False)
+    assert isinstance(prereg_user, PreregistrationUser)
 
-    if prereg_user.status == confirmation_settings.STATUS_REVOKED:
-        raise ConfirmationKeyException(ConfirmationKeyException.EXPIRED)
+    # Defensive assert to make sure no mix-up in how .status is set leading to re-use
+    # of a PreregistrationUser object.
+    assert prereg_user.created_user is None
 
     return prereg_user
 
@@ -217,7 +218,7 @@ def accounts_register(
 
         if settings.BILLING_ENABLED:
             try:
-                check_spare_licenses_available_for_registering_new_user(realm, email)
+                check_spare_licenses_available_for_registering_new_user(realm, email, role=role)
             except LicenseLimitError:
                 return render(request, "zerver/no_spare_licenses.html")
 
@@ -342,7 +343,6 @@ def accounts_register(
             realm = do_create_realm(
                 string_id, realm_name, org_type=realm_type, is_demo_organization=is_demo_org
             )
-            setup_realm_internal_bots(realm)
         assert realm is not None
 
         full_name = form.cleaned_data["full_name"]
@@ -382,10 +382,10 @@ def accounts_register(
             # But if the realm is using LDAPAuthBackend, we need to verify
             # their LDAP password (which will, as a side effect, create
             # the user account) here using authenticate.
-            # pregeg_user.realm_creation carries the information about whether
+            # prereg_user.realm_creation carries the information about whether
             # we're in realm creation mode, and the ldap flow will handle
             # that and create the user with the appropriate parameters.
-            user_profile = authenticate(
+            user = authenticate(
                 request=request,
                 username=email,
                 password=password,
@@ -393,7 +393,7 @@ def accounts_register(
                 prereg_user=prereg_user,
                 return_data=return_data,
             )
-            if user_profile is None:
+            if user is None:
                 can_use_different_backend = email_auth_enabled(realm) or (
                     len(get_external_method_dicts(realm)) > 0
                 )
@@ -421,13 +421,14 @@ def accounts_register(
                     query = urlencode({"email": email})
                     redirect_url = append_url_query_string(view_url, query)
                     return HttpResponseRedirect(redirect_url)
-            elif not realm_creation:
-                # Since we'll have created a user, we now just log them in.
-                return login_and_go_to_home(request, user_profile)
             else:
+                assert isinstance(user, UserProfile)
+                user_profile = user
+                if not realm_creation:
+                    # Since we'll have created a user, we now just log them in.
+                    return login_and_go_to_home(request, user_profile)
                 # With realm_creation=True, we're going to return further down,
                 # after finishing up the creation process.
-                pass
 
         if existing_user_profile is not None and existing_user_profile.is_mirror_dummy:
             user_profile = existing_user_profile
@@ -435,6 +436,12 @@ def accounts_register(
             do_change_password(user_profile, password)
             do_change_full_name(user_profile, full_name, user_profile)
             do_change_user_setting(user_profile, "timezone", timezone, acting_user=user_profile)
+            do_change_user_setting(
+                user_profile,
+                "default_language",
+                get_default_language_for_new_user(request, realm),
+                acting_user=None,
+            )
             # TODO: When we clean up the `do_activate_mirror_dummy_user` code path,
             # make it respect invited_as_admin / is_realm_admin.
 
@@ -448,6 +455,7 @@ def accounts_register(
                 role=role,
                 tos_version=settings.TERMS_OF_SERVICE_VERSION,
                 timezone=timezone,
+                default_language=get_default_language_for_new_user(request, realm),
                 default_stream_groups=default_stream_groups,
                 source_profile=source_profile,
                 realm_creation=realm_creation,
@@ -456,12 +464,6 @@ def accounts_register(
             )
 
         if realm_creation:
-            assert realm.signup_notifications_stream is not None
-            bulk_add_subscriptions(
-                realm, [realm.signup_notifications_stream], [user_profile], acting_user=None
-            )
-            send_initial_realm_messages(realm)
-
             # Because for realm creation, registration happens on the
             # root domain, we need to log them into the subdomain for
             # their new realm.
@@ -486,6 +488,7 @@ def accounts_register(
             )
             return redirect("/")
 
+        assert isinstance(auth_result, UserProfile)
         return login_and_go_to_home(request, auth_result)
 
     return render(
@@ -539,16 +542,21 @@ def login_and_go_to_home(request: HttpRequest, user_profile: UserProfile) -> Htt
 
 def prepare_activation_url(
     email: str,
-    request: HttpRequest,
+    session: SessionBase,
+    *,
+    realm: Optional[Realm],
     realm_creation: bool = False,
-    streams: Optional[List[Stream]] = None,
+    streams: Optional[Iterable[Stream]] = None,
     invited_as: Optional[int] = None,
+    multiuse_invite: Optional[MultiuseInvite] = None,
 ) -> str:
     """
     Send an email with a confirmation link to the provided e-mail so the user
     can complete their registration.
     """
-    prereg_user = create_preregistration_user(email, request, realm_creation)
+    prereg_user = create_preregistration_user(
+        email, realm, realm_creation, multiuse_invite=multiuse_invite
+    )
 
     if streams is not None:
         prereg_user.streams.set(streams)
@@ -563,7 +571,7 @@ def prepare_activation_url(
 
     activation_url = create_confirmation_link(prereg_user, confirmation_type)
     if settings.DEVELOPMENT and realm_creation:
-        request.session["confirmation_key"] = {"confirmation_key": activation_url.split("/")[-1]}
+        session["confirmation_key"] = {"confirmation_key": activation_url.split("/")[-1]}
     return activation_url
 
 
@@ -578,7 +586,7 @@ def send_confirm_registration_email(
         "zerver/emails/confirm_registration",
         to_emails=[email],
         from_address=FromAddress.tokenized_no_reply_address(),
-        language=request.LANGUAGE_CODE if request is not None else None,
+        language=get_language() if request is not None else None,
         context={
             "create_realm": (realm is None),
             "activate_url": activation_url,
@@ -602,17 +610,13 @@ def create_realm(request: HttpRequest, creation_key: Optional[str] = None) -> Ht
     except RealmCreationKey.Invalid:
         return render(
             request,
-            "zerver/realm_creation_failed.html",
-            context={
-                "message": _("The organization creation link has expired" " or is not valid.")
-            },
+            "zerver/realm_creation_link_invalid.html",
         )
     if not settings.OPEN_REALM_CREATION:
         if key_record is None:
             return render(
                 request,
-                "zerver/realm_creation_failed.html",
-                context={"message": _("New organization creation disabled")},
+                "zerver/realm_creation_disabled.html",
             )
 
     # When settings.OPEN_REALM_CREATION is enabled, anyone can create a new realm,
@@ -632,7 +636,9 @@ def create_realm(request: HttpRequest, creation_key: Optional[str] = None) -> Ht
                 )
 
             email = form.cleaned_data["email"]
-            activation_url = prepare_activation_url(email, request, realm_creation=True)
+            activation_url = prepare_activation_url(
+                email, request.session, realm=None, realm_creation=True
+            )
             if key_record is not None and key_record.presume_email_valid:
                 # The user has a token created from the server command line;
                 # skip confirming the email is theirs, taking their word for it.
@@ -676,13 +682,22 @@ def accounts_home(
     invited_as = None
 
     if multiuse_object:
-        realm = multiuse_object.realm
+        # multiuse_object's realm should have been validated by the caller,
+        # so this code shouldn't be reachable with a multiuse_object which
+        # has its realm mismatching the realm of the request.
+        assert realm == multiuse_object.realm
+
         streams_to_subscribe = multiuse_object.streams.all()
         from_multiuse_invite = True
         invited_as = multiuse_object.invited_as
 
     if request.method == "POST":
-        form = HomepageForm(request.POST, realm=realm, from_multiuse_invite=from_multiuse_invite)
+        form = HomepageForm(
+            request.POST,
+            realm=realm,
+            from_multiuse_invite=from_multiuse_invite,
+            invited_as=invited_as,
+        )
         if form.is_valid():
             try:
                 rate_limit_request_by_ip(request, domain="sends_email_by_ip")
@@ -703,7 +718,12 @@ def accounts_home(
                 return redirect_to_email_login_url(email)
 
             activation_url = prepare_activation_url(
-                email, request, streams=streams_to_subscribe, invited_as=invited_as
+                email,
+                request.session,
+                realm=realm,
+                streams=streams_to_subscribe,
+                invited_as=invited_as,
+                multiuse_invite=multiuse_object,
             )
             try:
                 send_confirm_registration_email(email, activation_url, request=request, realm=realm)
@@ -726,12 +746,18 @@ def accounts_home(
 
 
 def accounts_home_from_multiuse_invite(request: HttpRequest, confirmation_key: str) -> HttpResponse:
-    multiuse_object = None
+    realm = get_realm_from_request(request)
+    multiuse_object: Optional[MultiuseInvite] = None
     try:
-        multiuse_object = get_object_from_key(confirmation_key, [Confirmation.MULTIUSE_INVITE])
+        confirmation_obj = get_object_from_key(
+            confirmation_key, [Confirmation.MULTIUSE_INVITE], mark_object_used=False
+        )
+        assert isinstance(confirmation_obj, MultiuseInvite)
+        multiuse_object = confirmation_obj
+        if realm != multiuse_object.realm:
+            return render(request, "confirmation/link_does_not_exist.html", status=404)
         # Required for OAuth 2
     except ConfirmationKeyException as exception:
-        realm = get_realm_from_request(request)
         if realm is None or realm.invite_required:
             return render_confirmation_key_error(request, exception)
     return accounts_home(

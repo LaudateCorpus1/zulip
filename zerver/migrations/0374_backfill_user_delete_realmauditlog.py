@@ -1,9 +1,9 @@
 from django.db import migrations
-from django.db.backends.postgresql.schema import DatabaseSchemaEditor
+from django.db.backends.postgresql.schema import BaseDatabaseSchemaEditor
 from django.db.migrations.state import StateApps
 
 
-def backfill_user_deleted_logs(apps: StateApps, schema_editor: DatabaseSchemaEditor) -> None:
+def backfill_user_deleted_logs(apps: StateApps, schema_editor: BaseDatabaseSchemaEditor) -> None:
     RealmAuditLog = apps.get_model("zerver", "RealmAuditLog")
     RealmAuditLog.USER_DELETED = 106
 
@@ -14,6 +14,7 @@ def backfill_user_deleted_logs(apps: StateApps, schema_editor: DatabaseSchemaEdi
         is_mirror_dummy=True, is_active=False, delivery_email__regex=r"^deleteduser\d+@.+"
     ):
         entry = RealmAuditLog(
+            realm_id=user_profile.realm_id,
             modified_user=user_profile,
             acting_user=user_profile,
             event_type=RealmAuditLog.USER_DELETED,
@@ -25,7 +26,7 @@ def backfill_user_deleted_logs(apps: StateApps, schema_editor: DatabaseSchemaEdi
     RealmAuditLog.objects.bulk_create(objects_to_create)
 
 
-def reverse_code(apps: StateApps, schema_editor: DatabaseSchemaEditor) -> None:
+def reverse_code(apps: StateApps, schema_editor: BaseDatabaseSchemaEditor) -> None:
     RealmAuditLog = apps.get_model("zerver", "RealmAuditLog")
     RealmAuditLog.USER_DELETED = 106
 

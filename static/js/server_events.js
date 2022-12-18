@@ -6,7 +6,6 @@ import * as channel from "./channel";
 import * as echo from "./echo";
 import * as message_events from "./message_events";
 import * as message_lists from "./message_lists";
-import * as message_store from "./message_store";
 import {page_params} from "./page_params";
 import * as reload from "./reload";
 import * as reload_state from "./reload_state";
@@ -110,10 +109,6 @@ function get_events_success(events) {
         try {
             messages = echo.process_from_server(messages);
             if (messages.length > 0) {
-                for (const message of messages) {
-                    message_store.set_message_booleans(message);
-                }
-
                 const sent_by_this_client = messages.some((msg) =>
                     sent_messages.messages.has(msg.local_id),
                 );
@@ -210,7 +205,6 @@ function get_events({dont_block = false} = {}) {
     get_events_xhr = channel.get({
         url: "/json/events",
         data: get_events_params,
-        idempotent: true,
         timeout: page_params.event_queue_longpoll_timeout_seconds * 1000,
         success(data) {
             watchdog.set_suspect_offline(false);
@@ -245,6 +239,7 @@ function get_events({dont_block = false} = {}) {
                         save_narrow: true,
                         save_compose: true,
                     });
+                    return;
                 }
 
                 if (error_type === "abort") {

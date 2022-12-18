@@ -34,7 +34,7 @@
  *
  *   This adds support for completing a typeahead on custom keyup input. By
  *   default, we only support Tab and Enter to complete a typeahead, but we
- *   have usecases where we want to complete using custom characters like: >.
+ *   have use cases where we want to complete using custom characters like: >.
  *
  *   If `this.trigger_selection` returns true, we complete the typeahead and
  *   pass the keyup event to the updater.
@@ -53,9 +53,9 @@
  *
  * 4. Escape hooks:
  *
- *  You can set an on_escape hook to take extra actions when the user hits
- *  the `Esc` key.  We use this in our navbar code to close the navbar when
- *  a user hits escape while in the typeahead.
+ *   You can set an on_escape hook to take extra actions when the user hits
+ *   the `Esc` key.  We use this in our navbar code to close the navbar when
+ *   a user hits escape while in the typeahead.
  *
  * 5. Help on empty strings:
  *
@@ -71,8 +71,15 @@
  *   Our custom changes include all mentions of `helpOnEmptyStrings` and `hideOnEmpty`.
  *
  * 6. Prevent typeahead going off top of screen:
+ *
  *   If typeahead would go off the top of the screen, we set its top to 0 instead.
  *   This patch should be replaced with something more flexible.
+ *
+ * 7. Ignore IME Enter events:
+ *
+ *   See #22062 for details. Enter keypress that are part of IME composing are
+ *   treated as a separate/invalid -13 key, to prevent them from being incorrectly
+ *   processed as a bonus Enter press.
  *
  * ============================================================ */
 
@@ -80,6 +87,14 @@
 
   "use strict"; // jshint ;_;
 
+  function get_pseudo_keycode(e) {
+      const isComposing = (event.originalEvent && event.originalEvent.isComposing) || false;
+      /* We treat IME compose enter keypresses as a separate -13 key. */
+      if (e.keyCode === 13 && isComposing) {
+          return -13;
+      }
+      return e.keyCode;
+  }
 
  /* TYPEAHEAD PUBLIC CLASS DEFINITION
   * ================================= */
@@ -96,6 +111,7 @@
     this.$header = $(this.options.header_html).appendTo(this.$container)
     this.source = this.options.source
     this.shown = false
+    this.mouse_moved_since_typeahead = false
     this.dropup = this.options.dropup
     this.fixed = this.options.fixed || false;
     this.automated = this.options.automated || this.automated;
@@ -199,6 +215,7 @@
 
       this.$container.show()
       this.shown = true
+      this.mouse_moved_since_typeahead = false
       return this
     }
 
@@ -320,6 +337,7 @@
         .on('blur',     this.blur.bind(this))
         .on('keypress', this.keypress.bind(this))
         .on('keyup',    this.keyup.bind(this))
+        .on('click',    this.element_click.bind(this))
 
       if (this.eventSupported('keydown')) {
         this.$element.on('keydown', this.keydown.bind(this))
@@ -328,11 +346,12 @@
       this.$menu
         .on('click', 'li', this.click.bind(this))
         .on('mouseenter', 'li', this.mouseenter.bind(this))
+        .on('mousemove', 'li', this.mousemove.bind(this))
     }
 
   , unlisten: function () {
       this.$container.remove();
-      var events = ["blur", "keydown", "keyup", "keypress"];
+      var events = ["blur", "keydown", "keyup", "keypress", "mousemove"];
       for (var i=0; i<events.length; i++) {
         this.$element.off(events[i]);
       }
@@ -350,8 +369,9 @@
 
   , move: function (e) {
       if (!this.shown) return
+      const pseudo_keycode = get_pseudo_keycode(e);
 
-      switch(e.keyCode) {
+      switch(pseudo_keycode) {
         case 9: // tab
         case 13: // enter
         case 27: // escape
@@ -369,14 +389,29 @@
           break
       }
 
-      if ((this.options.stopAdvance || (e.keyCode != 9 && e.keyCode != 13))
+      if ((this.options.stopAdvance || (pseudo_keycode != 9 && pseudo_keycode != 13))
           && $.inArray(e.keyCode, this.options.advanceKeyCodes)) {
           e.stopPropagation()
       }
     }
 
+  , mousemove: function(e) {
+      if (!this.mouse_moved_since_typeahead) {
+        /* Undo cursor disabling in mouseenter handler. */
+        $(e.currentTarget).find('a').css('cursor', '');
+        this.mouse_moved_since_typeahead = true;
+        this.mouseenter(e)
+      }
+    }
+
   , keydown: function (e) {
-      this.suppressKeyPressRepeat = !~$.inArray(e.keyCode, [40,38,9,13,27])
+    const pseudo_keycode = get_pseudo_keycode(e);
+    if (this.trigger_selection(e)) {
+      if (!this.shown) return;
+      e.preventDefault();
+      this.select(e);
+    }
+      this.suppressKeyPressRepeat = !~$.inArray(pseudo_keycode, [40,38,9,13,27]);
       this.move(e)
     }
 
@@ -386,7 +421,9 @@
     }
 
   , keyup: function (e) {
-      switch(e.keyCode) {
+      const pseudo_keycode = get_pseudo_keycode(e);
+
+      switch(pseudo_keycode) {
         case 40: // down arrow
         case 38: // up arrow
           break
@@ -406,10 +443,6 @@
           break
 
         default:
-          if (this.trigger_selection(e)) {
-            if (!this.shown) return;
-            this.select(e);
-          }
           var hideOnEmpty = false
           if (e.keyCode === 8 && this.options.helpOnEmptyStrings) { // backspace
             hideOnEmpty = true
@@ -417,7 +450,7 @@
           this.lookup(hideOnEmpty)
       }
 
-      if ((this.options.stopAdvance || (e.keyCode != 9 && e.keyCode != 13))
+      if ((this.options.stopAdvance || (pseudo_keycode != 9 && pseudo_keycode != 13))
           && $.inArray(e.keyCode, this.options.advanceKeyCodes)) {
           e.stopPropagation()
       }
@@ -434,6 +467,12 @@
       }, 150)
     }
 
+  , element_click: function (e) {
+    // update / hide the typeahead menu if the user clicks anywhere
+    // inside the typing area, to avoid misplaced typeahead insertion.
+    this.lookup()
+  }
+
   , click: function (e) {
       e.stopPropagation()
       e.preventDefault()
@@ -449,6 +488,18 @@
     }
 
   , mouseenter: function (e) {
+      if (!this.mouse_moved_since_typeahead) {
+        // Prevent the annoying interaction where your mouse happens
+        // to be in the space where typeahead will open.  (This would
+        // result in the mouse taking priority over the keyboard for
+        // what you selected). If the mouse has not been moved since
+        // the appearance of the typeahead menu, we disable the
+        // cursor, which in turn prevents the currently hovered
+        // element from being selected.  The mousemove handler
+        // overrides this logic.
+        $(e.currentTarget).find('a').css('cursor', 'none')
+        return
+      }
       this.$menu.find('.active').removeClass('active')
       $(e.currentTarget).addClass('active')
     }
@@ -475,7 +526,7 @@
   , container: '<div class="typeahead dropdown-menu"></div>'
   , header_html: '<p class="typeahead-header"><span id="typeahead-header-text"></span></p>'
   , menu: '<ul class="typeahead-menu"></ul>'
-  , item: '<li><a href="#"></a></li>'
+  , item: '<li><a></a></li>'
   , minLength: 1
   , stopAdvance: false
   , dropup: false

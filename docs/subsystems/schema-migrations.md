@@ -54,13 +54,12 @@ migrations.
   to the table, performing data backfills, or building indexes. We
   have a `zerver/lib/migrate.py` library to help with adding columns
   and backfilling data.
-- **Adding indexes** Regular `CREATE INDEX` SQL (corresponding to Django's
-  `AddIndex` operation) locks writes to the affected table. This can be
+- **Adding indexes**. Django's regular `AddIndex` operation (corresponding
+  to `CREATE INDEX` in SQL) locks writes to the affected table. This can be
   problematic when dealing with larger tables in particular and we've
-  generally preferred to use `CREATE INDEX CONCURRENTLY` to allow the index
-  to be built while the server is active. While in historical migrations
-  we've used `RunSQL` directly, newer versions of Django add the corresponding
-  operation `AddIndexConcurrently` and thus that's what should normally be used.
+  generally preferred to use `AddIndexConcurrently` (corresponding to
+  `CREATE INDEX CONCURRENTLY`) to allow the index to be built while
+  the server is active.
 - **Atomicity**. By default, each Django migration is run atomically
   inside a transaction. This can be problematic if one wants to do
   something in a migration that touches a lot of data and would best
@@ -71,6 +70,14 @@ migrations.
   the entire migration in a transaction. This should make it possible
   to use the batch update tools in `zerver/lib/migrate.py` (originally
   written to work with South) for doing larger database migrations.
+- **No-op migrations**. Django detects model changes that does not
+  necessarily lead to a schema change in the database.
+  For example, field validators are a part of the Django ORM, but they
+  are not stored in the database. When removing such validators from
+  an existing model, nothing gets dropped from the database, but Django
+  would still generate a migration for that. We prefer to avoid adding
+  this kind of no-op migrations. Instead of generating a new migration,
+  you'll want to modify the latest migration affecting the field.
 
 - **Accessing code and models in RunPython migrations**. When writing
   a migration that includes custom python code (aka `RunPython`), you
@@ -129,7 +136,7 @@ migrations.
     the migration can even continue where it left off, without needing
     to redo work.
   - **Multi-step migrations**. For really big migrations, one wants
-    to split the transition into into several commits that are each
+    to split the transition into several commits that are each
     individually correct, and can each be deployed independently:
 
     1. First, do a migration to add the new column to the Message table

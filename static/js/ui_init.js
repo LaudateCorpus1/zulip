@@ -3,10 +3,12 @@ import _ from "lodash";
 
 import generated_emoji_codes from "../generated/emoji/emoji_codes.json";
 import generated_pygments_data from "../generated/pygments_data.json";
-import * as emoji from "../shared/js/emoji";
 import * as fenced_code from "../shared/js/fenced_code";
+import render_compose from "../templates/compose.hbs";
 import render_edit_content_button from "../templates/edit_content_button.hbs";
 import render_left_sidebar from "../templates/left_sidebar.hbs";
+import render_message_feed_bottom_whitespace from "../templates/message_feed_bottom_whitespace.hbs";
+import render_message_feed_errors from "../templates/message_feed_errors.hbs";
 import render_navbar from "../templates/navbar.hbs";
 import render_right_sidebar from "../templates/right_sidebar.hbs";
 
@@ -15,25 +17,31 @@ import * as activity from "./activity";
 import * as alert_words from "./alert_words";
 import * as blueslip from "./blueslip";
 import * as bot_data from "./bot_data";
+import * as channel from "./channel";
 import * as click_handlers from "./click_handlers";
+import * as common from "./common";
 import * as compose from "./compose";
 import * as compose_closed_ui from "./compose_closed_ui";
 import * as compose_pm_pill from "./compose_pm_pill";
 import * as composebox_typeahead from "./composebox_typeahead";
 import * as condense from "./condense";
 import * as copy_and_paste from "./copy_and_paste";
+import * as dark_theme from "./dark_theme";
 import * as drafts from "./drafts";
 import * as echo from "./echo";
+import * as emoji from "./emoji";
 import * as emoji_picker from "./emoji_picker";
 import * as emojisets from "./emojisets";
 import * as gear_menu from "./gear_menu";
 import * as giphy from "./giphy";
 import * as hashchange from "./hashchange";
+import * as hotkey from "./hotkey";
 import * as hotspots from "./hotspots";
 import * as i18n from "./i18n";
 import * as invite from "./invite";
 import * as lightbox from "./lightbox";
 import * as linkifiers from "./linkifiers";
+import {localstorage} from "./localstorage";
 import * as markdown from "./markdown";
 import * as markdown_config from "./markdown_config";
 import * as message_edit from "./message_edit";
@@ -43,7 +51,6 @@ import * as message_lists from "./message_lists";
 import * as message_scroll from "./message_scroll";
 import * as message_view_header from "./message_view_header";
 import * as message_viewport from "./message_viewport";
-import * as muted_topics from "./muted_topics";
 import * as muted_users from "./muted_users";
 import * as navbar_alerts from "./navbar_alerts";
 import * as navigate from "./navigate";
@@ -52,6 +59,7 @@ import * as overlays from "./overlays";
 import {page_params} from "./page_params";
 import * as people from "./people";
 import * as pm_conversations from "./pm_conversations";
+import * as pm_list from "./pm_list";
 import * as popover_menus from "./popover_menus";
 import * as presence from "./presence";
 import * as realm_logo from "./realm_logo";
@@ -59,6 +67,7 @@ import * as realm_playground from "./realm_playground";
 import * as realm_user_settings_defaults from "./realm_user_settings_defaults";
 import * as recent_topics_util from "./recent_topics_util";
 import * as reload from "./reload";
+import * as rendered_markdown from "./rendered_markdown";
 import * as resize from "./resize";
 import * as rows from "./rows";
 import * as scroll_bar from "./scroll_bar";
@@ -79,9 +88,9 @@ import * as starred_messages from "./starred_messages";
 import * as stream_bar from "./stream_bar";
 import * as stream_data from "./stream_data";
 import * as stream_edit from "./stream_edit";
+import * as stream_edit_subscribers from "./stream_edit_subscribers";
 import * as stream_list from "./stream_list";
 import * as stream_settings_ui from "./stream_settings_ui";
-import * as stream_subscribers_ui from "./stream_subscribers_ui";
 import * as timerender from "./timerender";
 import * as tippyjs from "./tippyjs";
 import * as topic_list from "./topic_list";
@@ -91,10 +100,14 @@ import * as typing from "./typing";
 import * as ui from "./ui";
 import * as unread from "./unread";
 import * as unread_ui from "./unread_ui";
+import * as user_group_edit from "./user_group_edit";
+import * as user_group_edit_members from "./user_group_edit_members";
 import * as user_groups from "./user_groups";
+import * as user_group_settings_ui from "./user_groups_settings_ui";
 import {initialize_user_settings, user_settings} from "./user_settings";
 import * as user_status from "./user_status";
 import * as user_status_ui from "./user_status_ui";
+import * as user_topics from "./user_topics";
 
 // This is where most of our initialization takes place.
 // TODO: Organize it a lot better.  In particular, move bigger
@@ -104,40 +117,45 @@ import * as user_status_ui from "./user_status_ui";
    because we want to reserve space for the email address.  This avoids
    things jumping around slightly when the email address is shown. */
 
-let current_message_hover;
+let $current_message_hover;
 function message_unhover() {
-    if (current_message_hover === undefined) {
+    if ($current_message_hover === undefined) {
         return;
     }
-    current_message_hover.find("span.edit_content").html("");
-    current_message_hover = undefined;
+    $current_message_hover.find("span.edit_content").empty();
+    $current_message_hover = undefined;
 }
 
-function message_hover(message_row) {
-    const id = rows.id(message_row);
-    if (current_message_hover && rows.id(current_message_hover) === id) {
+function message_hover($message_row) {
+    const id = rows.id($message_row);
+    if ($current_message_hover && rows.id($current_message_hover) === id) {
         return;
     }
 
-    const message = message_lists.current.get(rows.id(message_row));
+    const message = message_lists.current.get(rows.id($message_row));
     message_unhover();
-    current_message_hover = message_row;
+    $current_message_hover = $message_row;
 
-    // Locally echoed messages have !is_topic_editable and thus go
-    // through this code path.
-    if (!message_edit.is_topic_editable(message)) {
+    if (!message.sent_by_me) {
         // The actions and reactions icon hover logic is handled entirely by CSS
         return;
     }
 
     // But the message edit hover icon is determined by whether the message is still editable
-    const is_message_editable =
-        message_edit.get_editability(message) === message_edit.editability_types.FULL;
+    const editability = message_edit.get_editability(message);
+    const is_content_editable = editability === message_edit.editability_types.FULL;
+
+    const can_move_message = message_edit.can_move_message(message);
     const args = {
-        is_editable: is_message_editable && !message.status_message,
+        is_content_editable: is_content_editable && !message.status_message,
+        can_move_message,
         msg_id: id,
     };
-    message_row.find(".edit_content").html(render_edit_content_button(args));
+    $message_row.find(".edit_content").html(render_edit_content_button(args));
+}
+
+function initialize_bottom_whitespace() {
+    $("#bottom_whitespace").html(render_message_feed_bottom_whitespace());
 }
 
 function initialize_left_sidebar() {
@@ -151,26 +169,32 @@ function initialize_left_sidebar() {
 function initialize_right_sidebar() {
     const rendered_sidebar = render_right_sidebar({
         can_invite_others_to_realm: settings_data.user_can_invite_others_to_realm(),
+        realm_rendered_description: page_params.realm_rendered_description,
     });
 
     $("#right-sidebar-container").html(rendered_sidebar);
+    if (page_params.is_spectator) {
+        rendered_markdown.update_elements(
+            $(".right-sidebar .realm-description .rendered_markdown"),
+        );
+    }
 
     $("#user_presences").on("mouseenter", ".user_sidebar_entry", (e) => {
-        const status_emoji = $(e.target).closest(".user_sidebar_entry").find("img.status_emoji");
-        if (status_emoji.length) {
-            const animated_url = status_emoji.data("animated-url");
+        const $status_emoji = $(e.target).closest(".user_sidebar_entry").find("img.status_emoji");
+        if ($status_emoji.length) {
+            const animated_url = $status_emoji.data("animated-url");
             if (animated_url) {
-                status_emoji.attr("src", animated_url);
+                $status_emoji.attr("src", animated_url);
             }
         }
     });
 
     $("#user_presences").on("mouseleave", ".user_sidebar_entry", (e) => {
-        const status_emoji = $(e.target).closest(".user_sidebar_entry").find("img.status_emoji");
-        if (status_emoji.length) {
-            const still_url = status_emoji.data("still-url");
+        const $status_emoji = $(e.target).closest(".user_sidebar_entry").find("img.status_emoji");
+        if ($status_emoji.length) {
+            const still_url = $status_emoji.data("still-url");
             if (still_url) {
-                status_emoji.attr("src", still_url);
+                $status_emoji.attr("src", still_url);
             }
         }
     });
@@ -183,6 +207,29 @@ function initialize_navbar() {
     });
 
     $("#navbar-container").html(rendered_navbar);
+}
+
+function initialize_compose_box() {
+    $("#compose-container").append(
+        render_compose({
+            embedded: $("#compose").attr("data-embedded") === "",
+            file_upload_enabled: page_params.max_file_upload_size_mib > 0,
+            giphy_enabled: giphy.is_giphy_enabled(),
+            scroll_to_bottom_key_html: common.has_mac_keyboard()
+                ? "Fn + <span class='tooltip_right_arrow'>→</span>"
+                : "End",
+            narrow_to_compose_recipients_key_html:
+                (common.has_mac_keyboard() ? "⌘" : "Ctrl") + " + .",
+            max_stream_name_length: page_params.max_stream_name_length,
+            max_topic_length: page_params.max_topic_length,
+        }),
+    );
+    $(`.enter_sends_${user_settings.enter_sends}`).show();
+    common.adjust_mac_shortcuts(".enter_sends kbd");
+}
+
+function initialize_message_feed_errors() {
+    $("#message_feed_errors_container").html(render_message_feed_errors());
 }
 
 export function initialize_kitchen_sink_stuff() {
@@ -206,9 +253,9 @@ export function initialize_kitchen_sink_stuff() {
         message_viewport.set_last_movement_direction(delta);
     }, 50);
 
-    message_viewport.message_pane.on("wheel", (e) => {
+    message_viewport.$message_pane.on("wheel", (e) => {
         const delta = e.originalEvent.deltaY;
-        if (!overlays.is_active() && !recent_topics_util.is_visible()) {
+        if (!overlays.is_overlay_or_modal_open() && !recent_topics_util.is_visible()) {
             // In the message view, we use a throttled mousewheel handler.
             throttled_mousewheelhandler(e, delta);
         }
@@ -224,13 +271,13 @@ export function initialize_kitchen_sink_stuff() {
     // element is already at the top or bottom.  Otherwise we get a
     // new scroll event on the parent (?).
     $(".modal-body, .scrolling_list, input, textarea").on("wheel", function (e) {
-        const self = ui.get_scroll_element($(this));
-        const scroll = self.scrollTop();
+        const $self = ui.get_scroll_element($(this));
+        const scroll = $self.scrollTop();
         const delta = e.originalEvent.deltaY;
 
         // The -1 fudge factor is important here due to rounding errors.  Better
         // to err on the side of not scrolling.
-        const max_scroll = self.prop("scrollHeight") - self.innerHeight() - 1;
+        const max_scroll = $self.prop("scrollHeight") - $self.innerHeight() - 1;
 
         e.stopPropagation();
         if ((delta < 0 && scroll <= 0) || (delta > 0 && scroll >= max_scroll)) {
@@ -253,10 +300,6 @@ export function initialize_kitchen_sink_stuff() {
         $("body").addClass("spectator-view");
     }
 
-    if (!user_settings.left_side_userlist) {
-        $("#navbar-buttons").addClass("right-userlist");
-    }
-
     if (user_settings.high_contrast_mode) {
         $("body").addClass("high-contrast");
     }
@@ -268,8 +311,8 @@ export function initialize_kitchen_sink_stuff() {
     }
 
     $("#main_div").on("mouseover", ".message_table .message_row", function () {
-        const row = $(this).closest(".message_row");
-        message_hover(row);
+        const $row = $(this).closest(".message_row");
+        message_hover($row);
     });
 
     $("#main_div").on("mouseleave", ".message_table .message_row", () => {
@@ -277,17 +320,34 @@ export function initialize_kitchen_sink_stuff() {
     });
 
     $("#main_div").on("mouseover", ".sender_info_hover", function () {
-        const row = $(this).closest(".message_row");
-        row.addClass("sender_name_hovered");
+        const $row = $(this).closest(".message_row");
+        $row.addClass("sender_name_hovered");
     });
 
     $("#main_div").on("mouseout", ".sender_info_hover", function () {
-        const row = $(this).closest(".message_row");
-        row.removeClass("sender_name_hovered");
+        const $row = $(this).closest(".message_row");
+        $row.removeClass("sender_name_hovered");
     });
 
+    function handle_video_preview_mouseenter($elem) {
+        // Set image height and css vars for play button position, if not done already
+        const setPosition = !$elem.data("entered-before");
+        if (setPosition) {
+            const imgW = $elem.find("img")[0].width;
+            const imgH = $elem.find("img")[0].height;
+            // Ensure height doesn't change on mouse enter
+            $elem.css("height", `${imgH}px`);
+            // variables to set play button position
+            const marginLeft = (imgW - 30) / 2;
+            const marginTop = (imgH - 26) / 2;
+            $elem.css("--margin-left", `${marginLeft}px`).css("--margin-top", `${marginTop}px`);
+            $elem.data("entered-before", true);
+        }
+        $elem.addClass("fa fa-play");
+    }
+
     $("#main_div").on("mouseenter", ".youtube-video a", function () {
-        $(this).addClass("fa fa-play");
+        handle_video_preview_mouseenter($(this));
     });
 
     $("#main_div").on("mouseleave", ".youtube-video a", function () {
@@ -295,33 +355,11 @@ export function initialize_kitchen_sink_stuff() {
     });
 
     $("#main_div").on("mouseenter", ".embed-video a", function () {
-        const elem = $(this);
-        // Set image height and css vars for play button position, if not done already
-        const setPosition = !elem.data("entered-before");
-        if (setPosition) {
-            const imgW = elem.find("img")[0].width;
-            const imgH = elem.find("img")[0].height;
-            // Ensure height doesn't change on mouse enter
-            elem.css("height", `${imgH}px`);
-            // variables to set play button position
-            const marginLeft = (imgW - 30) / 2;
-            const marginTop = (imgH - 26) / 2;
-            elem.css("--margin-left", `${marginLeft}px`).css("--margin-top", `${marginTop}px`);
-            elem.data("entered-before", true);
-        }
-        elem.addClass("fa fa-play");
+        handle_video_preview_mouseenter($(this));
     });
 
     $("#main_div").on("mouseleave", ".embed-video a", function () {
         $(this).removeClass("fa fa-play");
-    });
-
-    $("#manage_streams_container").on("mouseover", ".subscription_header", function () {
-        $(this).addClass("active");
-    });
-
-    $("#manage_streams_container").on("mouseout", ".subscription_header", function () {
-        $(this).removeClass("active");
     });
 
     $("#stream_message_recipient_stream").on("change", function () {
@@ -344,13 +382,13 @@ export function initialize_kitchen_sink_stuff() {
             // If the message list is empty, don't do anything
             return;
         }
-        const row = event.msg_list.get_row(event.id);
+        const $row = event.msg_list.get_row(event.id);
         $(".selected_message").removeClass("selected_message");
-        row.addClass("selected_message");
+        $row.addClass("selected_message");
 
         if (event.then_scroll) {
-            if (row.length === 0) {
-                const row_from_dom = message_lists.current.get_row(event.id);
+            if ($row.length === 0) {
+                const $row_from_dom = message_lists.current.get_row(event.id);
                 const messages = event.msg_list.all_messages();
                 blueslip.debug("message_selected missing selected row", {
                     previously_selected_id: event.previously_selected_id,
@@ -367,7 +405,7 @@ export function initialize_kitchen_sink_stuff() {
                             .map((message) => message.id)
                             .sort(),
                     ),
-                    found_in_dom: row_from_dom.length,
+                    found_in_dom: $row_from_dom.length,
                 });
             }
             if (event.target_scroll_offset !== undefined) {
@@ -376,7 +414,7 @@ export function initialize_kitchen_sink_stuff() {
                 // Scroll to place the message within the current view;
                 // but if this is the initial placement of the pointer,
                 // just place it in the very center
-                message_viewport.recenter_view(row, {
+                message_viewport.recenter_view($row, {
                     from_scroll: event.from_scroll,
                     force_center: event.previously_selected_id === -1,
                 });
@@ -516,10 +554,22 @@ export function initialize_everything() {
 
     const user_groups_params = pop_fields("realm_user_groups");
 
+    const unread_params = pop_fields("unread_msgs");
+
     const user_status_params = pop_fields("user_status");
     const i18n_params = pop_fields("language_list");
     const user_settings_params = pop_fields("user_settings");
     const realm_settings_defaults_params = pop_fields("realm_user_settings_defaults");
+
+    if (page_params.is_spectator) {
+        const ls = localstorage();
+        const preferred_theme = ls.get("spectator-theme-preference");
+        if (preferred_theme === "dark") {
+            dark_theme.enable();
+        } else if (preferred_theme === "light") {
+            dark_theme.disable();
+        }
+    }
 
     i18n.initialize(i18n_params);
     tippyjs.initialize();
@@ -551,14 +601,16 @@ export function initialize_everything() {
     // These components must be initialized early, because other
     // modules' initialization has not been audited for whether they
     // expect DOM elements to always exist (As that did before these
-    // modules were migrated from Django templates to handlebars).
+    // modules were migrated from Django templates to Handlebars).
+    initialize_bottom_whitespace();
     initialize_left_sidebar();
     initialize_right_sidebar();
+    initialize_compose_box();
     settings.initialize();
-    compose.initialize();
     initialize_navbar();
-    realm_logo.render();
+    initialize_message_feed_errors();
 
+    realm_logo.initialize();
     message_lists.initialize();
     alert_words.initialize(alert_words_params);
     emojisets.initialize();
@@ -569,12 +621,15 @@ export function initialize_everything() {
     initialize_kitchen_sink_stuff();
     echo.initialize();
     stream_edit.initialize();
-    stream_subscribers_ui.initialize();
+    user_group_edit.initialize();
+    stream_edit_subscribers.initialize();
     stream_data.initialize(stream_data_params);
+    user_group_edit_members.initialize();
     pm_conversations.recent.initialize(pm_conversations_params);
-    muted_topics.initialize();
+    user_topics.initialize();
     muted_users.initialize();
     stream_settings_ui.initialize();
+    user_group_settings_ui.initialize();
     stream_list.initialize();
     condense.initialize();
     spoilers.initialize();
@@ -591,13 +646,14 @@ export function initialize_everything() {
     search_pill_widget.initialize();
     reload.initialize();
     user_groups.initialize(user_groups_params);
-    unread.initialize();
+    unread.initialize(unread_params);
     bot_data.initialize(bot_params); // Must happen after people.initialize()
     message_fetch.initialize(server_events.home_view_loaded);
     message_scroll.initialize();
     markdown.initialize(markdown_config.get_helpers());
     linkifiers.initialize(page_params.realm_linkifiers);
     realm_playground.initialize(page_params.realm_playgrounds, generated_pygments_data);
+    compose.initialize();
     composebox_typeahead.initialize(); // Must happen after compose.initialize()
     search.initialize();
     tutorial.initialize();
@@ -615,9 +671,12 @@ export function initialize_everything() {
 
     // All overlays must be initialized before hashchange.js
     hashchange.initialize();
+    resize.initialize();
+
     unread_ui.initialize();
     activity.initialize();
     emoji_picker.initialize();
+    pm_list.initialize();
     topic_list.initialize();
     topic_zoom.initialize();
     drafts.initialize();
@@ -629,9 +688,30 @@ export function initialize_everything() {
     user_status_ui.initialize();
     fenced_code.initialize(generated_pygments_data);
     message_edit_history.initialize();
+    hotkey.initialize();
+
+    $("#app-loading").addClass("loaded");
 }
 
-$(() => {
+$(async () => {
+    if (page_params.is_spectator) {
+        const data = {
+            apply_markdown: true,
+            client_capabilities: JSON.stringify({
+                notification_settings_null: true,
+                bulk_message_deletion: true,
+                user_avatar_url_field_optional: true,
+                // Set this to true when stream typing notifications are implemented.
+                stream_typing_notifications: false,
+                user_settings_object: true,
+            }),
+            client_gravatar: false,
+        };
+        const {result, msg, ...state} = await new Promise((success, error) => {
+            channel.post({url: "/json/register", data, success, error});
+        });
+        Object.assign(page_params, state);
+    }
     blueslip.measure_time("initialize_everything", () => {
         initialize_everything();
     });

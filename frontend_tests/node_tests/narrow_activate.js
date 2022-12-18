@@ -4,6 +4,7 @@ const {strict: assert} = require("assert");
 
 const {mock_esm, set_global, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
+const $ = require("../zjsunit/zjquery");
 
 mock_esm("../../static/js/resize", {
     resize_stream_filters_container: () => {},
@@ -48,7 +49,7 @@ set_global("setTimeout", (f, t) => {
     f();
 });
 
-mock_esm("../../static/js/muted_topics", {
+mock_esm("../../static/js/user_topics", {
     is_topic_muted: () => false,
 });
 
@@ -88,10 +89,13 @@ function test_helper() {
     stub(message_view_header, "initialize");
     stub(top_left_corner, "handle_narrow_activated");
     stub(typing_events, "render_notifications_for_narrow");
+    stub(compose_actions, "update_narrow_to_recipient_visibility");
     stub(ui_util, "change_tab_to");
     stub(unread_ops, "process_visible");
     stub(compose_closed_ui, "update_buttons_for_stream");
     stub(compose_closed_ui, "update_buttons_for_private");
+    // We don't test the css calls; we just skip over them.
+    $("#mark_as_read_turned_off_banner").toggleClass = () => {};
 
     return {
         clear: () => {
@@ -107,29 +111,28 @@ function test_helper() {
 }
 
 function stub_message_list() {
-    message_list.MessageList = function (opts) {
-        this.data = opts.data;
-        this.view = {
+    message_list.MessageList = class MessageList {
+        constructor(opts) {
+            this.data = opts.data;
+        }
+
+        view = {
             set_message_offset(offset) {
                 this.offset = offset;
             },
         };
 
-        return this;
-    };
-
-    message_list.MessageList.prototype = {
         get(msg_id) {
             return this.data.get(msg_id);
-        },
+        }
 
         empty() {
             return this.data.empty();
-        },
+        }
 
         select_id(msg_id) {
             this.selected_id = msg_id;
-        },
+        }
     };
 }
 
@@ -160,13 +163,6 @@ run_test("basics", () => {
 
     all_messages_data.all_messages_data = {
         all_messages: () => messages,
-        get: (msg_id) => {
-            assert.equal(msg_id, selected_id);
-            return selected_message;
-        },
-        fetch_status: {
-            has_found_newest: () => true,
-        },
         empty: () => false,
         first: () => ({id: 900}),
         last: () => ({id: 1100}),
@@ -207,6 +203,7 @@ run_test("basics", () => {
         [stream_list, "handle_narrow_activated"],
         [typing_events, "render_notifications_for_narrow"],
         [message_view_header, "initialize"],
+        [compose_actions, "update_narrow_to_recipient_visibility"],
     ]);
 
     message_lists.current.selected_id = () => -1;

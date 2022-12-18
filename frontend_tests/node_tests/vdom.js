@@ -26,7 +26,7 @@ run_test("basics", () => {
 
 run_test("attribute escaping", () => {
     // So far most of the time our attributes are
-    // hard-coded classes like "expanded_private_messages",
+    // hard-coded classes like "pm-list",
     // but we need to be defensive about future code
     // that might use data from possibly malicious users.
     const opts = {
@@ -175,6 +175,7 @@ run_test("partial updates", () => {
 
     assert.equal(rendered_html, "<ul>\n<li>foo1</li>\n<li>foo2</li>\n<li>foo3</li>\n</ul>");
 
+    /* istanbul ignore next */
     replace_content = () => {
         throw new Error("should not replace entire html");
     };
@@ -209,6 +210,7 @@ run_test("partial updates", () => {
 });
 
 run_test("eq_array easy cases", () => {
+    /* istanbul ignore next */
     const bogus_eq = () => {
         throw new Error("we should not be comparing elements");
     };
@@ -232,7 +234,7 @@ run_test("eq_array easy cases", () => {
     assert.equal(vdom.eq_array(x, z, eq), false);
 });
 
-run_test("eq_array elementwise", () => {
+run_test("eq_array element-wise", () => {
     const a = [51, 32, 93];
     const b = [31, 52, 43];
     const eq = (a, b) => a % 10 === b % 10;

@@ -70,7 +70,7 @@ def send_to_push_bouncer(
         requests.exceptions.ConnectionError,
     ) as e:
         raise PushNotificationBouncerRetryLaterError(
-            f"{e.__class__.__name__} while trying to connect to push notification bouncer"
+            f"{type(e).__name__} while trying to connect to push notification bouncer"
         )
 
     if res.status_code >= 500:
@@ -161,7 +161,7 @@ def send_analytics_to_remote_server() -> None:
     try:
         result = send_to_push_bouncer("GET", "server/analytics/status", {})
     except PushNotificationBouncerRetryLaterError as e:
-        logging.warning(e.msg)
+        logging.warning(e.msg, exc_info=True)
         return
 
     last_acked_realm_count_id = result["last_realm_count_id"]

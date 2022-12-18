@@ -2,9 +2,12 @@
 
 const {strict: assert} = require("assert");
 
-const {mock_esm, set_global, with_field, zrequire} = require("../zjsunit/namespace");
+const {mock_esm, set_global, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 const $ = require("../zjsunit/zjquery");
+const {page_params} = require("../zjsunit/zpage_params");
+
+const settings_config = zrequire("settings_config");
 
 const noop = () => {};
 
@@ -17,6 +20,10 @@ const compose_fade = mock_esm("../../static/js/compose_fade", {
     clear_compose: noop,
 });
 const compose_pm_pill = mock_esm("../../static/js/compose_pm_pill");
+const compose_ui = mock_esm("../../static/js/compose_ui", {
+    autosize_textarea: noop,
+    is_full_size: () => false,
+});
 const hash_util = mock_esm("../../static/js/hash_util");
 const narrow_state = mock_esm("../../static/js/narrow_state", {
     set_compose_defaults: noop,
@@ -45,12 +52,11 @@ mock_esm("../../static/js/message_lists", {
     },
 });
 mock_esm("../../static/js/resize", {
-    reset_compose_textarea_max_height: noop,
+    reset_compose_message_max_height: noop,
 });
 
 const people = zrequire("people");
 
-const compose_ui = zrequire("compose_ui");
 const compose = zrequire("compose");
 const compose_state = zrequire("compose_state");
 const compose_actions = zrequire("compose_actions");
@@ -72,34 +78,23 @@ function assert_hidden(sel) {
     assert.ok(!$(sel).visible());
 }
 
-function override_private_message_recipient({override_rewire}) {
-    override_rewire(
-        compose_state,
-        "private_message_recipient",
-        (function () {
-            let recipient;
-
-            return function (arg) {
-                if (arg === undefined) {
-                    return recipient;
-                }
-
-                recipient = arg;
-                return undefined;
-            };
-        })(),
-    );
+function override_private_message_recipient({override}) {
+    let recipient;
+    override(compose_pm_pill, "set_from_emails", (value) => {
+        recipient = value;
+    });
+    override(compose_pm_pill, "get_emails", () => recipient, {unused: false});
 }
 
 function test(label, f) {
-    run_test(label, ({override, override_rewire}) => {
+    run_test(label, (helpers) => {
         // We don't test the css calls; we just skip over them.
         $("#compose").css = () => {};
         $(".new_message_textarea").css = () => {};
 
         people.init();
         compose_state.set_message_type(false);
-        f({override, override_rewire});
+        f(helpers);
     });
 }
 
@@ -110,7 +105,7 @@ test("initial_state", () => {
 });
 
 test("start", ({override, override_rewire}) => {
-    override_private_message_recipient({override_rewire});
+    override_private_message_recipient({override});
     override_rewire(compose_actions, "autosize_message_content", () => {});
     override_rewire(compose_actions, "expand_compose_box", () => {});
     override_rewire(compose_actions, "set_focus", () => {});
@@ -236,7 +231,7 @@ test("respond_to_message", ({override, override_rewire}) => {
     override_rewire(compose_actions, "set_focus", () => {});
     override_rewire(compose_actions, "complete_starting_tasks", () => {});
     override_rewire(compose_actions, "clear_textarea", () => {});
-    override_private_message_recipient({override_rewire});
+    override_private_message_recipient({override});
 
     // Test PM
     const person = {
@@ -277,7 +272,7 @@ test("reply_with_mention", ({override, override_rewire}) => {
     override_rewire(compose_actions, "set_focus", () => {});
     override_rewire(compose_actions, "complete_starting_tasks", () => {});
     override_rewire(compose_actions, "clear_textarea", () => {});
-    override_private_message_recipient({override_rewire});
+    override_private_message_recipient({override});
 
     const msg = {
         type: "stream",
@@ -289,7 +284,7 @@ test("reply_with_mention", ({override, override_rewire}) => {
     override(message_lists.current, "selected_message", () => msg);
 
     let syntax_to_insert;
-    override_rewire(compose_ui, "insert_syntax_and_focus", (syntax) => {
+    override(compose_ui, "insert_syntax_and_focus", (syntax) => {
         syntax_to_insert = syntax;
     });
 
@@ -318,7 +313,7 @@ test("reply_with_mention", ({override, override_rewire}) => {
     assert.equal(syntax_to_insert, "@**Bob Roberts|40**");
 });
 
-test("quote_and_reply", ({override, override_rewire}) => {
+test("quote_and_reply", ({disallow, override, override_rewire}) => {
     compose_state.set_message_type("stream");
     const steve = {
         user_id: 90,
@@ -330,14 +325,14 @@ test("quote_and_reply", ({override, override_rewire}) => {
     override_rewire(compose_actions, "set_focus", () => {});
     override_rewire(compose_actions, "complete_starting_tasks", () => {});
     override_rewire(compose_actions, "clear_textarea", () => {});
-    override_private_message_recipient({override_rewire});
+    override_private_message_recipient({override});
 
     let selected_message;
     override(message_lists.current, "selected_message", () => selected_message);
 
     let expected_replacement;
     let replaced;
-    override_rewire(compose_ui, "replace_syntax", (syntax, replacement) => {
+    override(compose_ui, "replace_syntax", (syntax, replacement) => {
         assert.equal(syntax, "translated: [Quoting…]");
         assert.equal(replacement, expected_replacement);
         replaced = true;
@@ -350,7 +345,7 @@ test("quote_and_reply", ({override, override_rewire}) => {
         sender_full_name: "Steve Stephenson",
         sender_id: 90,
     };
-    hash_util.by_conversation_and_time_uri = () =>
+    hash_util.by_conversation_and_time_url = () =>
         "https://chat.zulip.org/#narrow/stream/92-learning/topic/Tornado";
 
     let success_function;
@@ -360,7 +355,7 @@ test("quote_and_reply", ({override, override_rewire}) => {
 
     override(message_lists.current, "selected_id", () => 100);
 
-    override_rewire(compose_ui, "insert_syntax_and_focus", (syntax) => {
+    override(compose_ui, "insert_syntax_and_focus", (syntax) => {
         assert.equal(syntax, "translated: [Quoting…]\n");
     });
 
@@ -390,14 +385,9 @@ test("quote_and_reply", ({override, override_rewire}) => {
         raw_content: "Testing.",
     };
 
-    function whiny_get() {
-        assert.fail("channel.get should not be used if raw_content is present");
-    }
-
     replaced = false;
-    with_field(channel, "get", whiny_get, () => {
-        quote_and_reply(opts);
-    });
+    disallow(channel, "get");
+    quote_and_reply(opts);
     assert.ok(replaced);
 
     selected_message = {
@@ -433,13 +423,13 @@ test("get_focus_area", () => {
     );
 });
 
-test("focus_in_empty_compose", ({override_rewire}) => {
+test("focus_in_empty_compose", () => {
     document.activeElement = {id: "compose-textarea"};
-    override_rewire(compose_state, "composing", () => true);
+    compose_state.set_message_type("stream");
     $("#compose-textarea").val("");
     assert.ok(compose_state.focus_in_empty_compose());
 
-    override_rewire(compose_state, "composing", () => false);
+    compose_state.set_message_type(false);
     assert.ok(!compose_state.focus_in_empty_compose());
 
     $("#compose-textarea").val("foo");
@@ -456,8 +446,21 @@ test("on_narrow", ({override, override_rewire}) => {
     let narrowed_by_pm_reply;
     override(narrow_state, "narrowed_by_pm_reply", () => narrowed_by_pm_reply);
 
-    let has_message_content;
-    override_rewire(compose_state, "has_message_content", () => has_message_content);
+    const steve = {
+        user_id: 90,
+        email: "steve@example.com",
+        full_name: "Steve Stephenson",
+        is_bot: false,
+    };
+    people.add_active_user(steve);
+
+    const bot = {
+        user_id: 91,
+        email: "bot@example.com",
+        full_name: "Steve's bot",
+        is_bot: true,
+    };
+    people.add_active_user(bot);
 
     let cancel_called = false;
     override_rewire(compose_actions, "cancel", () => {
@@ -483,18 +486,36 @@ test("on_narrow", ({override, override_rewire}) => {
     compose_fade.update_message_list = () => {
         update_message_list_called = true;
     };
-    has_message_content = true;
+    compose_state.message_content("foo");
     compose_actions.on_narrow({
         force_close: false,
     });
     assert.ok(update_message_list_called);
 
-    has_message_content = false;
+    compose_state.message_content("");
     let start_called = false;
     override_rewire(compose_actions, "start", () => {
         start_called = true;
     });
     narrowed_by_pm_reply = true;
+    page_params.realm_private_message_policy =
+        settings_config.private_message_policy_values.disabled.code;
+    compose_actions.on_narrow({
+        force_close: false,
+        trigger: "not-search",
+        private_message_recipient: "steve@example.com",
+    });
+    assert.ok(!start_called);
+
+    compose_actions.on_narrow({
+        force_close: false,
+        trigger: "not-search",
+        private_message_recipient: "bot@example.com",
+    });
+    assert.ok(start_called);
+
+    page_params.realm_private_message_policy =
+        settings_config.private_message_policy_values.by_anyone.code;
     compose_actions.on_narrow({
         force_close: false,
         trigger: "not-search",

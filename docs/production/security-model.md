@@ -38,7 +38,7 @@ announcement).
 - The preferred way to log in to Zulip is using a single sign-on (SSO)
   solution like Google authentication, LDAP, or similar, but Zulip
   also supports password authentication. See [the authentication
-  methods documentation](../production/authentication-methods.md) for
+  methods documentation](authentication-methods.md) for
   details on Zulip's available authentication methods.
 
 ### Passwords
@@ -67,7 +67,7 @@ strength allowed is controlled by two settings in
   By default, `PASSWORD_MIN_GUESSES` is 10000. This provides
   significant protection against online attacks, while limiting the
   burden imposed on users choosing a password. See
-  [password strength](../production/password-strength.md) for an extended
+  [password strength](password-strength.md) for an extended
   discussion on how we chose this value.
 
   Estimating the guessability of a password is a complex problem and
@@ -272,8 +272,48 @@ strength allowed is controlled by two settings in
 
 [go-camo]: https://github.com/cactus/go-camo
 [ssrf]: https://owasp.org/www-community/attacks/Server_Side_Request_Forgery
-[smokescreen-setup]: ../production/deployment.html#customizing-the-outgoing-http-proxy
-[proxy.enable_for_camo]: ../production/deployment.html#enable-for-camo
+[smokescreen-setup]: deployment.md#customizing-the-outgoing-http-proxy
+[proxy.enable_for_camo]: deployment.md#enable_for_camo
+
+## Rate limiting
+
+Zulip has built-in rate limiting of login attempts, all access to the
+API, as well as certain other types of actions that may be involved in
+abuse. For example, the email confirmation flow, by its nature, needs
+to allow sending an email to an email address that isn't associated
+with an existing Zulip account. Limiting the ability of users to
+trigger such emails helps prevent bad actors from damaging the spam
+reputation of a Zulip server by sending confirmation emails to random
+email addresses.
+
+The default rate limiting rules for a Zulip server will change as we improve
+the product. A server administrator can browse the current rules using
+`/home/zulip/deployments/current/scripts/get-django-setting
+RATE_LIMITING_RULES`; or with comments by reading
+`DEFAULT_RATE_LIMITING_RULES` in `zproject/default_settings.py`.
+
+Server administrators can tweak rate limiting in the following ways in
+`/etc/zulip/settings.py`:
+
+- The `RATE_LIMITING` setting can be set to `False` to completely
+  disable all rate-limiting.
+- The `RATE_LIMITING_RULES` setting can be used to override specific
+  rules. See the comment in the file for more specific details on how
+  to do it. After changing the setting, we recommend using
+  `/home/zulip/deployments/current/scripts/get-django-setting
+RATE_LIMITING_RULES` to verify your changes. You can then restart
+  the Zulip server with `scripts/restart-server` to have the new
+  configuration take effect.
+- The `RATE_LIMIT_TOR_TOGETHER` setting can be set to `True` to group all
+  known exit nodes of [TOR](https://www.torproject.org/) together for purposes
+  of IP address limiting. Since traffic from a client using TOR is distributed
+  across its exit nodes, without enabling this setting, TOR can otherwise be
+  used to avoid IP-based rate limiting. The updated list of TOR exit nodes
+  is refetched once an hour.
+
+See also our [API documentation on rate limiting][rate-limit-api].
+
+[rate-limit-api]: https://zulip.com/api/rest-error-handling#rate-limit-exceeded
 
 ## Final notes and security response
 

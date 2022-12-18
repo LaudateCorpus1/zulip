@@ -27,7 +27,7 @@ function preserve_state(send_after_reload, save_pointer, save_narrow, save_compo
         // no secure way to pass that state in a signed fashion to the
         // next instance of the browser client).
         //
-        // So we jure return here and let the reload proceed without
+        // So we just return here and let the reload proceed without
         // having preserved state.  We keep the hash the same so we'll
         // at least save their narrow state.
         blueslip.log("Can't preserve state; no local storage.");
@@ -65,10 +65,10 @@ function preserve_state(send_after_reload, save_pointer, save_narrow, save_compo
     }
 
     if (save_narrow) {
-        const row = message_lists.home.selected_row();
+        const $row = message_lists.home.selected_row();
         if (!narrow_state.active()) {
-            if (row.length > 0) {
-                url += "+offset=" + row.offset().top;
+            if ($row.length > 0) {
+                url += "+offset=" + $row.offset().top;
             }
         } else {
             url += "+offset=" + message_lists.home.pre_narrow_offset;
@@ -77,18 +77,18 @@ function preserve_state(send_after_reload, save_pointer, save_narrow, save_compo
             if (narrow_pointer !== -1) {
                 url += "+narrow_pointer=" + narrow_pointer;
             }
-            const narrow_row = message_list.narrowed.selected_row();
-            if (narrow_row.length > 0) {
-                url += "+narrow_offset=" + narrow_row.offset().top;
+            const $narrow_row = message_list.narrowed.selected_row();
+            if ($narrow_row.length > 0) {
+                url += "+narrow_offset=" + $narrow_row.offset().top;
             }
         }
     }
 
     url += hash_util.build_reload_url();
 
+    // Delete unused states that have been around for a while.
     const ls = localstorage();
-    // Delete all the previous preserved states.
-    ls.removeRegex("reload:\\d+");
+    delete_stale_tokens(ls);
 
     // To protect the browser against CSRF type attacks, the reload
     // logic uses a random token (to distinct this browser from
@@ -99,21 +99,48 @@ function preserve_state(send_after_reload, save_pointer, save_narrow, save_compo
     // TODO: Remove the now-unnecessary URL-encoding logic above and
     // just pass the actual data structures through local storage.
     const token = util.random_int(0, 1024 * 1024 * 1024 * 1024);
-
-    ls.set("reload:" + token, url);
+    const metadata = {
+        url,
+        timestamp: Date.now(),
+    };
+    ls.set("reload:" + token, metadata);
     window.location.replace("#reload:" + token);
+}
+
+export function is_stale_refresh_token(token_metadata, now) {
+    // TODO/compatibility: the metadata was changed from a string
+    // to a map containing the string and a timestamp. For now we'll
+    // delete all tokens that only contain the url. Remove this
+    // early return once you can no longer directly upgrade from
+    // Zulip 5.x to the current version.
+    if (!token_metadata.timestamp) {
+        return true;
+    }
+
+    // The time between reload token generation and use should usually be
+    // fewer than 30 seconds, but we keep tokens around for a week just in case
+    // (e.g. a tab could fail to load and be refreshed a while later).
+    const milliseconds_in_a_day = 1000 * 60 * 60 * 24;
+    const timedelta = now - token_metadata.timestamp;
+    const days_since_token_creation = timedelta / milliseconds_in_a_day;
+    return days_since_token_creation > 7;
+}
+
+function delete_stale_tokens(ls) {
+    const now = Date.now();
+    ls.removeDataRegexWithCondition("reload:\\d+", (metadata) =>
+        is_stale_refresh_token(metadata, now),
+    );
 }
 
 // Check if we're doing a compose-preserving reload.  This must be
 // done before the first call to get_events
 export function initialize() {
-    const location = window.location.toString();
-    const hash_fragment = location.slice(location.indexOf("#") + 1);
-
-    // hash_fragment should be e.g. `reload:12345123412312`
-    if (hash_fragment.search("reload:") !== 0) {
+    // location.hash should be e.g. `#reload:12345123412312`
+    if (!location.hash.startsWith("#reload:")) {
         return;
     }
+    const hash_fragment = location.hash.slice("#".length);
 
     // Using the token, recover the saved pre-reload data from local
     // storage.  Afterwards, we clear the reload entry from local
@@ -131,7 +158,12 @@ export function initialize() {
     }
     ls.remove(hash_fragment);
 
-    fragment = fragment.replace(/^reload:/, "");
+    // TODO/compatibility: `fragment` was changed from a string
+    // to a map containing the string and a timestamp. For now we'll
+    // delete all tokens that only contain the url. Remove the
+    // `|| fragment` once you can no longer directly upgrade
+    // from Zulip 5.x to the current version.
+    [, fragment] = /^#reload:(.*)/.exec(fragment.url || fragment);
     const keyvals = fragment.split("+");
     const vars = {};
 
@@ -144,12 +176,9 @@ export function initialize() {
         const send_now = Number.parseInt(vars.send_after_reload, 10);
 
         try {
-            // TODO: preserve focus
-            const topic = util.get_reload_topic(vars);
-
             compose_actions.start(vars.msg_type, {
                 stream: vars.stream || "",
-                topic: topic || "",
+                topic: vars.topic || "",
                 private_message_recipient: vars.recipient || "",
                 content: vars.msg || "",
                 draft_id: vars.draft_id || "",
@@ -213,14 +242,16 @@ function do_reload_app(send_after_reload, save_pointer, save_narrow, save_compos
     // broken state and cause lots of confusing tracebacks.  So, we
     // set ourselves to try reloading a bit later, both periodically
     // and when the user focuses the window.
-    $(window).on("focus", () => {
+    $(window).one("focus", () => {
         blueslip.log("Retrying on-focus page reload");
         window.location.reload(true);
     });
-    setInterval(() => {
+
+    function retry_reload() {
         blueslip.log("Retrying page reload due to 30s timer");
         window.location.reload(true);
-    }, 30000);
+    }
+    util.call_function_periodically(retry_reload, 30000);
 
     try {
         server_events.cleanup_event_queue();
@@ -243,7 +274,7 @@ export function initiate({
         do_reload_app(send_after_reload, save_pointer, save_narrow, save_compose, message_html);
     }
 
-    if (reload_state.is_pending()) {
+    if (reload_state.is_pending() || reload_state.is_in_progress()) {
         return;
     }
     reload_state.set_state_to_pending();

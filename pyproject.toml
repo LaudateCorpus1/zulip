@@ -1,6 +1,6 @@
 [tool.black]
 line-length = 100
-target-version = ["py36"]
+target-version = ["py38"]
 
 [tool.isort]
 src_paths = [".", "tools", "tools/setup/emoji"]
@@ -17,23 +17,20 @@ show_traceback = true
 mypy_path = "$MYPY_CONFIG_FILE_DIR/stubs"
 cache_dir = "$MYPY_CONFIG_FILE_DIR/var/mypy-cache"
 
-# These are all the options that would be enabled by mypy --strict, in
-# the order listed by the mypy --help documentation of --strict.  We
-# do not yet enable all of them.
-warn_unused_configs = true
-disallow_any_generics = true
+# Enable strict mode, with some exceptions.
+strict = true
 disallow_subclassing_any = false
 disallow_untyped_calls = false
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
 disallow_untyped_decorators = false
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
 warn_return_any = false
-no_implicit_reexport = true
-strict_equality = true
+
+# Enable optional errors.
+enable_error_code = [
+    "redundant-expr",
+    "truthy-bool",
+    "ignore-without-code",
+    "unused-awaitable",
+]
 
 # Display the codes needed for # type: ignore[code] annotations.
 show_error_codes = true
@@ -41,8 +38,14 @@ show_error_codes = true
 # Warn of unreachable or redundant code.
 warn_unreachable = true
 
+# dmypy enables local_partial_types implicitly. We need mypy to align
+# with this behavior.
+local_partial_types = true
+
+plugins = ["mypy_django_plugin.main"]
+
 [[tool.mypy.overrides]]
-module = ["zproject.configured_settings", "zproject.settings"]
+module = ["zproject.configured_settings", "zproject.settings", "zproject.default_settings"]
 no_implicit_reexport = false
 
 [[tool.mypy.overrides]]
@@ -51,16 +54,15 @@ module = [
     "aioapns.*",
     "bitfield.*",
     "bmemcached.*",
-    "bson.*",
     "cairosvg.*",
     "circuitbreaker.*",
     "coverage.*",
     "cssutils.*",
-    "defusedxml.*",
+    "defusedxml.*", # https://github.com/tiran/defusedxml/issues/46
     "digitalocean.*",
     "disposable_email_domains.*",
-    "django.*",
     "django_auth_ldap.*",
+    "django_bmemcached.*",
     "django_cte.*",
     "django_otp.*",
     "django_scim.*",
@@ -72,28 +74,62 @@ module = [
     "gitlint.*",
     "jsonref.*",
     "ldap.*",
-    "markdown_include.*",
-    "moto.*",
-    "natsort.*",
-    "netifaces.*",
+    "moto.*", # https://github.com/spulec/moto/issues/4944
     "onelogin.*",
-    "openapi_core.*",
     "premailer.*",
     "pyinotify.*",
     "pyoembed.*",
     "pyuca.*",
     "re2.*",
-    "requests_oauthlib.*",
+    "requests_oauthlib.*", # https://github.com/requests/requests-oauthlib/issues/428
     "scim2_filter_parser.attr_paths",
-    "scrapy.*",
+    "scrapy.*", # https://github.com/scrapy/scrapy/issues/4041
     "social_core.*",
     "social_django.*",
     "sourcemap.*",
     "talon_core.*",
     "tlds.*",
-    "tornado.*",
     "twitter.*",
     "two_factor.*",
-    "zxcvbn.*",
 ]
 ignore_missing_imports = true
+
+[tool.django-stubs]
+django_settings_module = "zproject.settings"
+
+[tool.ruff]
+# See https://github.com/charliermarsh/ruff#rules for error code definitions.
+select = [
+    "ANN", # annotations
+    "B", # bugbear
+    "C", # comprehensions
+    "E", # style errors
+    "F", # flakes
+    "I", # import sorting
+    "M", # meta
+    "N", # naming
+    "U", # upgrade
+    "W", # style warnings
+    "YTT", # sys.version
+]
+ignore = [
+    "ANN101", # Missing type annotation for `self` in method
+    "ANN102", # Missing type annotation for `cls` in classmethod
+    "ANN401", # Dynamically typed expressions (typing.Any) are disallowed
+    "B006", # Do not use mutable data structures for argument defaults
+    "B007", # Loop control variable not used within the loop body
+    "B008", # Do not perform function calls in argument defaults.
+    "C408", # Unnecessary `dict` call (rewrite as a literal)
+    "E402", # Module level import not at top of file
+    "E501", # Line too long
+    "E731", # Do not assign a lambda expression, use a def
+    "N802", # Function name should be lowercase
+    "N806", # Variable in function should be lowercase
+    "N818", # Exception name should be named with an Error suffix
+]
+line-length = 100
+src = [".", "tools", "tools/setup/emoji"]
+target-version = "py38"
+
+[tool.ruff.isort]
+known-third-party = ["zulip"]

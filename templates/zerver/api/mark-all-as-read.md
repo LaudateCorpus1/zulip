@@ -1,6 +1,4 @@
-{generate_api_title(/mark_all_as_read:post)}
-
-{generate_api_description(/mark_all_as_read:post)}
+{generate_api_header(/mark_all_as_read:post)}
 
 ## Usage examples
 
@@ -26,15 +24,11 @@
 
 {generate_response_description(/mark_all_as_read:post)}
 
-#### Example response
+#### Example response(s)
 
 {generate_code_example|/mark_all_as_read:post|fixture}
 
-{generate_api_title(/mark_stream_as_read:post)}
-
-{generate_api_description(/mark_stream_as_read:post)}
-
-`POST {{ api_url }}/v1/mark_stream_as_read`
+{generate_api_header(/mark_stream_as_read:post)}
 
 ## Usage examples
 
@@ -60,15 +54,11 @@
 
 {generate_response_description(/mark_all_as_read:post)}
 
-#### Example response
+#### Example response(s)
 
 {generate_code_example|/mark_stream_as_read:post|fixture}
 
-{generate_api_title(/mark_topic_as_read:post)}
-
-{generate_api_description(/mark_all_as_read:post)}
-
-`POST {{ api_url }}/v1/mark_topic_as_read`
+{generate_api_header(/mark_topic_as_read:post)}
 
 ## Usage examples
 
@@ -94,6 +84,6 @@
 
 {generate_response_description(/mark_all_as_read:post)}
 
-#### Example response
+#### Example response(s)
 
 {generate_code_example|/mark_topic_as_read:post|fixture}

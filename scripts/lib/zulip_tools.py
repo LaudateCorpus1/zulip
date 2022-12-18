@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import Any, Dict, List, Sequence, Set
+from typing import IO, Any, Dict, List, Sequence, Set
 from urllib.parse import SplitResult
 
 DEPLOYMENTS_DIR = "/home/zulip/deployments"
@@ -32,6 +32,8 @@ ENDC = "\033[0m"
 BLACKONYELLOW = "\x1b[0;30;43m"
 WHITEONRED = "\x1b[0;37;41m"
 BOLDRED = "\x1B[1;31m"
+BOLD = "\x1b[1m"
+GRAY = "\x1b[90m"
 
 GREEN = "\x1b[32m"
 YELLOW = "\x1b[33m"
@@ -105,15 +107,20 @@ def get_deploy_root() -> str:
     )
 
 
+def parse_version_from(deploy_path: str) -> str:
+    with open(os.path.join(deploy_path, "version.py")) as f:
+        result = re.search('ZULIP_VERSION = "(.*)"', f.read())
+        if result:
+            return result.groups()[0]
+    return "0.0.0"
+
+
 def get_deployment_version(extract_path: str) -> str:
     version = "0.0.0"
     for item in os.listdir(extract_path):
         item_path = os.path.join(extract_path, item)
         if item.startswith("zulip-server") and os.path.isdir(item_path):
-            with open(os.path.join(item_path, "version.py")) as f:
-                result = re.search('ZULIP_VERSION = "(.*)"', f.read())
-                if result:
-                    version = result.groups()[0]
+            version = parse_version_from(item_path)
             break
     return version
 
@@ -222,19 +229,14 @@ def release_deployment_lock() -> None:
 
 def run(args: Sequence[str], **kwargs: Any) -> None:
     # Output what we're doing in the `set -x` style
-    print("+ {}".format(" ".join(map(shlex.quote, args))), flush=True)
+    print(f"+ {shlex.join(args)}", flush=True)
 
     try:
         subprocess.check_call(args, **kwargs)
     except subprocess.CalledProcessError:
         print()
         print(
-            WHITEONRED
-            + "Error running a subcommand of {}: {}".format(
-                sys.argv[0],
-                " ".join(map(shlex.quote, args)),
-            )
-            + ENDC
+            WHITEONRED + f"Error running a subcommand of {sys.argv[0]}: {shlex.join(args)}" + ENDC
         )
         print(WHITEONRED + "Actual error output for the subcommand is just above this." + ENDC)
         print()
@@ -253,7 +255,7 @@ def log_management_command(cmd: Sequence[str], log_path: str) -> None:
     logger.addHandler(file_handler)
     logger.setLevel(logging.INFO)
 
-    logger.info("Ran %s", " ".join(map(shlex.quote, cmd)))
+    logger.info("Ran %s", shlex.join(cmd))
 
 
 def get_environment() -> str:
@@ -416,7 +418,7 @@ def parse_os_release() -> Dict[str, str]:
     developers, but we avoid using it, as it is not available on
     RHEL-based platforms.
     """
-    distro_info = {}  # type: Dict[str, str]
+    distro_info: Dict[str, str] = {}
     with open("/etc/os-release") as fp:
         for line in fp:
             line = line.strip()
@@ -441,6 +443,20 @@ def os_families() -> Set[str]:
     """
     distro_info = parse_os_release()
     return {distro_info["ID"], *distro_info.get("ID_LIKE", "").split()}
+
+
+def get_tzdata_zi() -> IO[str]:
+    if sys.version_info < (3, 9):  # nocoverage
+        from backports import zoneinfo
+    else:  # nocoverage
+        import zoneinfo
+
+    for path in zoneinfo.TZPATH:
+        filename = os.path.join(path, "tzdata.zi")
+        if os.path.exists(filename):
+            return open(filename)
+    else:
+        raise RuntimeError("Missing time zone data (tzdata.zi)")
 
 
 def files_and_string_digest(filenames: Sequence[str], extra_strings: Sequence[str]) -> str:
@@ -562,7 +578,7 @@ def get_config_file() -> configparser.RawConfigParser:
 
 
 def get_deploy_options(config_file: configparser.RawConfigParser) -> List[str]:
-    return shlex.split(get_config(config_file, "deployment", "deploy_options", "").strip())
+    return shlex.split(get_config(config_file, "deployment", "deploy_options", ""))
 
 
 def run_psql_as_postgres(
@@ -570,27 +586,20 @@ def run_psql_as_postgres(
     sql_query: str,
 ) -> None:
     dbname = get_config(config_file, "postgresql", "database_name", "zulip")
-    subcmd = " ".join(
-        map(
-            shlex.quote,
-            [
-                "psql",
-                "-v",
-                "ON_ERROR_STOP=1",
-                "-d",
-                dbname,
-                "-c",
-                sql_query,
-            ],
-        )
-    )
+    subcmd = shlex.join(["psql", "-v", "ON_ERROR_STOP=1", "-d", dbname, "-c", sql_query])
     subprocess.check_call(["su", "postgres", "-c", subcmd])
 
 
 def get_tornado_ports(config_file: configparser.RawConfigParser) -> List[int]:
     ports = []
     if config_file.has_section("tornado_sharding"):
-        ports = [int(port) for port in config_file.options("tornado_sharding")]
+        ports = sorted(
+            {
+                int(port)
+                for key in config_file.options("tornado_sharding")
+                for port in (key[: -len("_regex")] if key.endswith("_regex") else key).split("_")
+            }
+        )
     if not ports:
         ports = [9800]
     return ports
@@ -617,25 +626,6 @@ def has_application_server(once: bool = False) -> bool:
     )
 
 
-def list_supervisor_processes(*args: str) -> List[str]:
-    worker_status = subprocess.run(
-        ["supervisorctl", "status", *args],
-        text=True,
-        stdout=subprocess.PIPE,
-    )
-    # `supervisorctl status` returns 3 if any are stopped, which is
-    # fine here; and exit code 4 is for no such process, which is
-    # handled below.
-    if worker_status.returncode not in (0, 3, 4):
-        worker_status.check_returncode()
-
-    processes = []
-    for status_line in worker_status.stdout.splitlines():
-        if not re.search(r"ERROR \(no such (process|group)\)", status_line):
-            processes.append(status_line.split()[0])
-    return processes
-
-
 def has_process_fts_updates() -> bool:
     return (
         # Current path
@@ -656,6 +646,9 @@ def deport(netloc: str) -> str:
 def start_arg_parser(action: str, add_help: bool = False) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=add_help)
     parser.add_argument("--fill-cache", action="store_true", help="Fill the memcached caches")
+    parser.add_argument(
+        "--skip-checks", action="store_true", help="Skip syntax and database checks"
+    )
     if action == "restart":
         parser.add_argument(
             "--less-graceful",
@@ -677,7 +670,7 @@ def listening_publicly(port: int) -> List[str]:
     lines = (
         subprocess.check_output(
             ["/bin/ss", "-Hnl", filter],
-            universal_newlines=True,
+            text=True,
             # Hosts with IPv6 disabled will get "RTNETLINK answers: Invalid
             # argument"; eat stderr to hide that
             stderr=subprocess.DEVNULL,

@@ -50,6 +50,7 @@ exports.test_streams = {
         is_web_public: false,
         message_retention_days: null,
         stream_post_policy: 1,
+        can_remove_subscribers_group_id: 2,
     },
     test: {
         name: "test",
@@ -64,10 +65,21 @@ exports.test_streams = {
         is_announcement_only: false,
         message_retention_days: null,
         stream_post_policy: 1,
+        can_remove_subscribers_group_id: 2,
     },
 };
 
 const streams = exports.test_streams;
+
+// TODO: we want to validate this better with check-schema.
+// The data should mostly be representative here, but we don't
+// really exercise it in our tests yet.
+const message_detail = {
+    type: "stream",
+    mentioned: false,
+    sender_id: test_user.id,
+    stream_id: streams.devel.test_id,
+};
 
 exports.test_realm_emojis = {
     101: {
@@ -116,8 +128,24 @@ exports.fixtures = {
     custom_profile_fields: {
         type: "custom_profile_fields",
         fields: [
-            {id: 1, name: "teams", type: 1, hint: "", field_data: "", order: 1},
-            {id: 2, name: "hobbies", type: 1, hint: "", field_data: "", order: 2},
+            {
+                id: 1,
+                name: "teams",
+                type: 1,
+                hint: "",
+                field_data: "",
+                order: 1,
+                display_in_profile_summary: false,
+            },
+            {
+                id: 2,
+                name: "hobbies",
+                type: 1,
+                hint: "",
+                field_data: "",
+                order: 2,
+                display_in_profile_summary: false,
+            },
         ],
     },
 
@@ -159,14 +187,6 @@ exports.fixtures = {
 
     invites_changed: {
         type: "invites_changed",
-    },
-
-    muted_topics: {
-        type: "muted_topics",
-        muted_topics: [
-            ["devel", "js", fake_then],
-            ["lunch", "burritos", fake_now],
-        ],
     },
 
     muted_users: {
@@ -332,11 +352,25 @@ exports.fixtures = {
         value: 42,
     },
 
+    realm__update__org_type: {
+        type: "realm",
+        op: "update",
+        property: "org_type",
+        value: 50,
+    },
+
     realm__update__signup_notifications_stream_id: {
         type: "realm",
         op: "update",
         property: "signup_notifications_stream_id",
         value: 41,
+    },
+
+    realm__update__want_advertise_in_communities_directory: {
+        type: "realm",
+        op: "update",
+        property: "want_advertise_in_communities_directory",
+        value: false,
     },
 
     realm__update_dict__default: {
@@ -610,7 +644,6 @@ exports.fixtures = {
                 push_notifications: false,
                 stream_weekly_traffic: 40,
                 wildcard_mentions_notify: false,
-                role: 20,
                 subscribers: [5, 8, 13, 21],
             },
         ],
@@ -674,6 +707,16 @@ exports.fixtures = {
         all: false,
     },
 
+    update_message_flags__read_remove: {
+        type: "update_message_flags",
+        op: "remove",
+        operation: "remove",
+        flag: "read",
+        messages: [888],
+        message_details: {888: message_detail},
+        all: false,
+    },
+
     update_message_flags__starred_add: {
         type: "update_message_flags",
         op: "add",
@@ -701,6 +744,7 @@ exports.fixtures = {
             description: "mobile folks",
             members: [1],
             is_system_group: false,
+            direct_subgroup_ids: [2],
         },
     },
 
@@ -709,6 +753,13 @@ exports.fixtures = {
         op: "add_members",
         group_id: 1,
         user_ids: [2],
+    },
+
+    user_group__add_subgroups: {
+        type: "user_group",
+        op: "add_subgroups",
+        group_id: 1,
+        direct_subgroup_ids: [3],
     },
 
     user_group__remove: {
@@ -722,6 +773,13 @@ exports.fixtures = {
         op: "remove_members",
         group_id: 3,
         user_ids: [99, 100],
+    },
+
+    user_group__remove_subgroups: {
+        type: "user_group",
+        op: "remove_subgroups",
+        group_id: 1,
+        direct_subgroup_ids: [3],
     },
 
     user_group__update: {
@@ -791,6 +849,13 @@ exports.fixtures = {
         value: true,
     },
 
+    user_settings__display_emoji_reaction_users: {
+        type: "user_settings",
+        op: "update",
+        property: "display_emoji_reaction_users",
+        value: true,
+    },
+
     user_settings__emojiset: {
         type: "user_settings",
         op: "update",
@@ -833,18 +898,18 @@ exports.fixtures = {
         value: true,
     },
 
-    user_settings__left_side_userlist: {
+    user_settings__presence_disabled: {
         type: "user_settings",
         op: "update",
-        property: "left_side_userlist",
-        value: true,
+        property: "presence_enabled",
+        value: false,
     },
 
     user_settings__presence_enabled: {
         type: "user_settings",
         op: "update",
         property: "presence_enabled",
-        value: false,
+        value: true,
     },
 
     user_settings__starred_message_counts: {
@@ -868,16 +933,11 @@ exports.fixtures = {
         value: true,
     },
 
-    user_status__revoke_away: {
-        type: "user_status",
-        user_id: 63,
-        away: false,
-    },
-
-    user_status__set_away: {
-        type: "user_status",
-        user_id: 55,
-        away: true,
+    user_settings__user_list_style: {
+        type: "user_settings",
+        op: "update",
+        property: "user_list_style",
+        value: 2,
     },
 
     user_status__set_status_emoji: {
@@ -892,5 +952,13 @@ exports.fixtures = {
         type: "user_status",
         user_id: test_user.user_id,
         status_text: "out to lunch",
+    },
+
+    user_topic: {
+        type: "user_topic",
+        stream_id: 101,
+        topic_name: "js",
+        last_updated: fake_now,
+        visibility_policy: 1,
     },
 };

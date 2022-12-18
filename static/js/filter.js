@@ -1,9 +1,10 @@
 import Handlebars from "handlebars/runtime";
 import _ from "lodash";
 
+import * as resolved_topic from "../shared/js/resolved_topic";
+
 import * as hash_util from "./hash_util";
 import {$t} from "./i18n";
-import * as message_edit from "./message_edit";
 import * as message_parser from "./message_parser";
 import * as message_store from "./message_store";
 import {page_params} from "./page_params";
@@ -95,10 +96,7 @@ function message_matches_search_term(message, operator, operand) {
                 case "unread":
                     return unread.message_unread(message);
                 case "resolved":
-                    return (
-                        message.type === "stream" &&
-                        message.topic.startsWith(message_edit.RESOLVED_TOPIC_PREFIX)
-                    );
+                    return message.type === "stream" && resolved_topic.is_resolved(message.topic);
                 default:
                     return false; // is:whatever returns false
             }
@@ -439,7 +437,49 @@ export class Filter {
         return this.has_operator("pm-with") && this.operands("pm-with")[0].split(",").length === 1;
     }
 
+    supports_collapsing_recipients() {
+        // Determines whether a view is guaranteed, by construction,
+        // to contain consecutive messages in a given topic, and thus
+        // it is appropriate to collapse recipient/sender headings.
+        const term_types = this.sorted_term_types();
+
+        // All search/narrow term types, including negations, with the
+        // property that if a message is in the view, then any other
+        // message sharing its recipient (stream/topic or private
+        // message recipient) must also be present in the view.
+        const valid_term_types = new Set([
+            "stream",
+            "not-stream",
+            "topic",
+            "not-topic",
+            "pm-with",
+            "group-pm-with",
+            "not-group-pm-with",
+            "is-private",
+            "not-is-private",
+            "is-resolved",
+            "not-is-resolved",
+            "in-home",
+            "in-all",
+            "streams-public",
+            "not-streams-public",
+            "streams-web-public",
+            "not-streams-web-public",
+            "near",
+        ]);
+
+        for (const term of term_types) {
+            if (!valid_term_types.has(term)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     calc_can_mark_messages_read() {
+        // Arguably this should match supports_collapsing_recipients.
+        // We may want to standardize on that in the future.  (At
+        // present, this function does not allow combining valid filters).
         const term_types = this.sorted_term_types();
 
         if (_.isEqual(term_types, ["stream", "topic"])) {
@@ -623,49 +663,56 @@ export class Filter {
         // Nice explanatory titles for common views.
         const term_types = this.sorted_term_types();
         if (
-            (term_types.length === 3 && _.isEqual(term_types, ["stream", "topic", "search"])) ||
-            (term_types.length === 2 && _.isEqual(term_types, ["stream", "topic"]))
+            (term_types.length === 3 && _.isEqual(term_types, ["stream", "topic", "near"])) ||
+            (term_types.length === 2 && _.isEqual(term_types, ["stream", "topic"])) ||
+            (term_types.length === 1 && _.isEqual(term_types, ["stream"]))
         ) {
             if (!this._sub) {
-                return $t({defaultMessage: "Unknown stream"});
+                const search_text = this.operands("stream")[0];
+                return $t({defaultMessage: "Unknown stream #{search_text}"}, {search_text});
             }
             return this._sub.name;
         }
-        if (term_types.length === 1 || (term_types.length === 2 && term_types[1] === "search")) {
+        if (
+            (term_types.length === 2 && _.isEqual(term_types, ["pm-with", "near"])) ||
+            (term_types.length === 1 && _.isEqual(term_types, ["pm-with"]))
+        ) {
+            const emails = this.operands("pm-with")[0].split(",");
+            const names = emails.map((email) => {
+                if (!people.get_by_email(email)) {
+                    return email;
+                }
+                return people.get_by_email(email).full_name;
+            });
+
+            // We use join to handle the addition of a comma and space after every name
+            // and also to ensure that we return a string and not an array so that we
+            // can have the same return type as other cases.
+            return names.join(", ");
+        }
+        if (term_types.length === 1) {
             switch (term_types[0]) {
                 case "in-home":
                     return $t({defaultMessage: "All messages"});
                 case "in-all":
                     return $t({defaultMessage: "All messages including muted streams"});
                 case "streams-public":
-                    return $t({defaultMessage: "Public stream messages in organization"});
-                case "stream":
-                    if (!this._sub) {
-                        return $t({defaultMessage: "Unknown stream"});
-                    }
-                    return this._sub.name;
+                    return $t({defaultMessage: "Messages in all public streams"});
                 case "is-starred":
                     return $t({defaultMessage: "Starred messages"});
                 case "is-mentioned":
                     return $t({defaultMessage: "Mentions"});
                 case "is-private":
                     return $t({defaultMessage: "Private messages"});
-                case "pm-with": {
-                    const emails = this.operands("pm-with")[0].split(",");
-                    const names = emails.map((email) => {
-                        if (!people.get_by_email(email)) {
-                            return email;
-                        }
-                        return people.get_by_email(email).full_name;
-                    });
-
-                    // We use join to handle the addition of a comma and space after every name
-                    // and also to ensure that we return a string and not an array so that we
-                    // can have the same return type as other cases.
-                    return names.join(", ");
-                }
                 case "is-resolved":
                     return $t({defaultMessage: "Topics marked as resolved"});
+                // These cases return false for is_common_narrow, and therefore are not
+                // formatted in the message view header. They are used in narrow.js to
+                // update the browser title.
+                case "is-alerted":
+                    return $t({defaultMessage: "Alerted messages"});
+                case "is-unread":
+                    return $t({defaultMessage: "Unread messages"});
             }
         }
         /* istanbul ignore next */
@@ -717,6 +764,8 @@ export class Filter {
             return false;
         }
 
+        // TODO: It's not clear why `streams:` filters would not be
+        // applicable locally.
         if (this.has_operator("streams") || this.has_negated_operand("streams", "public")) {
             return false;
         }

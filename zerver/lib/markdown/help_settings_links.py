@@ -1,11 +1,11 @@
 import re
-from typing import Any, List, Match, Optional
+from typing import Any, List, Match
 
 from markdown import Markdown
 from markdown.extensions import Extension
 from markdown.preprocessors import Preprocessor
 
-from zerver.lib.markdown.preprocessor_priorities import PREPROCESSOR_PRIORITES
+from zerver.lib.markdown.priorities import PREPROCESSOR_PRIORITES
 
 # There is a lot of duplicated code between this file and
 # help_relative_links.py. So if you're making a change here consider making
@@ -26,7 +26,7 @@ link_mapping = {
     ],
     "display-settings": ["Personal settings", "Display settings", "/#settings/display-settings"],
     "notifications": ["Personal settings", "Notifications", "/#settings/notifications"],
-    "your-bots": ["Personal settings", "Bots", "/#settings/your-bots"],
+    "your-bots": ["Personal settings", "your Bots", "/#settings/your-bots"],
     "alert-words": ["Personal settings", "Alert words", "/#settings/alert-words"],
     "uploaded-files": ["Personal settings", "Uploaded files", "/#settings/uploaded-files"],
     "muted-topics": ["Personal settings", "Muted topics", "/#settings/muted-topics"],
@@ -64,7 +64,11 @@ link_mapping = {
         "Deactivated users",
         "/#organization/deactivated-users-admin",
     ],
-    "bot-list-admin": ["Manage organization", "Bots", "/#organization/bot-list-admin"],
+    "bot-list-admin": [
+        "Manage organization",
+        "your organization's Bots",
+        "/#organization/bot-list-admin",
+    ],
     "default-streams-list": [
         "Manage organization",
         "Default streams",
@@ -114,7 +118,7 @@ class SettingHelpExtension(Extension):
         md.preprocessors.register(Setting(), "setting", PREPROCESSOR_PRIORITES["setting"])
 
 
-relative_settings_links: Optional[bool] = None
+relative_settings_links: bool = False
 
 
 def set_relative_settings_links(value: bool) -> None:

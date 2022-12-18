@@ -6,11 +6,12 @@ const {mock_esm, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 const $ = require("../zjsunit/zjquery");
 
+const list_widget = mock_esm("../../static/js/list_widget");
 const muted_topics_ui = mock_esm("../../static/js/muted_topics_ui");
 
 const settings_muted_topics = zrequire("settings_muted_topics");
 const stream_data = zrequire("stream_data");
-const muted_topics = zrequire("muted_topics");
+const user_topics = zrequire("user_topics");
 
 const noop = () => {};
 
@@ -20,12 +21,11 @@ const frontend = {
 };
 stream_data.add_sub(frontend);
 
-run_test("settings", ({override_rewire}) => {
-    muted_topics.add_muted_topic(frontend.stream_id, "js", 1577836800);
+run_test("settings", ({override}) => {
+    user_topics.add_muted_topic(frontend.stream_id, "js", 1577836800);
     let populate_list_called = false;
-    override_rewire(settings_muted_topics, "populate_list", () => {
-        const opts = muted_topics.get_muted_topics();
-        assert.deepEqual(opts, [
+    override(list_widget, "create", ($container, list) => {
+        assert.deepEqual(list, [
             {
                 date_muted: 1577836800000,
                 date_muted_str: "Jan\u00A001,\u00A02020",
@@ -51,24 +51,25 @@ run_test("settings", ({override_rewire}) => {
         stopPropagation: noop,
     };
 
-    const topic_fake_this = $.create("fake.settings-unmute-topic");
-    const topic_tr_html = $('tr[data-topic="js"]');
-    topic_fake_this.closest = (opts) => {
+    const $topic_fake_this = $.create("fake.settings-unmute-topic");
+    const $topic_tr_html = $('tr[data-topic="js"]');
+    $topic_fake_this.closest = (opts) => {
         assert.equal(opts, "tr");
-        return topic_tr_html;
+        return $topic_tr_html;
     };
 
     let topic_data_called = 0;
-    topic_tr_html.attr = (opts) => {
-        if (opts === "data-stream-id") {
-            topic_data_called += 1;
-            return frontend.stream_id;
+    $topic_tr_html.attr = (opts) => {
+        topic_data_called += 1;
+        switch (opts) {
+            case "data-stream-id":
+                return frontend.stream_id;
+            case "data-topic":
+                return "js";
+            /* istanbul ignore next */
+            default:
+                throw new Error(`Unknown attribute ${opts}`);
         }
-        if (opts === "data-topic") {
-            topic_data_called += 1;
-            return "js";
-        }
-        throw new Error(`Unknown attribute ${opts}`);
     };
 
     let unmute_topic_called = false;
@@ -77,7 +78,7 @@ run_test("settings", ({override_rewire}) => {
         assert.equal(topic, "js");
         unmute_topic_called = true;
     };
-    topic_click_handler.call(topic_fake_this, event);
+    topic_click_handler.call($topic_fake_this, event);
     assert.ok(unmute_topic_called);
     assert.equal(topic_data_called, 2);
 });

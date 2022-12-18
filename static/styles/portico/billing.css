@@ -177,9 +177,21 @@
 
     .invoice-button {
         font-size: 19px;
+
+        &:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+
+            &:hover {
+                pointer-events: all;
+            }
+        }
     }
 
-    #mix_license_count,
+    .upgrade-button-container {
+        display: inline-block;
+    }
+
     #manual_license_count,
     #invoiced_licenses {
         width: 50px;
@@ -226,11 +238,6 @@
     #autopay-error {
         text-align: center;
         display: none;
-    }
-
-    #update-card-button-span {
-        display: block;
-        min-height: 30px;
     }
 
     .zulip-loading-logo {
@@ -299,8 +306,7 @@
     }
 
     #license-automatic-section,
-    #license-manual-section,
-    #license-mix-section {
+    #license-manual-section {
         display: none;
     }
 }

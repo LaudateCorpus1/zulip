@@ -1,5 +1,7 @@
 import $ from "jquery";
 
+import * as keydown_util from "./keydown_util";
+
 // Add functions to this that have no non-trivial
 // dependencies other than jQuery.
 
@@ -27,24 +29,53 @@ export function blur_active_element(): void {
 }
 
 export function convert_enter_to_click(e: JQuery.KeyDownEvent): void {
-    if (e.key === "Enter") {
+    if (keydown_util.is_enter_event(e)) {
         e.preventDefault();
         e.stopPropagation();
         $(e.currentTarget).trigger("click");
     }
 }
 
-export function update_unread_count_in_dom(unread_count_elem: JQuery, count: number): void {
+export function update_unread_count_in_dom($unread_count_elem: JQuery, count: number): void {
     // This function is used to update unread count in top left corner
     // elements.
-    const unread_count_span = unread_count_elem.find(".unread_count");
+    const $unread_count_span = $unread_count_elem.find(".unread_count");
 
     if (count === 0) {
-        unread_count_span.hide();
-        unread_count_span.text("");
+        $unread_count_span.hide();
+        $unread_count_span.text("");
         return;
     }
 
-    unread_count_span.show();
-    unread_count_span.text(count);
+    $unread_count_span.show();
+    $unread_count_span.text(count);
+}
+
+export function update_unread_mention_info_in_dom(
+    $unread_mention_info_elem: JQuery,
+    stream_has_any_unread_mention_messages: Boolean,
+): void {
+    const $unread_mention_info_span = $unread_mention_info_elem.find(".unread_mention_info");
+    if (!stream_has_any_unread_mention_messages) {
+        $unread_mention_info_span.hide();
+        $unread_mention_info_span.text("");
+        return;
+    }
+
+    $unread_mention_info_span.show();
+    $unread_mention_info_span.text("@");
+}
+
+/**
+ * Parse HTML and return a DocumentFragment.
+ *
+ * Like any consumer of HTML, this function must only be given input
+ * from trusted producers of safe HTML, such as auto-escaping
+ * templates; violating this expectation will introduce bugs that are
+ * likely to be security vulnerabilities.
+ */
+export function parse_html(html: string): DocumentFragment {
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    return template.content;
 }

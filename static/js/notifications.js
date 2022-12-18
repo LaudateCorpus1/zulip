@@ -10,7 +10,6 @@ import * as hash_util from "./hash_util";
 import {$t} from "./i18n";
 import * as message_lists from "./message_lists";
 import * as message_store from "./message_store";
-import * as muted_topics from "./muted_topics";
 import * as narrow from "./narrow";
 import * as narrow_state from "./narrow_state";
 import * as navigate from "./navigate";
@@ -25,6 +24,7 @@ import * as ui from "./ui";
 import * as unread from "./unread";
 import * as unread_ops from "./unread_ops";
 import {user_settings} from "./user_settings";
+import * as user_topics from "./user_topics";
 
 const notice_memory = new Map();
 
@@ -170,7 +170,7 @@ export function notify_above_composebox(
     link_msg_id,
     link_text,
 ) {
-    const notification_html = $(
+    const $notification = $(
         render_compose_notification({
             note,
             link_class,
@@ -180,7 +180,7 @@ export function notify_above_composebox(
         }),
     );
     clear_compose_notifications();
-    $("#out-of-view-notification").append(notification_html);
+    $("#out-of-view-notification").append($notification);
     $("#out-of-view-notification").show();
 }
 
@@ -237,10 +237,10 @@ export function process_notification(notification) {
     let msg_count = 1;
     let notification_source;
     // Convert the content to plain text, replacing emoji with their alt text
-    content = $("<div/>").html(message.content);
-    ui.replace_emoji_with_text(content);
-    spoilers.hide_spoilers_in_notification(content);
-    content = content.text();
+    const $content = $("<div>").html(message.content);
+    ui.replace_emoji_with_text($content);
+    spoilers.hide_spoilers_in_notification($content);
+    content = $content.text();
 
     const topic = message.topic;
 
@@ -256,10 +256,10 @@ export function process_notification(notification) {
             content = "New private message from " + message.sender_full_name;
         }
         key = message.display_reply_to;
-        other_recipients = message.display_reply_to;
         // Remove the sender from the list of other recipients
-        other_recipients = other_recipients.replace(", " + message.sender_full_name, "");
-        other_recipients = other_recipients.replace(message.sender_full_name + ", ", "");
+        other_recipients = `, ${message.display_reply_to}, `
+            .replace(`, ${message.sender_full_name}, `, ", ")
+            .slice(", ".length, -", ".length);
         notification_source = "pm";
     } else {
         key = message.sender_full_name + " to " + message.stream + " > " + topic;
@@ -378,10 +378,7 @@ export function message_is_notifiable(message) {
         return false;
     }
 
-    if (
-        message.type === "stream" &&
-        muted_topics.is_topic_muted(message.stream_id, message.topic)
-    ) {
+    if (message.type === "stream" && user_topics.is_topic_muted(message.stream_id, message.topic)) {
         return false;
     }
 
@@ -531,7 +528,7 @@ export function send_test_notification(content) {
 }
 
 // Note that this returns values that are not HTML-escaped, for use in
-// handlebars templates that will do further escaping.
+// Handlebars templates that will do further escaping.
 function get_message_header(message) {
     if (message.type === "stream") {
         return message.stream + " > " + message.topic;
@@ -552,17 +549,14 @@ function get_message_header(message) {
 }
 
 export function get_local_notify_mix_reason(message) {
-    const row = message_lists.current.get_row(message.id);
-    if (row.length > 0) {
+    const $row = message_lists.current.get_row(message.id);
+    if ($row.length > 0) {
         // If our message is in the current message list, we do
         // not have a mix, so we are happy.
         return undefined;
     }
 
-    if (
-        message.type === "stream" &&
-        muted_topics.is_topic_muted(message.stream_id, message.topic)
-    ) {
+    if (message.type === "stream" && user_topics.is_topic_muted(message.stream_id, message.topic)) {
         return $t({defaultMessage: "Sent! Your message was sent to a topic you have muted."});
     }
 
@@ -652,7 +646,7 @@ export function notify_local_mixes(messages, need_user_to_scroll) {
 function get_above_composebox_narrow_url(message) {
     let above_composebox_narrow_url;
     if (message.type === "stream") {
-        above_composebox_narrow_url = hash_util.by_stream_topic_uri(
+        above_composebox_narrow_url = hash_util.by_stream_topic_url(
             message.stream_id,
             message.topic,
         );
@@ -697,11 +691,11 @@ export function reify_message_id(opts) {
     // If a message ID that we're currently storing (as a link) has changed,
     // update that link as well
     for (const e of $("#out-of-view-notification a")) {
-        const elem = $(e);
-        const message_id = elem.data("message-id");
+        const $elem = $(e);
+        const message_id = $elem.data("message-id");
 
         if (message_id === old_id) {
-            elem.data("message-id", new_id);
+            $elem.data("message-id", new_id);
         }
     }
 }
@@ -736,8 +730,9 @@ export function handle_global_notification_updates(notification_name, setting) {
     }
 
     if (settings_config.stream_notification_settings.includes(notification_name)) {
-        notification_name = notification_name.replace("enable_stream_", "");
-        stream_ui_updates.update_notification_setting_checkbox(notification_name);
+        stream_ui_updates.update_notification_setting_checkbox(
+            settings_config.specialize_stream_notification_setting[notification_name],
+        );
     }
 
     if (notification_name === "notification_sound") {

@@ -20,8 +20,8 @@ export function validate_opts(opts) {
         blueslip.error("html_selector should be a function.");
         return false;
     }
-    if (!opts.simplebar_container) {
-        blueslip.error("simplebar_container is missing.");
+    if (!opts.$simplebar_container) {
+        blueslip.error("$simplebar_container is missing.");
         return false;
     }
     return true;
@@ -130,7 +130,7 @@ function is_scroll_position_for_render(scroll_container) {
 }
 
 // @params
-// container: jQuery object to append to.
+// $container: jQuery object to append to.
 // list: The list of items to progressively append.
 // opts: An object of random preferences.
 export function create($container, list, opts) {
@@ -198,11 +198,11 @@ export function create($container, list, opts) {
         if (items.selected_items) {
             const data = items.selected_items;
             for (const value of data) {
-                const list_item = $container.find(`li[data-value = "${value}"]`);
-                if (list_item.length) {
-                    const link_elem = list_item.find("a").expectOne();
-                    list_item.addClass("checked");
-                    link_elem.prepend($("<i>", {class: "fa fa-check"}));
+                const $list_item = $container.find(`li[data-value = "${value}"]`);
+                if ($list_item.length) {
+                    const $link_elem = $list_item.find("a").expectOne();
+                    $list_item.addClass("checked");
+                    $link_elem.prepend($("<i>").addClass(["fa", "fa-check"]));
                 }
             }
         }
@@ -256,8 +256,8 @@ export function create($container, list, opts) {
             // We don't have any way to find the existing item.
             return;
         }
-        const html_item = meta.scroll_container.find(opts.html_selector(item));
-        if (!html_item) {
+        const $html_item = meta.$scroll_container.find(opts.html_selector(item));
+        if (!$html_item) {
             // We don't have the item in the current scroll container; it'll be
             // rendered with updated data when it is scrolled to.
             return;
@@ -274,11 +274,11 @@ export function create($container, list, opts) {
 
         // At this point, we have asserted we have all the information to replace
         // the html now.
-        html_item.replaceWith(html);
+        $html_item.replaceWith(html);
     };
 
     widget.clear = function () {
-        $container.html("");
+        $container.empty();
         meta.offset = 0;
     };
 
@@ -306,11 +306,11 @@ export function create($container, list, opts) {
     };
 
     widget.set_up_event_handlers = function () {
-        meta.scroll_container = ui.get_scroll_element(opts.simplebar_container);
+        meta.$scroll_container = ui.get_scroll_element(opts.$simplebar_container);
 
         // on scroll of the nearest scrolling container, if it hits the bottom
         // of the container then fetch a new block of items and render them.
-        meta.scroll_container.on("scroll.list_widget_container", function () {
+        meta.$scroll_container.on("scroll.list_widget_container", function () {
             if (opts.post_scroll__pre_render_callback) {
                 opts.post_scroll__pre_render_callback();
             }
@@ -325,14 +325,14 @@ export function create($container, list, opts) {
             }
         });
 
-        if (opts.parent_container) {
-            opts.parent_container.on("click.list_widget_sort", "[data-sort]", function () {
+        if (opts.$parent_container) {
+            opts.$parent_container.on("click.list_widget_sort", "[data-sort]", function () {
                 handle_sort($(this), widget);
             });
         }
 
-        if (opts.filter && opts.filter.element) {
-            opts.filter.element.on("input.list_widget_filter", function () {
+        if (opts.filter && opts.filter.$element) {
+            opts.filter.$element.on("input.list_widget_filter", function () {
                 const value = this.value.toLocaleLowerCase();
                 widget.set_filter_value(value);
                 widget.hard_redraw();
@@ -341,14 +341,65 @@ export function create($container, list, opts) {
     };
 
     widget.clear_event_handlers = function () {
-        meta.scroll_container.off("scroll.list_widget_container");
+        meta.$scroll_container.off("scroll.list_widget_container");
 
-        if (opts.parent_container) {
-            opts.parent_container.off("click.list_widget_sort", "[data-sort]");
+        if (opts.$parent_container) {
+            opts.$parent_container.off("click.list_widget_sort", "[data-sort]");
         }
 
-        if (opts.filter && opts.filter.element) {
-            opts.filter.element.off("input.list_widget_filter");
+        if (opts.filter && opts.filter.$element) {
+            opts.filter.$element.off("input.list_widget_filter");
+        }
+    };
+
+    widget.increase_rendered_offset = function () {
+        meta.offset = Math.min(meta.offset + 1, meta.filtered_list.length);
+    };
+
+    widget.reduce_rendered_offset = function () {
+        meta.offset = Math.max(meta.offset - 1, 0);
+    };
+
+    widget.remove_rendered_row = function (rendered_row) {
+        rendered_row.remove();
+        // We removed a rendered row, so we need to reduce one offset.
+        widget.reduce_rendered_offset();
+    };
+
+    widget.insert_rendered_row = function (item) {
+        // NOTE: Caller should call `filter_and_sort` before calling this function
+        // so that `meta.filtered_list` already has the `item`.
+        if (meta.filtered_list.length <= 2) {
+            // Avoids edge cases for us and could be faster too.
+            widget.clean_redraw();
+            return;
+        }
+        if (!opts.filter.predicate(item)) {
+            return;
+        }
+        // We need to insert the row for it to be displayed at the
+        // correct position. filtered_list must contain the new item
+        // since we know it is not hidden from the above check.
+        const topic_insert_index = meta.filtered_list.findIndex(
+            (list_item) => list_item.last_msg_id === item.last_msg_id,
+        );
+        // Rows greater than `offset` are not rendered in the DOM by list_widget;
+        // for those, there's nothing to update.
+        if (topic_insert_index <= meta.offset) {
+            if (!opts.modifier || !opts.html_selector) {
+                blueslip.error(
+                    "Please specify modifier and html_selector when creating the widget.",
+                );
+            }
+            const rendered_row = opts.modifier(item);
+            if (topic_insert_index === meta.filtered_list.length - 1) {
+                const $target_row = opts.html_selector(meta.filtered_list[topic_insert_index - 1]);
+                $target_row.after(rendered_row);
+            } else {
+                const $target_row = opts.html_selector(meta.filtered_list[topic_insert_index + 1]);
+                $target_row.before(rendered_row);
+            }
+            widget.increase_rendered_offset();
         }
     };
 
@@ -406,7 +457,7 @@ export function get(name) {
     return DEFAULTS.instances.get(name) || false;
 }
 
-export function handle_sort(th, list) {
+export function handle_sort($th, list) {
     /*
         one would specify sort parameters like this:
             - name => sort alphabetic.
@@ -420,21 +471,21 @@ export function handle_sort(th, list) {
             <th data-sort="status"></th>
         </thead>
         */
-    const sort_type = th.data("sort");
-    const prop_name = th.data("sort-prop");
+    const sort_type = $th.data("sort");
+    const prop_name = $th.data("sort-prop");
 
-    if (th.hasClass("active")) {
-        if (!th.hasClass("descend")) {
-            th.addClass("descend");
+    if ($th.hasClass("active")) {
+        if (!$th.hasClass("descend")) {
+            $th.addClass("descend");
         } else {
-            th.removeClass("descend");
+            $th.removeClass("descend");
         }
     } else {
-        th.siblings(".active").removeClass("active");
-        th.addClass("active");
+        $th.siblings(".active").removeClass("active");
+        $th.addClass("active");
     }
 
-    list.set_reverse_mode(th.hasClass("descend"));
+    list.set_reverse_mode($th.hasClass("descend"));
 
     // if `prop_name` is defined, it will trigger the generic codepath,
     // and not if it is undefined.

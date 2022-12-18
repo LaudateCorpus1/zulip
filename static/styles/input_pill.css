@@ -73,6 +73,20 @@
         }
     }
 
+    &.pill-container-btn {
+        cursor: pointer;
+        padding: 0;
+
+        .pill {
+            margin: 0;
+            border: none;
+
+            .exit {
+                display: none;
+            }
+        }
+    }
+
     .input {
         display: inline-block;
         padding: 2px 4px;
@@ -93,9 +107,9 @@
 
 .pm_recipient .pill-container {
     padding: 0 2px;
-    border: none;
     flex-grow: 1;
     align-content: center;
+    border: 1px solid hsla(0, 0%, 0%, 0.2);
 
     .input {
         height: 20px;

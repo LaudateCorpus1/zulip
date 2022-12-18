@@ -9,7 +9,18 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, TypeVar, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+)
 from unittest.mock import Mock, patch
 
 import orjson
@@ -18,10 +29,10 @@ import stripe
 import stripe.util
 from django.conf import settings
 from django.core import signing
-from django.http import HttpResponse
 from django.urls.resolvers import get_resolver
 from django.utils.crypto import get_random_string
 from django.utils.timezone import now as timezone_now
+from typing_extensions import ParamSpec
 
 from corporate.lib.stripe import (
     DEFAULT_INVOICE_DAYS_UNTIL_DUE,
@@ -80,15 +91,14 @@ from corporate.models import (
     get_current_plan_by_realm,
     get_customer_by_realm,
 )
-from zerver.lib.actions import (
+from zerver.actions.create_realm import do_create_realm
+from zerver.actions.create_user import (
     do_activate_mirror_dummy_user,
-    do_create_realm,
     do_create_user,
-    do_deactivate_realm,
-    do_deactivate_user,
-    do_reactivate_realm,
     do_reactivate_user,
 )
+from zerver.actions.realm_settings import do_deactivate_realm, do_reactivate_realm
+from zerver.actions.users import do_deactivate_user
 from zerver.lib.test_classes import ZulipTestCase
 from zerver.lib.timestamp import datetime_to_timestamp, timestamp_to_datetime
 from zerver.lib.utils import assert_is_not_none
@@ -103,7 +113,12 @@ from zerver.models import (
 )
 from zilencer.models import RemoteZulipServer, RemoteZulipServerAuditLog
 
+if TYPE_CHECKING:
+    from django.test.client import _MonkeyPatchedWSGIResponse as TestHttpResponse
+
 CallableT = TypeVar("CallableT", bound=Callable[..., Any])
+ParamT = ParamSpec("ParamT")
+ReturnT = TypeVar("ReturnT")
 
 STRIPE_FIXTURES_DIR = "corporate/tests/stripe_fixtures"
 
@@ -158,12 +173,11 @@ def generate_and_save_stripe_fixture(
                 stripe_object = mocked_function(*args, **kwargs)
         except stripe.error.StripeError as e:
             with open(fixture_path, "w") as f:
-                error_dict = e.__dict__
-                error_dict["headers"] = dict(error_dict["headers"])
+                error_dict = {**vars(e), "headers": dict(e.headers)}
                 f.write(
                     json.dumps(error_dict, indent=2, separators=(",", ": "), sort_keys=True) + "\n"
                 )
-            raise e
+            raise
         with open(fixture_path, "w") as f:
             if stripe_object is not None:
                 f.write(str(stripe_object) + "\n")
@@ -191,7 +205,7 @@ def read_stripe_fixture(
             requestor.interpret_response(
                 fixture["http_body"], fixture["http_status"], fixture["headers"]
             )
-        return stripe.util.convert_to_stripe_object(fixture)  # type: ignore[attr-defined] # missing from stubs
+        return stripe.util.convert_to_stripe_object(fixture)
 
     return _read_stripe_fixture
 
@@ -334,12 +348,10 @@ MOCKED_STRIPE_FUNCTION_NAMES = [
 
 
 def mock_stripe(
-    tested_timestamp_fields: Sequence[str] = [], generate: Optional[bool] = None
-) -> Callable[[CallableT], CallableT]:
-    def _mock_stripe(decorated_function: CallableT) -> CallableT:
+    tested_timestamp_fields: Sequence[str] = [], generate: bool = settings.GENERATE_STRIPE_FIXTURES
+) -> Callable[[Callable[ParamT, ReturnT]], Callable[ParamT, ReturnT]]:
+    def _mock_stripe(decorated_function: Callable[ParamT, ReturnT]) -> Callable[ParamT, ReturnT]:
         generate_fixture = generate
-        if generate_fixture is None:
-            generate_fixture = settings.GENERATE_STRIPE_FIXTURES
         if generate_fixture:  # nocoverage
             assert stripe.api_key
         for mocked_function_name in MOCKED_STRIPE_FUNCTION_NAMES:
@@ -350,17 +362,14 @@ def mock_stripe(
                 )  # nocoverage
             else:
                 side_effect = read_stripe_fixture(decorated_function.__name__, mocked_function_name)
-            decorated_function = cast(
-                CallableT,
-                patch(
-                    mocked_function_name,
-                    side_effect=side_effect,
-                    autospec=mocked_function_name.endswith(".refresh"),
-                )(decorated_function),
-            )
+            decorated_function = patch(
+                mocked_function_name,
+                side_effect=side_effect,
+                autospec=mocked_function_name.endswith(".refresh"),
+            )(decorated_function)
 
         @wraps(decorated_function)
-        def wrapped(*args: object, **kwargs: object) -> object:
+        def wrapped(*args: ParamT.args, **kwargs: ParamT.kwargs) -> ReturnT:
             if generate_fixture:  # nocoverage
                 delete_fixture_data(decorated_function)
                 val = decorated_function(*args, **kwargs)
@@ -369,7 +378,7 @@ def mock_stripe(
             else:
                 return decorated_function(*args, **kwargs)
 
-        return cast(CallableT, wrapped)
+        return wrapped
 
     return _mock_stripe
 
@@ -425,11 +434,11 @@ class StripeTestCase(ZulipTestCase):
         self.next_month = datetime(2012, 2, 2, 3, 4, 5, tzinfo=timezone.utc)
         self.next_year = datetime(2013, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 
-    def get_signed_seat_count_from_response(self, response: HttpResponse) -> Optional[str]:
+    def get_signed_seat_count_from_response(self, response: "TestHttpResponse") -> Optional[str]:
         match = re.search(r"name=\"signed_seat_count\" value=\"(.+)\"", response.content.decode())
         return match.group(1) if match else None
 
-    def get_salt_from_response(self, response: HttpResponse) -> Optional[str]:
+    def get_salt_from_response(self, response: "TestHttpResponse") -> Optional[str]:
         match = re.search(r"name=\"salt\" value=\"(\w+)\"", response.content.decode())
         return match.group(1) if match else None
 
@@ -461,8 +470,8 @@ class StripeTestCase(ZulipTestCase):
                 "stripe_session_id": stripe_session_id,
             },
         )
-        self.assert_json_success(json_response)
-        self.assertEqual(json_response.json()["session"], expected_details)
+        response_dict = self.assert_json_success(json_response)
+        self.assertEqual(response_dict["session"], expected_details)
 
     def assert_details_of_valid_payment_intent_from_event_status_endpoint(
         self,
@@ -475,8 +484,8 @@ class StripeTestCase(ZulipTestCase):
                 "stripe_payment_intent_id": stripe_payment_intent_id,
             },
         )
-        self.assert_json_success(json_response)
-        self.assertEqual(json_response.json()["payment_intent"], expected_details)
+        response_dict = self.assert_json_success(json_response)
+        self.assertEqual(response_dict["payment_intent"], expected_details)
 
     def trigger_stripe_checkout_session_completed_webhook(
         self,
@@ -534,17 +543,13 @@ class StripeTestCase(ZulipTestCase):
         invoice: bool = False,
         talk_to_stripe: bool = True,
         onboarding: bool = False,
-        realm: Optional[Realm] = None,
         payment_method: Optional[stripe.PaymentMethod] = None,
-        upgrade_page_response: HttpResponse = None,
+        upgrade_page_response: Optional["TestHttpResponse"] = None,
         del_args: Sequence[str] = [],
         **kwargs: Any,
-    ) -> HttpResponse:
-        host_args = {}
-        if realm is not None:  # nocoverage: TODO
-            host_args["HTTP_HOST"] = realm.host
+    ) -> "TestHttpResponse":
         if upgrade_page_response is None:
-            upgrade_page_response = self.client_get("/upgrade/", {}, **host_args)
+            upgrade_page_response = self.client_get("/upgrade/", {})
         params: Dict[str, Any] = {
             "schedule": "annual",
             "signed_seat_count": self.get_signed_seat_count_from_response(upgrade_page_response),
@@ -574,7 +579,7 @@ class StripeTestCase(ZulipTestCase):
         if talk_to_stripe:
             [last_event] = stripe.Event.list(limit=1)
 
-        upgrade_json_response = self.client_post("/json/billing/upgrade", params, **host_args)
+        upgrade_json_response = self.client_post("/json/billing/upgrade", params)
 
         if invoice or not talk_to_stripe:
             return upgrade_json_response
@@ -586,13 +591,16 @@ class StripeTestCase(ZulipTestCase):
             else:
                 expected_session_details["type"] = "free_trial_upgrade_from_billing_page"
         else:
+            last_stripe_payment_intent = PaymentIntent.objects.last()
+            assert last_stripe_payment_intent is not None
             expected_session_details["type"] = "upgrade_from_billing_page"
             expected_session_details[
                 "stripe_payment_intent_id"
-            ] = PaymentIntent.objects.last().stripe_payment_intent_id
+            ] = last_stripe_payment_intent.stripe_payment_intent_id
 
+        response_dict = self.assert_json_success(upgrade_json_response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            upgrade_json_response.json()["stripe_session_id"], expected_session_details
+            response_dict["stripe_session_id"], expected_session_details
         )
         if payment_method is None:
             payment_method = create_payment_method(
@@ -614,7 +622,7 @@ class StripeTestCase(ZulipTestCase):
         free_trial: bool,
     ) -> None:
         class StripeMock(Mock):
-            def __init__(self, depth: int = 1):
+            def __init__(self, depth: int = 1) -> None:
                 super().__init__(spec=stripe.Card)
                 self.id = "id"
                 self.created = "1000"
@@ -696,8 +704,10 @@ class StripeTest(StripeTestCase):
             response = self.upgrade()
         [payment_intent] = PaymentIntent.objects.all()
         assert payment_intent.stripe_payment_intent_id is not None
+
+        response_dict = self.assert_json_success(response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            response.json()["stripe_session_id"],
+            response_dict["stripe_session_id"],
             {
                 "type": "upgrade_from_billing_page",
                 "status": "completed",
@@ -732,10 +742,10 @@ class StripeTest(StripeTestCase):
         self.assertEqual(charge.amount, 8000 * self.seat_count)
         # TODO: fix Decimal
         self.assertEqual(
-            charge.description, f"Upgrade to Zulip Standard, $80.0 x {self.seat_count}"
+            charge.description, f"Upgrade to Zulip Cloud Standard, $80.0 x {self.seat_count}"
         )
         self.assertEqual(charge.receipt_email, user.delivery_email)
-        self.assertEqual(charge.statement_descriptor, "Zulip Standard")
+        self.assertEqual(charge.statement_descriptor, "Zulip Cloud Standard")
         # Check Invoices in Stripe
         [invoice] = stripe.Invoice.list(customer=stripe_customer.id)
         self.assertIsNotNone(invoice.status_transitions.finalized_at)
@@ -755,7 +765,7 @@ class StripeTest(StripeTestCase):
         [item0, item1] = invoice.lines
         line_item_params = {
             "amount": 8000 * self.seat_count,
-            "description": "Zulip Standard",
+            "description": "Zulip Cloud Standard",
             "discountable": False,
             "period": {
                 "end": datetime_to_timestamp(self.next_year),
@@ -838,14 +848,14 @@ class StripeTest(StripeTestCase):
         # Check that we can no longer access /upgrade
         response = self.client_get("/upgrade/")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual("/billing/", response.url)
+        self.assertEqual("/billing/", response["Location"])
 
         # Check /billing has the correct information
         with patch("corporate.views.billing_page.timezone_now", return_value=self.now):
             response = self.client_get("/billing/")
         self.assert_not_in_success_response(["Pay annually"], response)
         for substring in [
-            "Zulip Standard",
+            "Zulip Cloud Standard",
             str(self.seat_count),
             "You are using",
             f"{self.seat_count} of {self.seat_count} licenses",
@@ -899,7 +909,7 @@ class StripeTest(StripeTestCase):
             "attempt_count": 0,
             "auto_advance": True,
             "collection_method": "send_invoice",
-            "statement_descriptor": "Zulip Standard",
+            "statement_descriptor": "Zulip Cloud Standard",
             "status": "open",
             "total": 8000 * 123,
         }
@@ -909,7 +919,7 @@ class StripeTest(StripeTestCase):
         [item] = invoice.lines
         line_item_params = {
             "amount": 8000 * 123,
-            "description": "Zulip Standard",
+            "description": "Zulip Cloud Standard",
             "discountable": False,
             "period": {
                 "end": datetime_to_timestamp(self.next_year),
@@ -979,14 +989,14 @@ class StripeTest(StripeTestCase):
         # Check that we can no longer access /upgrade
         response = self.client_get("/upgrade/")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual("/billing/", response.url)
+        self.assertEqual("/billing/", response["Location"])
 
         # Check /billing has the correct information
         with patch("corporate.views.billing_page.timezone_now", return_value=self.now):
             response = self.client_get("/billing/")
         self.assert_not_in_success_response(["Pay annually", "Update card"], response)
         for substring in [
-            "Zulip Standard",
+            "Zulip Cloud Standard",
             str(123),
             "You are using",
             f"{self.seat_count} of {123} licenses",
@@ -1018,8 +1028,10 @@ class StripeTest(StripeTestCase):
             with patch("corporate.lib.stripe.timezone_now", return_value=self.now):
                 response = self.upgrade()
             self.assertEqual(PaymentIntent.objects.count(), 0)
+
+            response_dict = self.assert_json_success(response)
             self.assert_details_of_valid_session_from_event_status_endpoint(
-                response.json()["stripe_session_id"],
+                response_dict["stripe_session_id"],
                 {
                     "type": "free_trial_upgrade_from_billing_page",
                     "status": "completed",
@@ -1107,7 +1119,7 @@ class StripeTest(StripeTestCase):
                 response = self.client_get("/billing/")
             self.assert_not_in_success_response(["Pay annually"], response)
             for substring in [
-                "Zulip Standard",
+                "Zulip Cloud Standard",
                 "Free Trial",
                 str(self.seat_count),
                 "You are using",
@@ -1174,7 +1186,7 @@ class StripeTest(StripeTestCase):
             [invoice_item] = invoice.get("lines")
             invoice_item_params = {
                 "amount": 15 * 80 * 100,
-                "description": "Zulip Standard - renewal",
+                "description": "Zulip Cloud Standard - renewal",
                 "plan": None,
                 "quantity": 15,
                 "subscription": None,
@@ -1234,8 +1246,10 @@ class StripeTest(StripeTestCase):
             with patch("corporate.lib.stripe.timezone_now", return_value=self.now):
                 response = self.upgrade(onboarding=True)
             self.assertEqual(PaymentIntent.objects.all().count(), 0)
+
+            response_dict = self.assert_json_success(response)
             self.assert_details_of_valid_session_from_event_status_endpoint(
-                response.json()["stripe_session_id"],
+                response_dict["stripe_session_id"],
                 {
                     "type": "free_trial_upgrade_from_onboarding_page",
                     "status": "completed",
@@ -1371,7 +1385,7 @@ class StripeTest(StripeTestCase):
                 response = self.client_get("/billing/")
             self.assert_not_in_success_response(["Pay annually"], response)
             for substring in [
-                "Zulip Standard",
+                "Zulip Cloud Standard",
                 "Free Trial",
                 str(self.seat_count),
                 "You are using",
@@ -1416,7 +1430,7 @@ class StripeTest(StripeTestCase):
             [invoice_item] = invoice.get("lines")
             invoice_item_params = {
                 "amount": 123 * 80 * 100,
-                "description": "Zulip Standard - renewal",
+                "description": "Zulip Cloud Standard - renewal",
                 "plan": None,
                 "quantity": 123,
                 "subscription": None,
@@ -1489,8 +1503,9 @@ class StripeTest(StripeTestCase):
             )
 
         [payment_intent] = PaymentIntent.objects.all()
+        response_dict = self.assert_json_success(response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            response.json()["stripe_session_id"],
+            response_dict["stripe_session_id"],
             {
                 "type": "upgrade_from_billing_page",
                 "status": "completed",
@@ -1537,7 +1552,7 @@ class StripeTest(StripeTestCase):
         # Check that we still get redirected to /upgrade
         response = self.client_get("/billing/")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual("/upgrade/", response.url)
+        self.assertEqual("/upgrade/", response["Location"])
 
         [last_event] = stripe.Event.list(limit=1)
         retry_payment_intent_json_response = self.client_post(
@@ -1548,8 +1563,9 @@ class StripeTest(StripeTestCase):
         )
         self.assert_json_success(retry_payment_intent_json_response)
         [payment_intent] = PaymentIntent.objects.all()
+        response_dict = self.assert_json_success(retry_payment_intent_json_response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            retry_payment_intent_json_response.json()["stripe_session_id"],
+            response_dict["stripe_session_id"],
             {
                 "type": "retry_upgrade_with_another_payment_method",
                 "status": "created",
@@ -1569,8 +1585,9 @@ class StripeTest(StripeTestCase):
         )
         self.send_stripe_webhook_events(last_event)
 
+        response_dict = self.assert_json_success(retry_payment_intent_json_response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            retry_payment_intent_json_response.json()["stripe_session_id"],
+            response_dict["stripe_session_id"],
             {
                 "type": "retry_upgrade_with_another_payment_method",
                 "status": "completed",
@@ -1632,7 +1649,7 @@ class StripeTest(StripeTestCase):
         # Check that we can no longer access /upgrade
         response = self.client_get("/upgrade/")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual("/billing/", response.url)
+        self.assertEqual("/billing/", response["Location"])
 
     @mock_stripe()
     def test_upgrade_first_card_fails_and_restart_from_begining(self, *mocks: Mock) -> None:
@@ -1655,8 +1672,9 @@ class StripeTest(StripeTestCase):
 
         [payment_intent] = PaymentIntent.objects.all()
         assert payment_intent.stripe_payment_intent_id is not None
+        response_dict = self.assert_json_success(response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            response.json()["stripe_session_id"],
+            response_dict["stripe_session_id"],
             {
                 "type": "upgrade_from_billing_page",
                 "status": "completed",
@@ -1705,7 +1723,7 @@ class StripeTest(StripeTestCase):
         # Check that we still get redirected to /upgrade
         response = self.client_get("/billing/")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual("/upgrade/", response.url)
+        self.assertEqual("/upgrade/", response["Location"])
 
         # Try again, with a valid card, after they added a few users
         with patch("corporate.lib.stripe.get_latest_seat_count", return_value=23):
@@ -1713,8 +1731,9 @@ class StripeTest(StripeTestCase):
                 response = self.upgrade()
         [second_payment_intent, _] = PaymentIntent.objects.all().order_by("-id")
         assert second_payment_intent.stripe_payment_intent_id is not None
+        response_dict = self.assert_json_success(response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            response.json()["stripe_session_id"],
+            response_dict["stripe_session_id"],
             {
                 "type": "upgrade_from_billing_page",
                 "status": "completed",
@@ -1764,7 +1783,7 @@ class StripeTest(StripeTestCase):
         # Check that we can no longer access /upgrade
         response = self.client_get("/upgrade/")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual("/billing/", response.url)
+        self.assertEqual("/billing/", response["Location"])
 
     def test_upgrade_with_tampered_seat_count(self) -> None:
         hamlet = self.example_user("hamlet")
@@ -1959,8 +1978,9 @@ class StripeTest(StripeTestCase):
             invoice: bool,
             licenses: Optional[int],
             min_licenses_in_response: int,
-            upgrade_params: Dict[str, Any] = {},
+            upgrade_params: Mapping[str, Any] = {},
         ) -> None:
+            upgrade_params = dict(upgrade_params)
             if licenses is None:
                 del_args = ["licenses"]
             else:
@@ -1986,8 +2006,9 @@ class StripeTest(StripeTestCase):
             )
 
         def check_success(
-            invoice: bool, licenses: Optional[int], upgrade_params: Dict[str, Any] = {}
+            invoice: bool, licenses: Optional[int], upgrade_params: Mapping[str, Any] = {}
         ) -> None:
+            upgrade_params = dict(upgrade_params)
             if licenses is None:
                 del_args = ["licenses"]
             else:
@@ -2069,8 +2090,9 @@ class StripeTest(StripeTestCase):
         ), self.assertLogs("corporate.stripe", "WARNING"):
             response = self.upgrade()
 
+        response_dict = self.assert_json_success(response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            response.json()["stripe_session_id"],
+            response_dict["stripe_session_id"],
             {
                 "type": "upgrade_from_billing_page",
                 "status": "completed",
@@ -2096,8 +2118,9 @@ class StripeTest(StripeTestCase):
             response = self.upgrade()
 
         [payment_intent] = PaymentIntent.objects.all().order_by("-id")
+        response_dict = self.assert_json_success(response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            response.json()["stripe_session_id"],
+            response_dict["stripe_session_id"],
             {
                 "type": "upgrade_from_billing_page",
                 "status": "completed",
@@ -2265,7 +2288,7 @@ class StripeTest(StripeTestCase):
 
         response = self.client_get("/upgrade/")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.url, "/billing/")
+        self.assertEqual(response["Location"], "/billing/")
 
         response = self.client_get("/billing/")
         self.assert_in_success_response(
@@ -2284,7 +2307,8 @@ class StripeTest(StripeTestCase):
         self.login_user(self.example_user("hamlet"))
         response = self.client_get("/billing/")
         self.assert_in_success_response(
-            ["Your organization is fully sponsored and is on the <b>Zulip Standard</b>"], response
+            ["Your organization is fully sponsored and is on the <b>Zulip Cloud Standard</b>"],
+            response,
         )
 
     def test_redirect_for_billing_home(self) -> None:
@@ -2292,7 +2316,7 @@ class StripeTest(StripeTestCase):
         self.login_user(user)
         response = self.client_get("/billing/")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual("/upgrade/", response.url)
+        self.assertEqual("/upgrade/", response["Location"])
 
         user.realm.plan_type = Realm.PLAN_TYPE_STANDARD_FREE
         user.realm.save()
@@ -2304,7 +2328,16 @@ class StripeTest(StripeTestCase):
         Customer.objects.create(realm=user.realm, stripe_customer_id="cus_123")
         response = self.client_get("/billing/")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual("/upgrade/", response.url)
+        self.assertEqual("/upgrade/", response["Location"])
+
+    def test_upgrade_page_for_demo_organizations(self) -> None:
+        user = self.example_user("iago")
+        user.realm.demo_organization_scheduled_deletion_date = timezone_now() + timedelta(days=30)
+        user.realm.save()
+        self.login_user(user)
+
+        response = self.client_get("/billing/", follow=True)
+        self.assert_in_success_response(["cannot be directly upgraded"], response)
 
     def test_redirect_for_upgrade_page(self) -> None:
         user = self.example_user("iago")
@@ -2317,7 +2350,7 @@ class StripeTest(StripeTestCase):
         user.realm.save()
         response = self.client_get("/upgrade/")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.url, "/billing/")
+        self.assertEqual(response["Location"], "/billing/")
 
         user.realm.plan_type = Realm.PLAN_TYPE_LIMITED
         user.realm.save()
@@ -2333,16 +2366,16 @@ class StripeTest(StripeTestCase):
         )
         response = self.client_get("/upgrade/")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.url, "/billing/")
+        self.assertEqual(response["Location"], "/billing/")
 
         with self.settings(FREE_TRIAL_DAYS=30):
             response = self.client_get("/upgrade/")
             self.assertEqual(response.status_code, 302)
-            self.assertEqual(response.url, "/billing/")
+            self.assertEqual(response["Location"], "/billing/")
 
             response = self.client_get("/upgrade/", {"onboarding": "true"})
             self.assertEqual(response.status_code, 302)
-            self.assertEqual(response.url, "/billing/?onboarding=true")
+            self.assertEqual(response["Location"], "/billing/?onboarding=true")
 
     def test_get_latest_seat_count(self) -> None:
         realm = get_realm("zulip")
@@ -2548,8 +2581,9 @@ class StripeTest(StripeTestCase):
         start_session_json_response = self.client_post(
             "/json/billing/session/start_card_update_session"
         )
+        response_dict = self.assert_json_success(start_session_json_response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            start_session_json_response.json()["stripe_session_id"],
+            response_dict["stripe_session_id"],
             {
                 "type": "card_update_from_billing_page",
                 "status": "created",
@@ -2567,8 +2601,9 @@ class StripeTest(StripeTestCase):
         start_session_json_response = self.client_post(
             "/json/billing/session/start_card_update_session"
         )
+        response_dict = self.assert_json_success(start_session_json_response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            start_session_json_response.json()["stripe_session_id"],
+            response_dict["stripe_session_id"],
             {
                 "type": "card_update_from_billing_page",
                 "status": "created",
@@ -2584,8 +2619,9 @@ class StripeTest(StripeTestCase):
                 m.output[0],
                 "INFO:corporate.stripe:Stripe card error: 402 card_error card_declined None",
             )
+        response_dict = self.assert_json_success(start_session_json_response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            start_session_json_response.json()["stripe_session_id"],
+            response_dict["stripe_session_id"],
             {
                 "type": "card_update_from_billing_page",
                 "status": "completed",
@@ -2620,8 +2656,9 @@ class StripeTest(StripeTestCase):
                 )
             )
         )
+        response_dict = self.assert_json_success(start_session_json_response)
         self.assert_details_of_valid_session_from_event_status_endpoint(
-            start_session_json_response.json()["stripe_session_id"],
+            response_dict["stripe_session_id"],
             {
                 "type": "card_update_from_billing_page",
                 "status": "completed",
@@ -2632,7 +2669,7 @@ class StripeTest(StripeTestCase):
         self.login_user(self.example_user("iago"))
         response = self.client_get(
             "/json/billing/event/status",
-            {"stripe_session_id": start_session_json_response.json()["stripe_session_id"]},
+            {"stripe_session_id": response_dict["stripe_session_id"]},
         )
         self.assert_json_error_contains(
             response, "Must be a billing administrator or an organization owner"
@@ -2871,7 +2908,7 @@ class StripeTest(StripeTestCase):
 
         annual_plan_invoice_item_params = {
             "amount": 20 * 80 * 100,
-            "description": "Zulip Standard - renewal",
+            "description": "Zulip Cloud Standard - renewal",
             "plan": None,
             "quantity": 20,
             "subscription": None,
@@ -2932,7 +2969,7 @@ class StripeTest(StripeTestCase):
         [invoice_item] = invoice0.get("lines")
         annual_plan_invoice_item_params = {
             "amount": 30 * 80 * 100,
-            "description": "Zulip Standard - renewal",
+            "description": "Zulip Cloud Standard - renewal",
             "plan": None,
             "quantity": 30,
             "subscription": None,
@@ -3021,7 +3058,7 @@ class StripeTest(StripeTestCase):
         [invoice_item] = invoice0.get("lines")
         annual_plan_invoice_item_params = {
             "amount": num_licenses * 80 * 100,
-            "description": "Zulip Standard - renewal",
+            "description": "Zulip Cloud Standard - renewal",
             "plan": None,
             "quantity": num_licenses,
             "subscription": None,
@@ -3045,7 +3082,7 @@ class StripeTest(StripeTestCase):
         [invoice_item] = invoice0.get("lines")
         annual_plan_invoice_item_params = {
             "amount": num_licenses * 80 * 100,
-            "description": "Zulip Standard - renewal",
+            "description": "Zulip Cloud Standard - renewal",
             "plan": None,
             "quantity": num_licenses,
             "subscription": None,
@@ -3274,7 +3311,7 @@ class StripeTest(StripeTestCase):
             "attempt_count": 0,
             "auto_advance": True,
             "collection_method": "send_invoice",
-            "statement_descriptor": "Zulip Standard",
+            "statement_descriptor": "Zulip Cloud Standard",
             "status": "open",
             "total": (8000 * 150 + 8000 * 50),
         }
@@ -3283,7 +3320,7 @@ class StripeTest(StripeTestCase):
         [renewal_item, extra_license_item] = invoice.lines
         line_item_params = {
             "amount": 8000 * 150,
-            "description": "Zulip Standard - renewal",
+            "description": "Zulip Cloud Standard - renewal",
             "discountable": False,
             "period": {
                 "end": datetime_to_timestamp(self.next_year + timedelta(days=365)),
@@ -3324,7 +3361,7 @@ class StripeTest(StripeTestCase):
             "attempt_count": 0,
             "auto_advance": True,
             "collection_method": "send_invoice",
-            "statement_descriptor": "Zulip Standard",
+            "statement_descriptor": "Zulip Cloud Standard",
             "status": "open",
             "total": 8000 * 120,
         }
@@ -3333,7 +3370,7 @@ class StripeTest(StripeTestCase):
         [renewal_item] = invoice.lines
         line_item_params = {
             "amount": 8000 * 120,
-            "description": "Zulip Standard - renewal",
+            "description": "Zulip Cloud Standard - renewal",
             "discountable": False,
             "period": {
                 "end": datetime_to_timestamp(self.next_year + timedelta(days=2 * 365)),
@@ -3517,7 +3554,7 @@ class StripeTest(StripeTestCase):
         stripe.InvoiceItem.create(
             currency="usd",
             customer=zulip_customer.stripe_customer_id,
-            description="Zulip standard upgrade",
+            description="Zulip Cloud Standard upgrade",
             discountable=False,
             unit_amount=800,
             quantity=8,
@@ -3527,7 +3564,7 @@ class StripeTest(StripeTestCase):
             collection_method="send_invoice",
             customer=zulip_customer.stripe_customer_id,
             days_until_due=30,
-            statement_descriptor="Zulip Standard",
+            statement_descriptor="Zulip Cloud Standard",
         )
         stripe.Invoice.finalize_invoice(stripe_invoice)
 
@@ -3535,7 +3572,7 @@ class StripeTest(StripeTestCase):
         stripe.InvoiceItem.create(
             currency="usd",
             customer=lear_customer.stripe_customer_id,
-            description="Zulip standard upgrade",
+            description="Zulip Cloud Standard upgrade",
             discountable=False,
             unit_amount=800,
             quantity=8,
@@ -3545,7 +3582,7 @@ class StripeTest(StripeTestCase):
             collection_method="send_invoice",
             customer=lear_customer.stripe_customer_id,
             days_until_due=30,
-            statement_descriptor="Zulip Standard",
+            statement_descriptor="Zulip Cloud Standard",
         )
         stripe.Invoice.finalize_invoice(stripe_invoice)
 
@@ -3576,7 +3613,7 @@ class StripeTest(StripeTestCase):
                 amount=10000,
                 currency="usd",
                 customer=customer.stripe_customer_id,
-                description="Zulip standard",
+                description="Zulip Cloud Standard",
                 discountable=False,
             )
             invoice = stripe.Invoice.create(
@@ -3584,7 +3621,7 @@ class StripeTest(StripeTestCase):
                 collection_method="send_invoice",
                 customer=customer.stripe_customer_id,
                 days_until_due=DEFAULT_INVOICE_DAYS_UNTIL_DUE,
-                statement_descriptor="Zulip Standard",
+                statement_descriptor="Zulip Cloud Standard",
             )
             stripe.Invoice.finalize_invoice(invoice)
             invoices.append(invoice)
@@ -3859,7 +3896,7 @@ class StripeWebhookEndpointTest(ZulipTestCase):
             "data": {"object": {"object": "checkout.session", "id": "stripe_session_id"}},
         }
 
-        expected_error_message = fr"Mismatch between billing system Stripe API version({STRIPE_API_VERSION}) and Stripe webhook event API version(1991-02-20)."
+        expected_error_message = rf"Mismatch between billing system Stripe API version({STRIPE_API_VERSION}) and Stripe webhook event API version(1991-02-20)."
         with self.assertLogs("corporate.stripe", "ERROR") as error_log:
             self.client_post(
                 "/stripe/webhook/",
@@ -4130,7 +4167,7 @@ class RequiresBillingAccessTest(StripeTestCase):
         self.login_user(self.example_user("hamlet"))
         response = self.client_get("/billing/")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual("/upgrade/", response.url)
+        self.assertEqual("/upgrade/", response["Location"])
         # Check that non-admins can sign up and pay
         self.upgrade()
         # Check that the non-admin hamlet can still access /billing
@@ -4675,7 +4712,7 @@ class InvoiceTest(StripeTestCase):
     def test_invoice_plan_without_stripe_customer(self) -> None:
         self.local_upgrade(self.seat_count, True, CustomerPlan.ANNUAL, False, False)
         plan = get_current_plan_by_realm(get_realm("zulip"))
-        assert plan and plan.customer
+        assert plan is not None
         plan.customer.stripe_customer_id = None
         plan.customer.save(update_fields=["stripe_customer_id"])
         with self.assertRaises(BillingError) as context:
@@ -4728,7 +4765,7 @@ class InvoiceTest(StripeTestCase):
             self.assertEqual(item0.get(key), value)
         line_item_params = {
             "amount": 8000 * (self.seat_count + 1),
-            "description": "Zulip Standard - renewal",
+            "description": "Zulip Cloud Standard - renewal",
             "discountable": False,
             "period": {
                 "start": datetime_to_timestamp(self.now + timedelta(days=366)),
@@ -4771,7 +4808,7 @@ class InvoiceTest(StripeTestCase):
         [item] = invoice0.lines
         line_item_params = {
             "amount": 100,
-            "description": "Zulip Standard - renewal",
+            "description": "Zulip Cloud Standard - renewal",
             "discountable": False,
             "period": {
                 "start": datetime_to_timestamp(self.next_year),

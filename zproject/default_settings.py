@@ -1,15 +1,14 @@
 import os
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from email.headerregistry import Address
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from scripts.lib.zulip_tools import deport
+from zproject.settings_types import JwtAuthKey, OIDCIdPConfigDict, SAMLIdPConfigDict
 
 from .config import DEVELOPMENT, PRODUCTION, get_secret
 
 if TYPE_CHECKING:
     from django_auth_ldap.config import LDAPSearch
-    from typing_extensions import TypedDict
-
-    from zerver.lib.types import SAMLIdPConfigDict
 
 if PRODUCTION:
     from .prod_settings import EXTERNAL_HOST, ZULIP_ADMINISTRATOR
@@ -28,9 +27,11 @@ EXTERNAL_HOST_WITHOUT_PORT = deport(EXTERNAL_HOST)
 ALLOWED_HOSTS: List[str] = []
 
 # Basic email settings
-NOREPLY_EMAIL_ADDRESS = "noreply@" + EXTERNAL_HOST_WITHOUT_PORT
+NOREPLY_EMAIL_ADDRESS = Address(username="noreply", domain=EXTERNAL_HOST_WITHOUT_PORT).addr_spec
 ADD_TOKENS_TO_NOREPLY_ADDRESS = True
-TOKENIZED_NOREPLY_EMAIL_ADDRESS = "noreply-{token}@" + EXTERNAL_HOST_WITHOUT_PORT
+TOKENIZED_NOREPLY_EMAIL_ADDRESS = Address(
+    username="noreply-{token}", domain=EXTERNAL_HOST_WITHOUT_PORT
+).addr_spec
 PHYSICAL_ADDRESS = ""
 FAKE_EMAIL_DOMAIN = EXTERNAL_HOST_WITHOUT_PORT
 
@@ -74,7 +75,7 @@ SOCIAL_AUTH_GITHUB_ORG_NAME: Optional[str] = None
 SOCIAL_AUTH_GITHUB_TEAM_ID: Optional[str] = None
 SOCIAL_AUTH_GITLAB_KEY = get_secret("social_auth_gitlab_key", development_only=True)
 SOCIAL_AUTH_SUBDOMAIN: Optional[str] = None
-SOCIAL_AUTH_AZUREAD_OAUTH2_SECRET = get_secret("azure_oauth2_secret")
+SOCIAL_AUTH_AZUREAD_OAUTH2_KEY = get_secret("social_auth_azuread_oauth2_key", development_only=True)
 SOCIAL_AUTH_GOOGLE_KEY = get_secret("social_auth_google_key", development_only=True)
 # SAML:
 SOCIAL_AUTH_SAML_SP_ENTITY_ID: Optional[str] = None
@@ -83,7 +84,7 @@ SOCIAL_AUTH_SAML_SP_PRIVATE_KEY = ""
 SOCIAL_AUTH_SAML_ORG_INFO: Optional[Dict[str, Dict[str, str]]] = None
 SOCIAL_AUTH_SAML_TECHNICAL_CONTACT: Optional[Dict[str, str]] = None
 SOCIAL_AUTH_SAML_SUPPORT_CONTACT: Optional[Dict[str, str]] = None
-SOCIAL_AUTH_SAML_ENABLED_IDPS: Dict[str, "SAMLIdPConfigDict"] = {}
+SOCIAL_AUTH_SAML_ENABLED_IDPS: Dict[str, SAMLIdPConfigDict] = {}
 SOCIAL_AUTH_SAML_SECURITY_CONFIG: Dict[str, Any] = {}
 # Set this to True to enforce that any configured IdP needs to specify
 # the limit_to_subdomains setting to be considered valid:
@@ -100,13 +101,14 @@ SOCIAL_AUTH_APPLE_SCOPE = ["name", "email"]
 SOCIAL_AUTH_APPLE_EMAIL_AS_USERNAME = True
 
 # Generic OpenID Connect:
-SOCIAL_AUTH_OIDC_ENABLED_IDPS: Dict[str, Dict[str, Optional[str]]] = {}
+SOCIAL_AUTH_OIDC_ENABLED_IDPS: Dict[str, OIDCIdPConfigDict] = {}
 SOCIAL_AUTH_OIDC_FULL_NAME_VALIDATED = False
 
 SOCIAL_AUTH_SYNC_CUSTOM_ATTRS_DICT: Dict[str, Dict[str, Dict[str, str]]] = {}
 
 # Other auth
 SSO_APPEND_DOMAIN: Optional[str] = None
+CUSTOM_HOME_NOT_LOGGED_IN: Optional[str] = None
 
 VIDEO_ZOOM_CLIENT_ID = get_secret("video_zoom_client_id", development_only=True)
 VIDEO_ZOOM_CLIENT_SECRET = get_secret("video_zoom_client_secret")
@@ -137,11 +139,12 @@ S3_AVATAR_BUCKET = ""
 S3_AUTH_UPLOADS_BUCKET = ""
 S3_REGION: Optional[str] = None
 S3_ENDPOINT_URL: Optional[str] = None
+S3_SKIP_PROXY = True
 LOCAL_UPLOADS_DIR: Optional[str] = None
 MAX_FILE_UPLOAD_SIZE = 25
 
 # Jitsi Meet video call integration; set to None to disable integration.
-JITSI_SERVER_URL = "https://meet.jit.si"
+JITSI_SERVER_URL: Optional[str] = "https://meet.jit.si"
 
 # GIPHY API key.
 GIPHY_API_KEY = get_secret("giphy_api_key")
@@ -194,6 +197,39 @@ RATE_LIMITING_AUTHENTICATE = True
 RATE_LIMIT_TOR_TOGETHER = False
 SEND_LOGIN_EMAILS = True
 EMBEDDED_BOTS_ENABLED = False
+
+DEFAULT_RATE_LIMITING_RULES = {
+    "api_by_user": [
+        (60, 200),  # 200 requests max every minute
+    ],
+    "api_by_ip": [
+        (60, 100),
+    ],
+    "api_by_remote_server": [
+        (60, 1000),
+    ],
+    "authenticate_by_username": [
+        (1800, 5),  # 5 failed login attempts within 30 minutes
+    ],
+    "email_change_by_user": [
+        (3600, 2),  # 2 per hour
+        (86400, 5),  # 5 per day
+    ],
+    "password_reset_form_by_email": [
+        (3600, 2),  # 2 reset emails per hour
+        (86400, 5),  # 5 per day
+    ],
+    "sends_email_by_ip": [
+        (86400, 5),
+    ],
+    "spectator_attachment_access_by_file": [
+        (86400, 1000),  # 1000 per day per file
+    ],
+}
+# Rate limiting defaults can be individually overridden by adding
+# entries in this object, which is merged with
+# DEFAULT_RATE_LIMITING_RULES.
+RATE_LIMITING_RULES: Dict[str, List[Tuple[int, int]]] = {}
 
 # Two factor authentication is not yet implementation-complete
 TWO_FACTOR_AUTHENTICATION_ENABLED = False
@@ -355,23 +391,22 @@ REALM_CREATION_LINK_VALIDITY_DAYS = 7
 # user to click through to re-accept terms of service before using
 # Zulip again on the web.
 TERMS_OF_SERVICE_VERSION: Optional[str] = None
-# Template to use when bumping TERMS_OF_SERVICE_VERSION to explain situation.
+# HTML template path (e.g. "corporate/zulipchat_migration_tos.html")
+# displayed to users when increasing TERMS_OF_SERVICE_VERSION when a
+# user is to accept the terms of service for the first time, but
+# already has an account. This primarily comes up when doing a data
+# import.
 FIRST_TIME_TERMS_OF_SERVICE_TEMPLATE: Optional[str] = None
+# Custom message (HTML allowed) to be displayed to explain why users
+# need to re-accept the terms of service when a new major version is
+# written.
+TERMS_OF_SERVICE_MESSAGE: Optional[str] = None
 
 # Hostname used for Zulip's statsd logging integration.
 STATSD_HOST = ""
 
 # Configuration for JWT auth.
-if TYPE_CHECKING:
-
-    class JwtAuthKey(TypedDict):
-        key: str
-        # See https://pyjwt.readthedocs.io/en/latest/algorithms.html for a list
-        # of supported algorithms.
-        algorithms: List[str]
-
-
-JWT_AUTH_KEYS: Dict[str, "JwtAuthKey"] = {}
+JWT_AUTH_KEYS: Dict[str, JwtAuthKey] = {}
 
 # https://docs.djangoproject.com/en/3.2/ref/settings/#std:setting-SERVER_EMAIL
 # Django setting for what from address to use in error emails.
@@ -396,7 +431,7 @@ CUSTOM_LOGO_URL: Optional[str] = None
 # development.
 INITIAL_PASSWORD_SALT: Optional[str] = None
 
-# Settings configuring the special instrumention of the send_event
+# Settings configuring the special instrumentation of the send_event
 # code path used in generating API documentation for /events.
 LOG_API_EVENT_TYPES = False
 
@@ -458,7 +493,7 @@ OUTGOING_WEBHOOK_TIMEOUT_SECONDS = 10
 
 # Maximum length of message content allowed.
 # Any message content exceeding this limit will be truncated.
-# See: `_internal_prep_message` function in zerver/lib/actions.py.
+# See: `_internal_prep_message` function in zerver/actions/message_send.py.
 MAX_MESSAGE_LENGTH = 10000
 
 # The maximum number of drafts to send in the response to /register.

@@ -9,7 +9,6 @@ import * as drafts from "./drafts";
 import * as local_message from "./local_message";
 import * as markdown from "./markdown";
 import * as message_events from "./message_events";
-import * as message_list from "./message_list";
 import * as message_lists from "./message_lists";
 import * as message_store from "./message_store";
 import * as narrow_state from "./narrow_state";
@@ -35,21 +34,21 @@ let waiting_for_ack = new Map();
 // These retry spinner functions return true if and only if the
 // spinner already is in the requested state, which can be used to
 // avoid sending duplicate requests.
-function show_retry_spinner(row) {
-    const retry_spinner = row.find(".refresh-failed-message");
+function show_retry_spinner($row) {
+    const $retry_spinner = $row.find(".refresh-failed-message");
 
-    if (!retry_spinner.hasClass("rotating")) {
-        retry_spinner.toggleClass("rotating", true);
+    if (!$retry_spinner.hasClass("rotating")) {
+        $retry_spinner.toggleClass("rotating", true);
         return false;
     }
     return true;
 }
 
-function hide_retry_spinner(row) {
-    const retry_spinner = row.find(".refresh-failed-message");
+function hide_retry_spinner($row) {
+    const $retry_spinner = $row.find(".refresh-failed-message");
 
-    if (retry_spinner.hasClass("rotating")) {
-        retry_spinner.toggleClass("rotating", false);
+    if ($retry_spinner.hasClass("rotating")) {
+        $retry_spinner.toggleClass("rotating", false);
         return false;
     }
     return true;
@@ -67,9 +66,9 @@ function failed_message_success(message_id) {
     ui.show_failed_message_success(message_id);
 }
 
-function resend_message(message, row) {
+function resend_message(message, $row) {
     message.content = message.raw_content;
-    if (show_retry_spinner(row)) {
+    if (show_retry_spinner($row)) {
         // retry already in in progress
         return;
     }
@@ -84,7 +83,7 @@ function resend_message(message, row) {
         const message_id = data.id;
         const locally_echoed = true;
 
-        hide_retry_spinner(row);
+        hide_retry_spinner($row);
 
         compose.send_message_success(local_id, message_id, locally_echoed);
 
@@ -95,7 +94,7 @@ function resend_message(message, row) {
     function on_error(response) {
         message_send_error(message.id, response);
         setTimeout(() => {
-            hide_retry_spinner(row);
+            hide_retry_spinner($row);
         }, 300);
         blueslip.log("Manual resend of message failed");
     }
@@ -173,10 +172,6 @@ export function insert_local_message(message_request, local_id_float) {
     // Keep this in sync with changes to compose.create_message_object
     const message = {...message_request};
 
-    // Locally delivered messages cannot be unread (since we sent them), nor
-    // can they alert the user.
-    message.unread = false;
-
     message.raw_content = message.content;
 
     // NOTE: This will parse synchronously. We're not using the async pipeline
@@ -196,6 +191,7 @@ export function insert_local_message(message_request, local_id_float) {
     waiting_for_ack.set(message.local_id, message);
 
     message.display_recipient = build_display_recipient(message);
+
     insert_message(message);
     return message;
 }
@@ -239,10 +235,10 @@ export function try_deliver_locally(message_request) {
 
     // Save a locally echoed message in drafts, so it cannot be
     // lost. It will be cleared if the message is sent successfully.
-    // We ask the drafts system to not notify the user, since they'd
-    // be quite distracting in the very common case that the message
-    // sends normally.
-    const draft_id = drafts.update_draft({no_notify: true});
+    // We ask the drafts system to not notify the user or update the
+    // draft count, since that would be quite distracting in the very
+    // common case that the message sends normally.
+    const draft_id = drafts.update_draft({no_notify: true, update_count: false});
     message_request.draft_id = draft_id;
 
     // Now that we've committed to delivering the message locally, we
@@ -263,7 +259,7 @@ export function try_deliver_locally(message_request) {
 
 export function edit_locally(message, request) {
     // Responsible for doing the rendering work of locally editing the
-    // content ofa message.  This is used in several code paths:
+    // content of a message.  This is used in several code paths:
     // * Editing a message where a message was locally echoed but
     //   it got an error back from the server
     // * Locally echoing any content-only edits to fully sent messages
@@ -330,10 +326,8 @@ export function edit_locally(message, request) {
     // We don't have logic to adjust unread counts, because message
     // reaching this code path must either have been sent by us or the
     // topic isn't being edited, so unread counts can't have changed.
-
-    message_lists.home.view.rerender_messages([message]);
-    if (message_lists.current === message_list.narrowed) {
-        message_list.narrowed.view.rerender_messages([message]);
+    for (const msg_list of message_lists.all_rendered_message_lists()) {
+        msg_list.view.rerender_messages([message]);
     }
     stream_list.update_streams_sidebar();
     pm_list.update_private_messages();
@@ -370,14 +364,9 @@ export function update_message_lists({old_id, new_id}) {
     if (all_messages_data !== undefined) {
         all_messages_data.change_message_id(old_id, new_id);
     }
-    for (const msg_list of [message_lists.home, message_list.narrowed]) {
-        if (msg_list !== undefined) {
-            msg_list.change_message_id(old_id, new_id);
-
-            if (msg_list.view !== undefined) {
-                msg_list.view.change_message_id(old_id, new_id);
-            }
-        }
+    for (const msg_list of message_lists.all_rendered_message_lists()) {
+        msg_list.change_message_id(old_id, new_id);
+        msg_list.view.change_message_id(old_id, new_id);
     }
 }
 
@@ -437,9 +426,8 @@ export function process_from_server(messages) {
         // changes in either the rounded timestamp we display or the
         // message content, but in practice, there's no harm to just
         // doing it unconditionally.
-        message_lists.home.view.rerender_messages(msgs_to_rerender);
-        if (message_lists.current === message_list.narrowed) {
-            message_list.narrowed.view.rerender_messages(msgs_to_rerender);
+        for (const msg_list of message_lists.all_rendered_message_lists()) {
+            msg_list.view.rerender_messages(msgs_to_rerender);
         }
     }
 
@@ -470,8 +458,8 @@ export function initialize() {
         $("#main_div").on("click", selector, function (e) {
             e.stopPropagation();
             popovers.hide_all();
-            const row = $(this).closest(".message_row");
-            const local_id = rows.local_echo_id(row);
+            const $row = $(this).closest(".message_row");
+            const local_id = rows.local_echo_id($row);
             // Message should be waiting for ack and only have a local id,
             // otherwise send would not have failed
             const message = waiting_for_ack.get(local_id);
@@ -482,7 +470,7 @@ export function initialize() {
                 );
                 return;
             }
-            callback(message, row);
+            callback(message, $row);
         });
     }
 

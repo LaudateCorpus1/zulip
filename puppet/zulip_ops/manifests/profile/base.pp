@@ -20,9 +20,6 @@ class zulip_ops::profile::base {
     'certbot',
     # For managing our current Debian packages
     'debian-goodies',
-    # Needed for zulip-ec2-configure-network-interfaces
-    'python3-boto3',
-    'python3-netifaces',
     # Popular editors
     'vim',
     'emacs-nox',
@@ -35,7 +32,7 @@ class zulip_ops::profile::base {
     'git',
     'nagios-plugins-contrib',
   ]
-  zulip::safepackage { $org_base_packages: ensure => 'installed' }
+  zulip::safepackage { $org_base_packages: ensure => installed }
 
   # Uninstall the AWS kernel, but only after we install the usual one
   package { ['linux-image-aws', 'linux-headers-aws', 'linux-aws-*', 'linux-image-*-aws', 'linux-modules-*-aws']:
@@ -53,6 +50,13 @@ class zulip_ops::profile::base {
     ensure => file,
     mode   => '0644',
     source => 'puppet:///modules/zulip_ops/apt/apt.conf.d/50unattended-upgrades',
+  }
+  if $::os['distro']['release']['major'] == '22.04' {
+    file { '/etc/needrestart/conf.d/zulip.conf':
+      ensure => file,
+      mode   => '0644',
+      source => 'puppet:///modules/zulip_ops/needrestart/zulip.conf',
+    }
   }
 
   file { '/home/zulip/.ssh':
@@ -116,9 +120,6 @@ class zulip_ops::profile::base {
   if $hosting_provider == 'ec2' {
     # This conditional block is for for whether it's not
     # chat.zulip.org, which uses a different hosting provider.
-    package { 'dhcpcd5':
-      ensure => 'installed',
-    }
     file { '/root/.ssh/authorized_keys':
       ensure => file,
       mode   => '0600',
@@ -144,15 +145,19 @@ class zulip_ops::profile::base {
     }
 
     file { '/usr/local/sbin/zulip-ec2-configure-interfaces':
-      ensure => file,
-      mode   => '0755',
-      source => 'puppet:///modules/zulip_ops/zulip-ec2-configure-interfaces',
+      ensure => absent,
     }
 
     file { '/etc/network/if-up.d/zulip-ec2-configure-interfaces_if-up.d.sh':
-      ensure => file,
-      mode   => '0755',
-      source => 'puppet:///modules/zulip_ops/zulip-ec2-configure-interfaces_if-up.d.sh',
+      ensure => absent,
+    }
+
+    file { '/etc/chrony/chrony.conf':
+      ensure  => file,
+      mode    => '0644',
+      source  => 'puppet:///modules/zulip_ops/chrony.conf',
+      require => Package['chrony'],
+      notify  => Service['chrony'],
     }
   }
 

@@ -7,6 +7,7 @@ import * as browser_history from "./browser_history";
 import * as drafts from "./drafts";
 import * as floating_recipient_bar from "./floating_recipient_bar";
 import * as hash_util from "./hash_util";
+import {$t_html} from "./i18n";
 import * as info_overlay from "./info_overlay";
 import * as invite from "./invite";
 import * as message_lists from "./message_lists";
@@ -24,7 +25,9 @@ import * as settings_toggle from "./settings_toggle";
 import * as spectators from "./spectators";
 import * as stream_settings_ui from "./stream_settings_ui";
 import * as top_left_corner from "./top_left_corner";
+import * as ui_report from "./ui_report";
 import * as ui_util from "./ui_util";
+import * as user_groups_settings_ui from "./user_groups_settings_ui";
 import {user_settings} from "./user_settings";
 
 // Read https://zulip.readthedocs.io/en/latest/subsystems/hashchange-system.html
@@ -136,7 +139,18 @@ function do_hashchange_normal(from_reload) {
         case "#narrow": {
             maybe_hide_recent_topics();
             ui_util.change_tab_to("#message_feed_container");
-            const operators = hash_util.parse_narrow(hash);
+            let operators;
+            try {
+                // TODO: Show possible valid URLs to the user.
+                operators = hash_util.parse_narrow(hash);
+            } catch {
+                ui_report.error(
+                    $t_html({defaultMessage: "Invalid URL"}),
+                    undefined,
+                    $("#home-error"),
+                    2000,
+                );
+            }
             if (operators === undefined) {
                 // If the narrow URL didn't parse,
                 // send them to default_view.
@@ -167,6 +181,17 @@ function do_hashchange_normal(from_reload) {
             show_default_view();
             break;
         case "#recent_topics":
+            // The URL for Recent Conversations was changed from
+            // #recent_topics to #recent in 2022. Because pre-change
+            // Welcome Bot messages included links to this URL, we
+            // need to support the "#recent_topics" hash as an alias
+            // for #recent permanently. We show the view and then
+            // replace the current URL hash in a way designed to hide
+            // this detail in the browser's forward/back session history.
+            recent_topics_ui.show();
+            window.location.replace("#recent");
+            break;
+        case "#recent":
             recent_topics_ui.show();
             break;
         case "#all_messages":
@@ -199,7 +224,29 @@ function do_hashchange_overlay(old_hash) {
     const old_base = hash_util.get_hash_category(old_hash);
     const section = hash_util.get_current_hash_section();
 
+    if (base === "groups" && (!page_params.development_environment || page_params.is_guest)) {
+        // The #groups settings page is unfinished, and disabled in production.
+        show_default_view();
+        return;
+    }
+
     const coming_from_overlay = hash_util.is_overlay_hash(old_hash || "#");
+
+    if ((base === "settings" || base === "organization") && !section) {
+        let settings_panel_object = settings_panel_menu.normal_settings;
+        if (base === "organization") {
+            settings_panel_object = settings_panel_menu.org_settings;
+        }
+        history.replaceState(
+            null,
+            "",
+            get_full_url(base + "/" + settings_panel_object.current_tab()),
+        );
+    }
+
+    if (base === "streams" && !section) {
+        history.replaceState(null, "", get_full_url("streams/subscribed"));
+    }
 
     // Start by handling the specific case of going
     // from something like streams/all to streams_subscribed.
@@ -210,6 +257,10 @@ function do_hashchange_overlay(old_hash) {
         if (base === "streams") {
             stream_settings_ui.change_state(section);
             return;
+        }
+
+        if (base === "groups") {
+            user_groups_settings_ui.change_state(section);
         }
 
         if (base === "settings") {
@@ -270,6 +321,11 @@ function do_hashchange_overlay(old_hash) {
 
     if (base === "streams") {
         stream_settings_ui.launch(section);
+        return;
+    }
+
+    if (base === "groups") {
+        user_groups_settings_ui.launch(section);
         return;
     }
 

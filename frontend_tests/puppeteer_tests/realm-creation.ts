@@ -2,7 +2,7 @@ import {strict as assert} from "assert";
 
 import type {Page} from "puppeteer";
 
-import common from "../puppeteer_lib/common";
+import * as common from "../puppeteer_lib/common";
 
 const email = "alice@test.example.com";
 const subdomain = "testsubdomain";
@@ -20,7 +20,7 @@ async function realm_creation_tests(page: Page): Promise<void> {
         page.$eval("#send_confirm", (form) => (form as HTMLFormElement).submit()),
     ]);
 
-    // Make sure onfirmation email is sent.
+    // Make sure confirmation email is sent.
     assert.ok(page.url().includes("/accounts/new/send_confirm/" + email));
 
     // Special endpoint enabled only during tests for extracting confirmation key
@@ -67,7 +67,7 @@ async function realm_creation_tests(page: Page): Promise<void> {
     await page.waitForSelector("#lightbox_overlay"); // if element doesn't exist,timeout error raises
 
     // Updating common.realm_url because we are redirecting to it when logging out.
-    common.realm_url = page.url();
+    common.set_realm_url(page.url());
 }
 
 common.run_test(realm_creation_tests);

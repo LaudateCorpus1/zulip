@@ -2,7 +2,6 @@ import autosize from "autosize";
 import $ from "jquery";
 
 import * as blueslip from "./blueslip";
-import {$t} from "./i18n";
 import {MessageListData} from "./message_list_data";
 import {MessageListView} from "./message_list_view";
 import * as narrow_banner from "./narrow_banner";
@@ -29,16 +28,23 @@ export class MessageList {
             });
         }
 
-        opts.collapse_messages = true;
-
-        const collapse_messages = opts.collapse_messages;
+        const collapse_messages = this.data.filter.supports_collapsing_recipients();
         const table_name = opts.table_name;
         this.view = new MessageListView(this, table_name, collapse_messages);
         this.table_name = table_name;
         this.narrowed = this.table_name === "zfilt";
         this.num_appends = 0;
+        this.reading_prevented = false;
 
         return this;
+    }
+
+    prevent_reading() {
+        this.reading_prevented = true;
+    }
+
+    resume_reading() {
+        this.reading_prevented = false;
     }
 
     add_messages(messages, opts) {
@@ -103,6 +109,10 @@ export class MessageList {
         return this.data.last();
     }
 
+    ids_greater_or_equal_than(id) {
+        return this.data.ids_greater_or_equal_than(id);
+    }
+
     prev() {
         return this.data.prev();
     }
@@ -124,7 +134,14 @@ export class MessageList {
     }
 
     can_mark_messages_read() {
-        return this.data.can_mark_messages_read();
+        /* Automatically marking messages as read can be disabled for
+           two different reasons:
+           * The view is structurally a search view, encoded in the
+             properties of the message_list_data object.
+           * The user recently marked messages in the view as unread, and
+             we don't want to lose that state.
+        */
+        return this.data.can_mark_messages_read() && !this.reading_prevented;
     }
 
     clear({clear_selected_id = true} = {}) {
@@ -206,10 +223,6 @@ export class MessageList {
         $(document).trigger(new $.Event("message_selected.zulip", opts));
     }
 
-    reselect_selected_id() {
-        this.select_id(this.data.selected_id(), {from_rendering: true});
-    }
-
     selected_message() {
         return this.get(this.data.selected_id());
     }
@@ -230,25 +243,6 @@ export class MessageList {
         return this.data.selected_idx();
     }
 
-    subscribed_bookend_content(stream_name) {
-        return $t({defaultMessage: "You subscribed to stream {stream}"}, {stream: stream_name});
-    }
-
-    unsubscribed_bookend_content(stream_name) {
-        return $t({defaultMessage: "You unsubscribed from stream {stream}"}, {stream: stream_name});
-    }
-
-    not_subscribed_bookend_content(stream_name) {
-        return $t(
-            {defaultMessage: "You are not subscribed to stream {stream}"},
-            {stream: stream_name},
-        );
-    }
-
-    deactivated_bookend_content() {
-        return $t({defaultMessage: "This stream has been deactivated"});
-    }
-
     // Maintains a trailing bookend element explaining any changes in
     // your subscribed/unsubscribed status at the bottom of the
     // message list.
@@ -261,30 +255,26 @@ export class MessageList {
         if (stream_name === undefined) {
             return;
         }
-        let trailing_bookend_content;
-        let show_button = true;
+
+        let deactivated = false;
+        let just_unsubscribed = false;
         const subscribed = stream_data.is_subscribed_by_name(stream_name);
         const sub = stream_data.get_sub(stream_name);
+        const can_toggle_subscription =
+            sub !== undefined && stream_data.can_toggle_subscription(sub);
         if (sub === undefined) {
-            trailing_bookend_content = this.deactivated_bookend_content();
-            // Hide the resubscribe button for streams that no longer exist.
-            show_button = false;
-        } else if (subscribed) {
-            trailing_bookend_content = this.subscribed_bookend_content(stream_name);
-        } else {
-            if (!this.last_message_historical) {
-                trailing_bookend_content = this.unsubscribed_bookend_content(stream_name);
-
-                // For invite only streams hide the resubscribe button
-                // Hide button for guest users
-                show_button = !page_params.is_guest && !sub.invite_only;
-            } else {
-                trailing_bookend_content = this.not_subscribed_bookend_content(stream_name);
-            }
+            deactivated = true;
+        } else if (!subscribed && !this.last_message_historical) {
+            just_unsubscribed = true;
         }
-        if (trailing_bookend_content !== undefined) {
-            this.view.render_trailing_bookend(trailing_bookend_content, subscribed, show_button);
-        }
+        this.view.render_trailing_bookend(
+            stream_name,
+            subscribed,
+            deactivated,
+            just_unsubscribed,
+            can_toggle_subscription,
+            page_params.is_spectator,
+        );
     }
 
     unmuted_messages(messages) {
@@ -307,54 +297,64 @@ export class MessageList {
         this.rerender();
     }
 
-    show_edit_message(row, edit_obj) {
-        if (row.find(".message_edit_form form").length !== 0) {
+    show_edit_message($row, edit_obj) {
+        if ($row.find(".message_edit_form form").length !== 0) {
             return;
         }
-        row.find(".message_edit_form").append(edit_obj.form);
-        row.find(".message_content, .status-message, .message_controls").hide();
-        row.find(".message_edit").css("display", "block");
-        autosize(row.find(".message_edit_content"));
+        $row.find(".message_edit_form").append(edit_obj.$form);
+        $row.find(".message_content, .status-message, .message_controls").hide();
+        $row.find(".sender-status").toggleClass("sender-status-edit");
+        $row.find(".message_edit").css("display", "block");
+        autosize($row.find(".message_edit_content"));
     }
 
-    hide_edit_message(row) {
-        row.find(".message_content, .status-message, .message_controls").show();
-        row.find(".message_edit_form").empty();
-        row.find(".message_edit").hide();
-        row.trigger("mouseleave");
+    hide_edit_message($row) {
+        $row.find(".message_content, .status-message, .message_controls").show();
+        $row.find(".sender-status").toggleClass("sender-status-edit");
+        $row.find(".message_edit_form").empty();
+        $row.find(".message_edit").hide();
+        $row.trigger("mouseleave");
     }
 
-    show_edit_topic_on_recipient_row(recipient_row, form) {
-        recipient_row.find(".topic_edit_form").append(form);
-        recipient_row.find(".on_hover_topic_edit").hide();
-        recipient_row.find(".edit_content_button").hide();
-        recipient_row.find(".stream_topic").hide();
-        recipient_row.find(".topic_edit").show();
-        recipient_row.find(".always_visible_topic_edit").hide();
+    show_edit_topic_on_recipient_row($recipient_row, $form) {
+        $recipient_row.find(".topic_edit_form").append($form);
+        $recipient_row.find(".on_hover_topic_edit").hide();
+        $recipient_row.find(".edit_message_button").hide();
+        $recipient_row.find(".stream_topic").hide();
+        $recipient_row.find(".topic_edit").show();
+        $recipient_row.find(".always_visible_topic_edit").hide();
     }
 
-    hide_edit_topic_on_recipient_row(recipient_row) {
-        recipient_row.find(".stream_topic").show();
-        recipient_row.find(".on_hover_topic_edit").show();
-        recipient_row.find(".edit_content_button").show();
-        recipient_row.find(".topic_edit_form").empty();
-        recipient_row.find(".topic_edit").hide();
-        recipient_row.find(".always_visible_topic_edit").show();
+    hide_edit_topic_on_recipient_row($recipient_row) {
+        $recipient_row.find(".stream_topic").show();
+        $recipient_row.find(".on_hover_topic_edit").show();
+        $recipient_row.find(".edit_message_button").show();
+        $recipient_row.find(".topic_edit_form").empty();
+        $recipient_row.find(".topic_edit").hide();
+        $recipient_row.find(".always_visible_topic_edit").show();
     }
 
     show_message_as_read(message, options) {
-        const row = this.get_row(message.id);
+        const $row = this.get_row(message.id);
         if (options.from === "pointer" || options.from === "server") {
-            row.find(".unread_marker").addClass("fast_fade");
+            $row.find(".unread_marker").addClass("fast_fade");
         } else {
-            row.find(".unread_marker").addClass("slow_fade");
+            $row.find(".unread_marker").addClass("slow_fade");
         }
-        row.removeClass("unread");
+        $row.removeClass("unread");
+    }
+
+    reselect_selected_id() {
+        const selected_id = this.data.selected_id();
+
+        if (selected_id !== -1) {
+            this.select_id(this.data.selected_id(), {from_rendering: true, mark_read: false});
+        }
     }
 
     rerender_view() {
         this.view.rerender_preserving_scrolltop();
-        this.redo_selection();
+        this.reselect_selected_id();
     }
 
     rerender() {
@@ -373,14 +373,6 @@ export class MessageList {
             }
         }
         this.rerender_view();
-    }
-
-    redo_selection() {
-        const selected_id = this.data.selected_id();
-
-        if (selected_id !== -1) {
-            this.select_id(selected_id);
-        }
     }
 
     update_muting_and_rerender() {
@@ -407,6 +399,10 @@ export class MessageList {
 
     first_unread_message_id() {
         return this.data.first_unread_message_id();
+    }
+
+    has_unread_messages() {
+        return this.data.has_unread_messages();
     }
 
     message_range(start, end) {

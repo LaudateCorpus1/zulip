@@ -6,7 +6,6 @@ import * as huddle_data from "./huddle_data";
 import * as narrow_state from "./narrow_state";
 import {page_params} from "./page_params";
 import * as people from "./people";
-import * as settings_data from "./settings_data";
 import * as stream_data from "./stream_data";
 import * as stream_topic_history from "./stream_topic_history";
 import * as stream_topic_history_util from "./stream_topic_history_util";
@@ -19,13 +18,22 @@ function stream_matches_query(stream_name, q) {
 }
 
 function make_person_highlighter(query) {
-    const hilite = typeahead_helper.make_query_highlighter(query);
+    const highlight_query = typeahead_helper.make_query_highlighter(query);
 
     return function (person) {
-        if (settings_data.show_email()) {
-            return hilite(person.full_name) + " &lt;" + hilite(person.email) + "&gt;";
-        }
-        return hilite(person.full_name);
+        return highlight_query(person.full_name);
+    };
+}
+
+function highlight_person(person, highlighter) {
+    const avatar_url = people.small_avatar_url_for_person(person);
+    const highlighted_name = highlighter(person);
+
+    return {
+        id: person.user_id,
+        display_value: new Handlebars.SafeString(highlighted_name),
+        has_image: true,
+        img_src: avatar_url,
     };
 }
 
@@ -53,7 +61,7 @@ function check_validity(last, operators, valid, invalid) {
 
 function format_as_suggestion(terms) {
     return {
-        description: Filter.describe(terms),
+        description_html: Filter.describe(terms),
         search_string: Filter.unparse(terms),
     };
 }
@@ -64,7 +72,7 @@ function compare_by_huddle(huddle) {
         return person && person.user_id;
     });
 
-    // Construct dict for all huddles, so we can lookup each's recency
+    // Construct dict for all huddles, so we can look up each's recency
     const huddles = huddle_data.get_huddles();
     const huddle_dict = new Map();
     for (const [i, huddle] of huddles.entries()) {
@@ -107,20 +115,20 @@ function get_stream_suggestions(last, operators) {
     streams = typeahead_helper.sorter(query, streams);
 
     const regex = typeahead_helper.build_highlight_regex(query);
-    const hilite = typeahead_helper.highlight_with_escaping_and_regex;
+    const highlight_query = typeahead_helper.highlight_with_escaping_and_regex;
 
     const objs = streams.map((stream) => {
         const prefix = "stream";
-        const highlighted_stream = hilite(regex, stream);
+        const highlighted_stream = highlight_query(regex, stream);
         const verb = last.negated ? "exclude " : "";
-        const description = verb + prefix + " " + highlighted_stream;
+        const description_html = verb + prefix + " " + highlighted_stream;
         const term = {
             operator: "stream",
             operand: stream,
             negated: last.negated,
         };
         const search_string = Filter.unparse([term]);
-        return {description, search_string};
+        return {description_html, search_string};
     });
 
     return objs;
@@ -168,7 +176,7 @@ function get_group_suggestions(last, operators) {
 
     const prefix = Filter.operator_to_prefix("pm-with", negated);
 
-    const highlight_person = make_person_highlighter(last_part);
+    const person_highlighter = make_person_highlighter(last_part);
 
     const suggestions = persons.map((person) => {
         const term = {
@@ -176,15 +184,24 @@ function get_group_suggestions(last, operators) {
             operand: all_but_last_part + "," + person.email,
             negated,
         };
-        const name = highlight_person(person);
-        const description =
-            prefix + " " + Handlebars.Utils.escapeExpression(all_but_last_part) + "," + name;
+
+        // Note that description_html won't contain the user's
+        // identity; that instead will be rendered in the separate
+        // user pill.
+        const description_html =
+            prefix + Handlebars.Utils.escapeExpression(" " + all_but_last_part + ",");
+
         let terms = [term];
         if (negated) {
             terms = [{operator: "is", operand: "private"}, term];
         }
-        const search_string = Filter.unparse(terms);
-        return {description, search_string};
+
+        return {
+            description_html,
+            search_string: Filter.unparse(terms),
+            is_person: true,
+            user_pill_context: highlight_person(person, person_highlighter),
+        };
     });
 
     return suggestions;
@@ -249,11 +266,9 @@ function get_person_suggestions(people_getter, last, operators, autocomplete_ope
 
     const prefix = Filter.operator_to_prefix(autocomplete_operator, last.negated);
 
-    const highlight_person = make_person_highlighter(query);
+    const person_highlighter = make_person_highlighter(query);
 
     const objs = persons.map((person) => {
-        const name = highlight_person(person);
-        const description = prefix + " " + name;
         const terms = [
             {
                 operator: autocomplete_operator,
@@ -266,8 +281,13 @@ function get_person_suggestions(people_getter, last, operators, autocomplete_ope
             // because we assume the user still wants to narrow to PMs
             terms.unshift({operator: "is", operand: "private"});
         }
-        const search_string = Filter.unparse(terms);
-        return {description, search_string};
+
+        return {
+            description_html: prefix,
+            search_string: Filter.unparse(terms),
+            is_person: true,
+            user_pill_context: highlight_person(person, person_highlighter),
+        };
     });
 
     return objs;
@@ -277,9 +297,41 @@ function get_default_suggestion(operators) {
     // Here we return the canonical suggestion for the query that the
     // user typed. (The caller passes us the parsed query as "operators".)
     if (operators.length === 0) {
-        return {description: "", search_string: ""};
+        return {description_html: "", search_string: ""};
     }
     return format_as_suggestion(operators);
+}
+
+export function get_topic_suggestions_from_candidates({candidate_topics, guess}) {
+    // This function is exported for unit testing purposes.
+    const max_num_topics = 10;
+
+    if (guess === "") {
+        // In the search UI, once you autocomplete the stream,
+        // we just show you the most recent topics before you even
+        // need to start typing any characters.
+        return candidate_topics.slice(0, max_num_topics);
+    }
+
+    // Once the user starts typing characters for a topic name,
+    // it is pretty likely they want to get suggestions for
+    // topics that may be fairly low in our list of candidates,
+    // so we do an aggressive search here.
+    //
+    // The following loop can be expensive if you have lots
+    // of topics in a stream, so we try to exit the loop as
+    // soon as we find enough matches.
+    const topics = [];
+    for (const topic of candidate_topics) {
+        if (common.phrase_match(guess, topic)) {
+            topics.push(topic);
+            if (topics.length >= max_num_topics) {
+                break;
+            }
+        }
+    }
+
+    return topics;
 }
 
 function get_topic_suggestions(last, operators) {
@@ -337,28 +389,29 @@ function get_topic_suggestions(last, operators) {
         return [];
     }
 
-    const stream_id = stream_data.get_stream_id(stream);
-    if (!stream_id) {
+    const stream_sub = stream_data.get_sub(stream);
+    if (!stream_sub) {
         return [];
     }
 
-    // Fetch topic history from the server, in case we will need it.
-    stream_topic_history_util.get_server_history(stream_id, () => {});
-    let topics = stream_topic_history.get_recent_topic_names(stream_id);
+    if (stream_data.can_access_topic_history(stream_sub)) {
+        // Fetch topic history from the server, in case we will need it.
+        // Note that we won't actually use the results from the server here
+        // for this particular keystroke from the user, because we want to
+        // show results immediately. Assuming the server responds quickly,
+        // as the user makes their search more specific, subsequent calls to
+        // this function will get more candidates from calling
+        // stream_topic_history.get_recent_topic_names.
+        stream_topic_history_util.get_server_history(stream_sub.stream_id, () => {});
+    }
 
-    if (!topics || !topics.length) {
+    const candidate_topics = stream_topic_history.get_recent_topic_names(stream_sub.stream_id);
+
+    if (!candidate_topics || !candidate_topics.length) {
         return [];
     }
 
-    // Be defensive here in case stream_data.get_recent_topics gets
-    // super huge, but still slice off enough topics to find matches.
-    topics = topics.slice(0, 300);
-
-    if (guess !== "") {
-        topics = topics.filter((topic) => common.phrase_match(guess, topic));
-    }
-
-    topics = topics.slice(0, 10);
+    const topics = get_topic_suggestions_from_candidates({candidate_topics, guess});
 
     // Just use alphabetical order.  While recency and read/unreadness of
     // topics do matter in some contexts, you can get that from the left sidebar,
@@ -399,7 +452,7 @@ function get_special_filter_suggestions(last, operators, suggestions) {
     if (last.negated || is_search_operand_negated) {
         suggestions = suggestions.map((suggestion) => ({
             search_string: "-" + suggestion.search_string,
-            description: "exclude " + suggestion.description,
+            description_html: "exclude " + suggestion.description_html,
             invalid: suggestion.invalid,
         }));
     }
@@ -421,13 +474,13 @@ function get_special_filter_suggestions(last, operators, suggestions) {
         return (
             s.search_string.toLowerCase().startsWith(last_string) ||
             show_operator_suggestions ||
-            s.description.toLowerCase().startsWith(last_string)
+            s.description_html.toLowerCase().startsWith(last_string)
         );
     });
 
     // Only show home if there's an empty bar
     if (operators.length === 0 && last_string === "") {
-        suggestions.unshift({search_string: "", description: "All messages"});
+        suggestions.unshift({search_string: "", description_html: "All messages"});
     }
     return suggestions;
 }
@@ -436,7 +489,7 @@ function get_streams_filter_suggestions(last, operators) {
     const suggestions = [
         {
             search_string: "streams:public",
-            description: "All public streams in organization",
+            description_html: "All public streams in organization",
             invalid: [
                 {operator: "is", operand: "private"},
                 {operator: "stream"},
@@ -453,7 +506,7 @@ function get_is_filter_suggestions(last, operators) {
     const suggestions = [
         {
             search_string: "is:private",
-            description: "private messages",
+            description_html: "private messages",
             invalid: [
                 {operator: "is", operand: "private"},
                 {operator: "stream"},
@@ -463,27 +516,27 @@ function get_is_filter_suggestions(last, operators) {
         },
         {
             search_string: "is:starred",
-            description: "starred messages",
+            description_html: "starred messages",
             invalid: [{operator: "is", operand: "starred"}],
         },
         {
             search_string: "is:mentioned",
-            description: "@-mentions",
+            description_html: "@-mentions",
             invalid: [{operator: "is", operand: "mentioned"}],
         },
         {
             search_string: "is:alerted",
-            description: "alerted messages",
+            description_html: "alerted messages",
             invalid: [{operator: "is", operand: "alerted"}],
         },
         {
             search_string: "is:unread",
-            description: "unread messages",
+            description_html: "unread messages",
             invalid: [{operator: "is", operand: "unread"}],
         },
         {
             search_string: "is:resolved",
-            description: "topics marked as resolved",
+            description_html: "topics marked as resolved",
             invalid: [{operator: "is", operand: "resolved"}],
         },
     ];
@@ -494,17 +547,17 @@ function get_has_filter_suggestions(last, operators) {
     const suggestions = [
         {
             search_string: "has:link",
-            description: "messages with one or more link",
+            description_html: "messages with one or more link",
             invalid: [{operator: "has", operand: "link"}],
         },
         {
             search_string: "has:image",
-            description: "messages with one or more image",
+            description_html: "messages with one or more image",
             invalid: [{operator: "has", operand: "image"}],
         },
         {
             search_string: "has:attachment",
-            description: "messages with one or more attachment",
+            description_html: "messages with one or more attachment",
             invalid: [{operator: "has", operand: "attachment"}],
         },
     ];
@@ -512,10 +565,6 @@ function get_has_filter_suggestions(last, operators) {
 }
 
 function get_sent_by_me_suggestions(last, operators) {
-    if (page_params.is_spectator) {
-        return [];
-    }
-
     const last_string = Filter.unparse([last]).toLowerCase();
     const negated = last.negated || (last.operator === "search" && last.operand[0] === "-");
     const negated_symbol = negated ? "-" : "";
@@ -526,7 +575,7 @@ function get_sent_by_me_suggestions(last, operators) {
     const sender_me_query = negated_symbol + "sender:me";
     const from_me_query = negated_symbol + "from:me";
     const sent_string = negated_symbol + "sent";
-    const description = verb + "sent by me";
+    const description_html = verb + "sent by me";
 
     const invalid = [{operator: "sender"}, {operator: "from"}];
 
@@ -543,14 +592,14 @@ function get_sent_by_me_suggestions(last, operators) {
         return [
             {
                 search_string: sender_query,
-                description,
+                description_html,
             },
         ];
     } else if (from_query.startsWith(last_string) || from_me_query.startsWith(last_string)) {
         return [
             {
                 search_string: from_query,
-                description,
+                description_html,
             },
         ];
     }
@@ -587,9 +636,10 @@ class Attacher {
     }
 
     prepend_base(suggestion) {
-        if (this.base && this.base.description.length > 0) {
+        if (this.base && this.base.description_html.length > 0) {
             suggestion.search_string = this.base.search_string + " " + suggestion.search_string;
-            suggestion.description = this.base.description + ", " + suggestion.description;
+            suggestion.description_html =
+                this.base.description_html + ", " + suggestion.description_html;
         }
     }
 
@@ -690,7 +740,8 @@ export function get_search_result(base_query, query) {
         };
     }
 
-    const filterers = [
+    // Remember to update the spectator list when changing this.
+    let filterers = [
         get_streams_filter_suggestions,
         get_is_filter_suggestions,
         get_sent_by_me_suggestions,
@@ -704,6 +755,17 @@ export function get_search_result(base_query, query) {
         get_operator_suggestions,
         get_has_filter_suggestions,
     ];
+
+    if (page_params.is_spectator) {
+        filterers = [
+            get_stream_suggestions,
+            get_people("sender"),
+            get_people("from"),
+            get_topic_suggestions,
+            get_operator_suggestions,
+            get_has_filter_suggestions,
+        ];
+    }
 
     if (!page_params.search_pills_enabled) {
         all_operators = search_operators;
@@ -741,8 +803,8 @@ export function get_suggestions(base_query, query) {
 
 export function finalize_search_result(result) {
     for (const sug of result) {
-        const first = sug.description.charAt(0).toUpperCase();
-        sug.description = first + sug.description.slice(1);
+        const first = sug.description_html.charAt(0).toUpperCase();
+        sug.description_html = first + sug.description_html.slice(1);
     }
 
     // Typeahead expects us to give it strings, not objects,

@@ -4,7 +4,7 @@ const {strict: assert} = require("assert");
 
 const _ = require("lodash");
 
-const {mock_esm, with_field_rewire, zrequire} = require("../zjsunit/namespace");
+const {mock_esm, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 const blueslip = require("../zjsunit/zblueslip");
 const {page_params, user_settings} = require("../zjsunit/zpage_params");
@@ -96,7 +96,7 @@ function add_canned_users() {
 }
 
 function test(label, f) {
-    run_test(label, ({override, override_rewire}) => {
+    run_test(label, (helpers) => {
         user_settings.presence_enabled = true;
         compose_fade_helper.clear_focused_recipient();
         stream_data.clear_subscriptions();
@@ -107,47 +107,12 @@ function test(label, f) {
         people.add_active_user(me);
         people.initialize_current_user(me.user_id);
         muted_users.set_muted_users([]);
-        f({override, override_rewire});
+
+        f(helpers);
+
+        presence.clear_internal_data();
     });
 }
-
-test("huddle_fraction_present", () => {
-    people.add_active_user(alice);
-    people.add_active_user(fred);
-    people.add_active_user(jill);
-    people.add_active_user(mark);
-
-    let huddle = "alice@zulip.com,fred@zulip.com,jill@zulip.com,mark@zulip.com";
-    huddle = people.emails_strings_to_user_ids_string(huddle);
-
-    let presence_info = new Map();
-    presence_info.set(alice.user_id, {status: "active"}); // counts as present
-    presence_info.set(fred.user_id, {status: "idle"}); // does not count as present
-    // jill not in list
-    presence_info.set(mark.user_id, {status: "offline"}); // does not count
-    presence.__Rewire__("presence_info", presence_info);
-
-    assert.equal(buddy_data.huddle_fraction_present(huddle), 0.5);
-
-    presence_info = new Map();
-    for (const user of [alice, fred, jill, mark]) {
-        presence_info.set(user.user_id, {status: "active"}); // counts as present
-    }
-    presence.__Rewire__("presence_info", presence_info);
-
-    assert.equal(buddy_data.huddle_fraction_present(huddle), 1);
-
-    huddle = "alice@zulip.com,fred@zulip.com,jill@zulip.com,mark@zulip.com";
-    huddle = people.emails_strings_to_user_ids_string(huddle);
-    presence_info = new Map();
-    presence_info.set(alice.user_id, {status: "idle"});
-    presence_info.set(fred.user_id, {status: "idle"}); // does not count as present
-    // jill not in list
-    presence_info.set(mark.user_id, {status: "offline"}); // does not count
-    presence.__Rewire__("presence_info", presence_info);
-
-    assert.equal(buddy_data.huddle_fraction_present(huddle), undefined);
-});
 
 function set_presence(user_id, status) {
     presence.presence_info.set(user_id, {
@@ -156,36 +121,40 @@ function set_presence(user_id, status) {
     });
 }
 
-test("user_circle, level, status_description", () => {
+test("user_circle, level", () => {
     add_canned_users();
 
     set_presence(selma.user_id, "active");
     assert.equal(buddy_data.get_user_circle_class(selma.user_id), "user_circle_green");
-    user_status.set_away(selma.user_id);
-    assert.equal(buddy_data.level(selma.user_id), 3);
+    assert.equal(buddy_data.level(selma.user_id), 1);
 
-    assert.equal(buddy_data.get_user_circle_class(selma.user_id), "user_circle_empty_line");
-    user_status.revoke_away(selma.user_id);
-    assert.equal(buddy_data.get_user_circle_class(selma.user_id), "user_circle_green");
-    assert.equal(buddy_data.status_description(selma.user_id), "translated: Active");
+    set_presence(selma.user_id, "idle");
+    assert.equal(buddy_data.get_user_circle_class(selma.user_id), "user_circle_idle");
+    assert.equal(buddy_data.level(selma.user_id), 2);
+
+    set_presence(selma.user_id, "offline");
+    assert.equal(buddy_data.get_user_circle_class(selma.user_id), "user_circle_empty");
+    assert.equal(buddy_data.level(selma.user_id), 3);
 
     set_presence(me.user_id, "active");
     assert.equal(buddy_data.get_user_circle_class(me.user_id), "user_circle_green");
-    user_status.set_away(me.user_id);
-    assert.equal(buddy_data.status_description(me.user_id), "translated: Unavailable");
     assert.equal(buddy_data.level(me.user_id), 0);
 
-    assert.equal(buddy_data.get_user_circle_class(me.user_id), "user_circle_empty_line");
-    user_status.revoke_away(me.user_id);
+    user_settings.presence_enabled = false;
+    assert.equal(buddy_data.get_user_circle_class(me.user_id), "user_circle_empty");
+    assert.equal(buddy_data.level(me.user_id), 0);
+
+    user_settings.presence_enabled = true;
     assert.equal(buddy_data.get_user_circle_class(me.user_id), "user_circle_green");
+    assert.equal(buddy_data.level(me.user_id), 0);
 
     set_presence(fred.user_id, "idle");
-    assert.equal(buddy_data.get_user_circle_class(fred.user_id), "user_circle_orange");
+    assert.equal(buddy_data.get_user_circle_class(fred.user_id), "user_circle_idle");
     assert.equal(buddy_data.level(fred.user_id), 2);
-    assert.equal(buddy_data.status_description(fred.user_id), "translated: Idle");
 
     set_presence(fred.user_id, undefined);
-    assert.equal(buddy_data.status_description(fred.user_id), "translated: Offline");
+    assert.equal(buddy_data.get_user_circle_class(fred.user_id), "user_circle_empty");
+    assert.equal(buddy_data.level(fred.user_id), 3);
 });
 
 test("compose fade interactions (streams)", () => {
@@ -280,7 +249,7 @@ test("compose fade interactions (PMs)", () => {
         return buddy_data.get_item(fred.user_id).faded;
     }
 
-    // Dont fade if we're not in a narrow.
+    // Don't fade if we're not in a narrow.
     assert.equal(faded(), false);
 
     // Fade fred if we are narrowed to a PM narrow that does
@@ -299,23 +268,6 @@ test("compose fade interactions (PMs)", () => {
     });
 
     assert.equal(faded(), false);
-});
-
-test("buddy_status", () => {
-    set_presence(selma.user_id, "active");
-    set_presence(me.user_id, "active");
-
-    assert.equal(buddy_data.buddy_status(selma.user_id), "active");
-    user_status.set_away(selma.user_id);
-    assert.equal(buddy_data.buddy_status(selma.user_id), "away_them");
-    user_status.revoke_away(selma.user_id);
-    assert.equal(buddy_data.buddy_status(selma.user_id), "active");
-
-    assert.equal(buddy_data.buddy_status(me.user_id), "active");
-    user_status.set_away(me.user_id);
-    assert.equal(buddy_data.buddy_status(me.user_id), "away_me");
-    user_status.revoke_away(me.user_id);
-    assert.equal(buddy_data.buddy_status(me.user_id), "active");
 });
 
 test("title_data", () => {
@@ -403,7 +355,7 @@ test("muted users excluded from search", () => {
     assert.ok(buddy_data.matches_filter("sel", selma.user_id));
 });
 
-test("bulk_data_hacks", () => {
+test("bulk_data_hacks", ({override_rewire}) => {
     // sanity check
     assert.equal(mark.user_id, 1005);
 
@@ -456,33 +408,17 @@ test("bulk_data_hacks", () => {
 
     // Make our shrink limit higher, and go back to an empty search.
     // We won't get all 1000 users, just the present ones.
-    with_field_rewire(buddy_data, "max_size_before_shrinking", 50000, () => {
-        user_ids = buddy_data.get_filtered_and_sorted_user_ids("");
-    });
+    override_rewire(buddy_data, "max_size_before_shrinking", 50000);
+    user_ids = buddy_data.get_filtered_and_sorted_user_ids("");
     assert.equal(user_ids.length, 700);
 });
 
-test("always show me", ({override_rewire}) => {
-    const present_user_ids = [];
-    override_rewire(presence, "get_user_ids", () => present_user_ids);
+test("always show me", () => {
     assert.deepEqual(buddy_data.get_filtered_and_sorted_user_ids(""), [me.user_id]);
-
-    // Make sure we didn't mutate the list passed to us.
-    assert.deepEqual(present_user_ids, []);
 
     // try to make us show twice
-    present_user_ids.push(me.user_id);
+    presence.presence_info.set(me.user_id, {status: "active"});
     assert.deepEqual(buddy_data.get_filtered_and_sorted_user_ids(""), [me.user_id]);
-});
-
-test("user_status", () => {
-    user_status.initialize({user_status: []});
-    set_presence(me.user_id, "active");
-    assert.equal(buddy_data.get_my_user_status(me.user_id), "translated: (you)");
-    user_status.set_away(me.user_id);
-    assert.equal(buddy_data.get_my_user_status(me.user_id), "translated: (unavailable)");
-    user_status.revoke_away(me.user_id);
-    assert.equal(buddy_data.get_my_user_status(me.user_id), "translated: (you)");
 });
 
 test("level", () => {
@@ -503,8 +439,8 @@ test("level", () => {
     assert.equal(buddy_data.level(me.user_id), 0);
     assert.equal(buddy_data.level(selma.user_id), 1);
 
-    user_status.set_away(me.user_id);
-    user_status.set_away(selma.user_id);
+    user_settings.presence_enabled = false;
+    set_presence(selma.user_id, "offline");
 
     // Selma gets demoted to level 3, but "me"
     // stays in level 0.
@@ -512,7 +448,7 @@ test("level", () => {
     assert.equal(buddy_data.level(selma.user_id), 3);
 });
 
-test("user_last_seen_time_status", ({override, override_rewire}) => {
+test("user_last_seen_time_status", ({override}) => {
     set_presence(selma.user_id, "active");
     set_presence(me.user_id, "active");
 
@@ -529,10 +465,7 @@ test("user_last_seen_time_status", ({override, override_rewire}) => {
         "translated: Last active: translated: More than 2 weeks ago",
     );
 
-    override_rewire(presence, "last_active_date", (user_id) => {
-        assert.equal(user_id, old_user.user_id);
-        return new Date(1526137743000);
-    });
+    presence.presence_info.set(old_user.user_id, {last_active: 1526137743});
 
     override(timerender, "last_seen_status_from_date", (date) => {
         assert.deepEqual(date, new Date(1526137743000));
@@ -548,61 +481,72 @@ test("user_last_seen_time_status", ({override, override_rewire}) => {
     assert.equal(buddy_data.user_last_seen_time_status(selma.user_id), "translated: Idle");
 });
 
-test("get_items_for_users", ({override_rewire}) => {
+test("get_items_for_users", () => {
     people.add_active_user(alice);
     people.add_active_user(fred);
-    user_status.set_away(alice.user_id);
+    set_presence(alice.user_id, "offline");
     user_settings.emojiset = "google";
+    user_settings.user_list_style = 2;
     const status_emoji_info = {
+        emoji_alt_code: false,
         emoji_name: "car",
         emoji_code: "1f697",
         reaction_type: "unicode_emoji",
     };
-    override_rewire(user_status, "get_status_emoji", () => status_emoji_info);
 
     const user_ids = [me.user_id, alice.user_id, fred.user_id];
+    for (const user_id of user_ids) {
+        user_status.set_status_emoji({user_id, ...status_emoji_info});
+    }
+
+    const user_list_style = {
+        COMPACT: false,
+        WITH_STATUS: true,
+        WITH_AVATAR: false,
+    };
+
     assert.deepEqual(buddy_data.get_items_for_users(user_ids), [
         {
             faded: false,
-            href: "#narrow/pm-with/1001-self",
+            href: "#narrow/pm-with/1001-Human-Myself",
             is_current_user: true,
-            my_user_status: "translated: (you)",
             name: "Human Myself",
             num_unread: 0,
             status_emoji_info,
+            status_text: undefined,
             user_circle_class: "user_circle_green",
-            user_circle_status: "translated: Active",
             user_id: 1001,
+            user_list_style,
         },
         {
             faded: false,
-            href: "#narrow/pm-with/1002-alice",
+            href: "#narrow/pm-with/1002-Alice-Smith",
             is_current_user: false,
-            my_user_status: undefined,
             name: "Alice Smith",
             num_unread: 0,
             status_emoji_info,
-            user_circle_class: "user_circle_empty_line",
-            user_circle_status: "translated: Unavailable",
+            status_text: undefined,
+            user_circle_class: "user_circle_empty",
             user_id: 1002,
+            user_list_style,
         },
         {
             faded: false,
-            href: "#narrow/pm-with/1003-fred",
+            href: "#narrow/pm-with/1003-Fred-Flintstone",
             is_current_user: false,
-            my_user_status: undefined,
             name: "Fred Flintstone",
             num_unread: 0,
             status_emoji_info,
+            status_text: undefined,
             user_circle_class: "user_circle_empty",
-            user_circle_status: "translated: Offline",
             user_id: 1003,
+            user_list_style,
         },
     ]);
 });
 
-test("error handling", ({override_rewire}) => {
-    override_rewire(presence, "get_user_ids", () => [42]);
+test("error handling", () => {
+    presence.presence_info.set(42, {status: "active"});
     blueslip.expect("error", "Unknown user_id in get_by_user_id: 42");
     blueslip.expect("warn", "Got user_id in presence but not people: 42");
     buddy_data.get_filtered_and_sorted_user_ids();

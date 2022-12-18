@@ -1,7 +1,5 @@
 import $ from "jquery";
 
-import * as emoji from "../shared/js/emoji";
-
 import * as activity from "./activity";
 import * as browser_history from "./browser_history";
 import * as common from "./common";
@@ -12,6 +10,7 @@ import * as condense from "./condense";
 import * as copy_and_paste from "./copy_and_paste";
 import * as deprecated_feature_notice from "./deprecated_feature_notice";
 import * as drafts from "./drafts";
+import * as emoji from "./emoji";
 import * as emoji_picker from "./emoji_picker";
 import * as feedback_widget from "./feedback_widget";
 import * as gear_menu from "./gear_menu";
@@ -23,6 +22,7 @@ import * as list_util from "./list_util";
 import * as message_edit from "./message_edit";
 import * as message_flags from "./message_flags";
 import * as message_lists from "./message_lists";
+import * as message_scroll from "./message_scroll";
 import * as message_view_header from "./message_view_header";
 import * as muted_topics_ui from "./muted_topics_ui";
 import * as narrow from "./narrow";
@@ -41,6 +41,7 @@ import * as stream_popover from "./stream_popover";
 import * as stream_settings_ui from "./stream_settings_ui";
 import * as topic_zoom from "./topic_zoom";
 import * as ui from "./ui";
+import * as unread_ops from "./unread_ops";
 import {user_settings} from "./user_settings";
 
 function do_narrow_action(action) {
@@ -89,6 +90,7 @@ const keydown_unshift_mappings = {
 
 const keydown_ctrl_mappings = {
     219: {name: "escape", message_view_only: false}, // '['
+    13: {name: "ctrl_enter", message_view_only: true}, // enter
 };
 
 const keydown_cmd_or_ctrl_mappings = {
@@ -134,6 +136,7 @@ const keypress_mappings = {
     80: {name: "narrow_private", message_view_only: true}, // 'P'
     82: {name: "respond_to_author", message_view_only: true}, // 'R'
     83: {name: "narrow_by_topic", message_view_only: true}, // 'S'
+    85: {name: "mark_unread", message_view_only: true}, // 'U'
     86: {name: "view_selected_stream", message_view_only: false}, // 'V'
     97: {name: "all_messages", message_view_only: true}, // 'a'
     99: {name: "compose", message_view_only: true}, // 'c'
@@ -145,6 +148,7 @@ const keypress_mappings = {
     106: {name: "vim_down", message_view_only: true}, // 'j'
     107: {name: "vim_up", message_view_only: true}, // 'k'
     108: {name: "vim_right", message_view_only: true}, // 'l'
+    109: {name: "move_message", message_view_only: true}, // 'm'
     110: {name: "n_key", message_view_only: false}, // 'n'
     112: {name: "p_key", message_view_only: false}, // 'p'
     113: {name: "query_streams", message_view_only: true}, // 'q'
@@ -241,6 +245,11 @@ export function process_escape_key(e) {
     }
 
     if (popovers.any_active()) {
+        if (popovers.user_info_manage_menu_popped()) {
+            popovers.hide_user_info_popover_manage_menu();
+            $("#user_info_popover .user_info_popover_manage_menu_btn").trigger("focus");
+            return true;
+        }
         popovers.hide_all();
         return true;
     }
@@ -347,6 +356,11 @@ function handle_popover_events(event_name) {
         return true;
     }
 
+    if (popovers.user_info_manage_menu_popped()) {
+        popovers.user_info_popover_manage_menu_handle_keyboard(event_name);
+        return true;
+    }
+
     if (popovers.message_info_popped()) {
         popovers.user_info_popover_for_message_handle_keyboard(event_name);
         return true;
@@ -438,7 +452,7 @@ export function process_enter_key(e) {
 
     if ($(e.target).attr("role") === "button") {
         e.target.click();
-        return false;
+        return true;
     }
 
     // All custom logic for overlays/modals is above; if we're in a
@@ -464,6 +478,26 @@ export function process_enter_key(e) {
         return true;
     }
 
+    if (recent_topics_util.is_visible()) {
+        if (e.target === $("body")[0]) {
+            // There's a race when using `Esc` and `Enter` to navigate to
+            // Recent Topics and then navigate to the next topic, wherein
+            // Recent Topics won't have applied focus to its table yet.
+            //
+            // Recent Topics's own navigation just lets `Enter` be
+            // treated as a click on the highlighted message, so we
+            // don't need to do anything there. But if nothing is
+            // focused (say, during the race or after clicking on the
+            // sidebars, it's worth focusing the table so that hitting
+            // `Enter` again will navigate you somewhere.
+            const focus_changed = recent_topics_ui.revive_current_focus();
+            return focus_changed;
+        }
+
+        // Never fall through to opening the compose box to reply.
+        return false;
+    }
+
     // If we got this far, then we're presumably in the message
     // view, so in that case "Enter" is the hotkey to respond to a message.
     // Note that "r" has same effect, but that is handled in process_hotkey().
@@ -471,25 +505,35 @@ export function process_enter_key(e) {
     return true;
 }
 
+export function process_ctrl_enter_key() {
+    if ($("#preview_message_area").is(":visible")) {
+        const ctrl_pressed = true;
+        compose.enter_with_preview_open(ctrl_pressed);
+        return true;
+    }
+
+    return false;
+}
+
 export function process_tab_key() {
     // Returns true if we handled it, false if the browser should.
     // TODO: See if browsers like Safari can now handle tabbing correctly
     // without our intervention.
 
-    let message_edit_form;
+    let $message_edit_form;
 
-    const focused_message_edit_content = $(".message_edit_content:focus");
-    if (focused_message_edit_content.length > 0) {
-        message_edit_form = focused_message_edit_content.closest(".message_edit_form");
+    const $focused_message_edit_content = $(".message_edit_content:focus");
+    if ($focused_message_edit_content.length > 0) {
+        $message_edit_form = $focused_message_edit_content.closest(".message_edit_form");
         // Open message edit forms either have a save button or a close button, but not both.
-        message_edit_form.find(".message_edit_save,.message_edit_close").trigger("focus");
+        $message_edit_form.find(".message_edit_save,.message_edit_close").trigger("focus");
         return true;
     }
 
-    const focused_message_edit_save = $(".message_edit_save:focus");
-    if (focused_message_edit_save.length > 0) {
-        message_edit_form = focused_message_edit_save.closest(".message_edit_form");
-        message_edit_form.find(".message_edit_cancel").trigger("focus");
+    const $focused_message_edit_save = $(".message_edit_save:focus");
+    if ($focused_message_edit_save.length > 0) {
+        $message_edit_form = $focused_message_edit_save.closest(".message_edit_form");
+        $message_edit_form.find(".message_edit_cancel").trigger("focus");
         return true;
     }
 
@@ -519,9 +563,9 @@ export function process_shift_tab_key() {
     }
 
     // Shift-Tabbing from the edit message save button takes you to the content.
-    const focused_message_edit_save = $(".message_edit_save:focus");
-    if (focused_message_edit_save.length > 0) {
-        focused_message_edit_save
+    const $focused_message_edit_save = $(".message_edit_save:focus");
+    if ($focused_message_edit_save.length > 0) {
+        $focused_message_edit_save
             .closest(".message_edit_form")
             .find(".message_edit_content")
             .trigger("focus");
@@ -548,6 +592,8 @@ export function process_hotkey(e, hotkey) {
         case "down_arrow":
         case "left_arrow":
         case "right_arrow":
+        case "page_down":
+        case "page_up":
         case "vim_up":
         case "vim_down":
         case "vim_left":
@@ -566,6 +612,8 @@ export function process_hotkey(e, hotkey) {
             return process_escape_key(e);
         case "enter":
             return process_enter_key(e);
+        case "ctrl_enter":
+            return process_ctrl_enter_key(e);
         case "tab":
             return process_tab_key();
         case "shift_tab":
@@ -738,7 +786,7 @@ export function process_hotkey(e, hotkey) {
     }
 
     // Prevent navigation in the background when the overlays are active.
-    if (overlays.is_active()) {
+    if (overlays.is_overlay_or_modal_open()) {
         if (event_name === "view_selected_stream" && overlays.streams_open()) {
             stream_settings_ui.view_stream();
             return true;
@@ -791,7 +839,7 @@ export function process_hotkey(e, hotkey) {
             narrow.narrow_to_next_pm_string();
             return true;
         case "open_recent_topics":
-            browser_history.go_to_location("#recent_topics");
+            browser_history.go_to_location("#recent");
             return true;
         case "all_messages":
             browser_history.go_to_location("#all_messages");
@@ -806,10 +854,14 @@ export function process_hotkey(e, hotkey) {
             compose_actions.respond_to_message({trigger: "hotkey"});
             return true;
         case "compose": // 'c': compose
-            compose_actions.start("stream", {trigger: "compose_hotkey"});
+            if (!compose_state.composing()) {
+                compose_actions.start("stream", {trigger: "compose_hotkey"});
+            }
             return true;
         case "compose_private_message":
-            compose_actions.start("private", {trigger: "compose_hotkey"});
+            if (!compose_state.composing()) {
+                compose_actions.start("private", {trigger: "compose_hotkey"});
+            }
             return true;
         case "open_drafts":
             browser_history.go_to_location("drafts");
@@ -837,27 +889,33 @@ export function process_hotkey(e, hotkey) {
     switch (event_name) {
         case "down_arrow":
         case "vim_down":
+            message_scroll.mark_keyboard_triggered_current_scroll();
             navigate.down(true); // with_centering
             return true;
         case "up_arrow":
         case "vim_up":
+            message_scroll.mark_keyboard_triggered_current_scroll();
             navigate.up();
             return true;
         case "home":
+            message_scroll.mark_keyboard_triggered_current_scroll();
             navigate.to_home();
             return true;
         case "end":
         case "G_end":
+            message_scroll.mark_keyboard_triggered_current_scroll();
             navigate.to_end();
             return true;
         case "page_up":
         case "vim_page_up":
         case "shift_spacebar":
+            message_scroll.mark_keyboard_triggered_current_scroll();
             navigate.page_up();
             return true;
         case "page_down":
         case "vim_page_down":
         case "spacebar":
+            message_scroll.mark_keyboard_triggered_current_scroll();
             navigate.page_down();
             return true;
         case "copy_with_c":
@@ -917,12 +975,23 @@ export function process_hotkey(e, hotkey) {
         case "toggle_message_collapse":
             condense.toggle_collapse(msg);
             return true;
+        case "mark_unread":
+            unread_ops.mark_as_unread_from_here(msg.id);
+            return true;
         case "compose_quote_reply": // > : respond to selected message with quote
             compose_actions.quote_and_reply({trigger: "hotkey"});
             return true;
         case "edit_message": {
-            const row = message_lists.current.get_row(msg.id);
-            message_edit.start(row);
+            const $row = message_lists.current.get_row(msg.id);
+            message_edit.start($row);
+            return true;
+        }
+        case "move_message": {
+            if (!message_edit.can_move_message(msg)) {
+                return false;
+            }
+
+            stream_popover.build_move_topic_to_stream_popover(msg.stream_id, msg.topic, msg);
             return true;
         }
     }
@@ -949,12 +1018,6 @@ export function process_keydown(e) {
     return process_hotkey(e, hotkey);
 }
 
-$(document).on("keydown", (e) => {
-    if (process_keydown(e)) {
-        e.preventDefault();
-    }
-});
-
 export function process_keypress(e) {
     const hotkey = get_keypress_hotkey(e);
     if (!hotkey) {
@@ -963,8 +1026,16 @@ export function process_keypress(e) {
     return process_hotkey(e, hotkey);
 }
 
-$(document).on("keypress", (e) => {
-    if (process_keypress(e)) {
-        e.preventDefault();
-    }
-});
+export function initialize() {
+    $(document).on("keydown", (e) => {
+        if (process_keydown(e)) {
+            e.preventDefault();
+        }
+    });
+
+    $(document).on("keypress", (e) => {
+        if (process_keypress(e)) {
+            e.preventDefault();
+        }
+    });
+}

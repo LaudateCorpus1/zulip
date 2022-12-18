@@ -11,23 +11,19 @@ const $ = require("../zjsunit/zjquery");
 const noop = () => {};
 
 const color_data = mock_esm("../../static/js/color_data");
-const message_util = mock_esm("../../static/js/message_util");
 const stream_color = mock_esm("../../static/js/stream_color");
 const stream_list = mock_esm("../../static/js/stream_list");
 const stream_muting = mock_esm("../../static/js/stream_muting");
 const stream_settings_ui = mock_esm("../../static/js/stream_settings_ui", {
     update_settings_for_subscribed: noop,
 });
+const unread_ui = mock_esm("../../static/js/unread_ui");
 
-mock_esm("../../static/js/all_messages_data", {
-    all_messages_data: {
-        all_messages() {
-            return ["msg"];
-        },
-    },
-});
 const message_lists = mock_esm("../../static/js/message_lists", {
     current: {},
+});
+const message_view_header = mock_esm("../../static/js/message_view_header", {
+    maybe_rerender_title_area_for_stream() {},
 });
 mock_esm("../../static/js/recent_topics_ui", {
     complete_rerender: () => {},
@@ -39,7 +35,6 @@ mock_esm("../../static/js/settings_notifications", {
 mock_esm("../../static/js/overlays", {streams_open: () => true});
 
 const {Filter} = zrequire("../js/filter");
-const message_view_header = zrequire("message_view_header");
 const narrow_state = zrequire("narrow_state");
 const peer_data = zrequire("peer_data");
 const people = zrequire("people");
@@ -84,9 +79,9 @@ function narrow_to_frontend() {
 }
 
 function test(label, f) {
-    run_test(label, ({override, override_rewire}) => {
+    run_test(label, (helpers) => {
         stream_data.clear_subscriptions();
-        f({override, override_rewire});
+        f(helpers);
     });
 }
 
@@ -118,11 +113,17 @@ test("update_property", ({override}) => {
         assert.equal(args.val, "blue");
     }
 
-    // Test in home view
+    // Test in home view (code coverage; until event/property removed)
+    {
+        stream_events.update_property(stream_id, "in_home_view", false);
+    }
+
+    // Test is muted
     {
         const stub = make_stub();
         override(stream_muting, "update_is_muted", stub.f);
-        stream_events.update_property(stream_id, "in_home_view", false);
+        override(stream_list, "refresh_muted_or_unmuted_stream", noop);
+        stream_events.update_property(stream_id, "is_muted", true);
         assert.equal(stub.num_calls, 1);
         const args = stub.get_args("sub", "val");
         assert.equal(args.sub.stream_id, stream_id);
@@ -136,32 +137,32 @@ test("update_property", ({override}) => {
     // Test desktop notifications
     stream_events.update_property(stream_id, "desktop_notifications", true);
     assert.equal(sub.desktop_notifications, true);
-    let checkbox = checkbox_for("desktop_notifications");
-    assert.equal(checkbox.prop("checked"), true);
+    let $checkbox = checkbox_for("desktop_notifications");
+    assert.equal($checkbox.prop("checked"), true);
 
     // Tests audible notifications
     stream_events.update_property(stream_id, "audible_notifications", true);
     assert.equal(sub.audible_notifications, true);
-    checkbox = checkbox_for("audible_notifications");
-    assert.equal(checkbox.prop("checked"), true);
+    $checkbox = checkbox_for("audible_notifications");
+    assert.equal($checkbox.prop("checked"), true);
 
     // Tests push notifications
     stream_events.update_property(stream_id, "push_notifications", true);
     assert.equal(sub.push_notifications, true);
-    checkbox = checkbox_for("push_notifications");
-    assert.equal(checkbox.prop("checked"), true);
+    $checkbox = checkbox_for("push_notifications");
+    assert.equal($checkbox.prop("checked"), true);
 
     // Tests email notifications
     stream_events.update_property(stream_id, "email_notifications", true);
     assert.equal(sub.email_notifications, true);
-    checkbox = checkbox_for("email_notifications");
-    assert.equal(checkbox.prop("checked"), true);
+    $checkbox = checkbox_for("email_notifications");
+    assert.equal($checkbox.prop("checked"), true);
 
     // Tests wildcard_mentions_notify notifications
     stream_events.update_property(stream_id, "wildcard_mentions_notify", true);
     assert.equal(sub.wildcard_mentions_notify, true);
-    checkbox = checkbox_for("wildcard_mentions_notify");
-    assert.equal(checkbox.prop("checked"), true);
+    $checkbox = checkbox_for("wildcard_mentions_notify");
+    assert.equal($checkbox.prop("checked"), true);
 
     // Test name change
     {
@@ -195,8 +196,8 @@ test("update_property", ({override}) => {
     {
         override(stream_list, "refresh_pinned_or_unpinned_stream", noop);
         stream_events.update_property(stream_id, "pin_to_top", true);
-        checkbox = checkbox_for("pin_to_top");
-        assert.equal(checkbox.prop("checked"), true);
+        $checkbox = checkbox_for("pin_to_top");
+        assert.equal($checkbox.prop("checked"), true);
     }
 
     // Test stream privacy change event
@@ -263,34 +264,33 @@ test("marked_subscribed (error)", () => {
     blueslip.reset();
 });
 
-test("marked_subscribed (normal)", ({override, override_rewire}) => {
+test("marked_subscribed (normal)", ({override}) => {
     const sub = {...frontend};
     stream_data.add_sub(sub);
-    override_rewire(stream_data, "subscribe_myself", noop);
     override(stream_color, "update_stream_color", noop);
 
     narrow_to_frontend();
 
-    let args;
     let list_updated = false;
 
     const stream_list_stub = make_stub();
     const message_view_header_stub = make_stub();
-    const message_util_stub = make_stub();
 
     override(stream_list, "add_sidebar_row", stream_list_stub.f);
-    override(message_util, "do_unread_count_updates", message_util_stub.f);
-    override_rewire(message_view_header, "render_title_area", message_view_header_stub.f);
+    override(stream_list, "update_subscribe_to_more_streams_link", noop);
+    override(unread_ui, "update_unread_counts", noop);
+    override(
+        message_view_header,
+        "maybe_rerender_title_area_for_stream",
+        message_view_header_stub.f,
+    );
     override(message_lists.current, "update_trailing_bookend", () => {
         list_updated = true;
     });
 
     stream_events.mark_subscribed(sub, [], "blue");
 
-    args = message_util_stub.get_args("messages");
-    assert.deepEqual(args.messages, ["msg"]);
-
-    args = stream_list_stub.get_args("sub");
+    const args = stream_list_stub.get_args("sub");
     assert.equal(args.sub.stream_id, sub.stream_id);
     assert.equal(message_view_header_stub.num_calls, 1);
 
@@ -300,10 +300,10 @@ test("marked_subscribed (normal)", ({override, override_rewire}) => {
     narrow_state.reset_current_filter();
 });
 
-test("marked_subscribed (color)", ({override, override_rewire}) => {
-    override_rewire(stream_data, "subscribe_myself", noop);
-    override(message_util, "do_unread_count_updates", noop);
+test("marked_subscribed (color)", ({override}) => {
     override(stream_list, "add_sidebar_row", noop);
+    override(stream_list, "update_subscribe_to_more_streams_link", noop);
+    override(unread_ui, "update_unread_counts", noop);
 
     const sub = {
         subscribed: false,
@@ -312,6 +312,7 @@ test("marked_subscribed (color)", ({override, override_rewire}) => {
         is_muted: true,
         invite_only: false,
     };
+    stream_data.add_sub(sub);
 
     override(color_data, "pick_color", () => "green");
 
@@ -336,8 +337,9 @@ test("marked_subscribed (emails)", ({override}) => {
 
     // Test assigning subscriber emails
     // narrow state is undefined
-    override(message_util, "do_unread_count_updates", noop);
     override(stream_list, "add_sidebar_row", noop);
+    override(stream_list, "update_subscribe_to_more_streams_link", noop);
+    override(unread_ui, "update_unread_counts", noop);
 
     const subs_stub = make_stub();
     override(stream_settings_ui, "update_settings_for_subscribed", subs_stub.f);
@@ -353,34 +355,41 @@ test("marked_subscribed (emails)", ({override}) => {
     assert.deepEqual(sub, args.sub);
 });
 
-test("mark_unsubscribed (update_settings_for_unsubscribed)", ({override, override_rewire}) => {
+test("mark_unsubscribed (update_settings_for_unsubscribed)", ({override}) => {
     // Test unsubscribe
     const sub = {...dev_help};
-    assert.ok(sub.subscribed);
+    stream_data.add_sub(sub);
+    stream_data.subscribe_myself(sub);
 
     const stub = make_stub();
 
     override(stream_settings_ui, "update_settings_for_unsubscribed", stub.f);
     override(stream_list, "remove_sidebar_row", noop);
-    override_rewire(stream_data, "unsubscribe_myself", noop);
+    override(stream_list, "update_subscribe_to_more_streams_link", noop);
+    override(unread_ui, "update_unread_counts", noop);
 
     stream_events.mark_unsubscribed(sub);
     const args = stub.get_args("sub");
     assert.deepEqual(args.sub, sub);
 });
 
-test("mark_unsubscribed (render_title_area)", ({override, override_rewire}) => {
+test("mark_unsubscribed (render_title_area)", ({override}) => {
     const sub = {...frontend, subscribed: true};
     stream_data.add_sub(sub);
 
     // Test update bookend and remove done event
     narrow_to_frontend();
     const message_view_header_stub = make_stub();
-    override_rewire(message_view_header, "render_title_area", message_view_header_stub.f);
-    override_rewire(stream_data, "unsubscribe_myself", noop);
+    override(
+        message_view_header,
+        "maybe_rerender_title_area_for_stream",
+        message_view_header_stub.f,
+    );
     override(stream_settings_ui, "update_settings_for_unsubscribed", noop);
     override(message_lists.current, "update_trailing_bookend", noop);
     override(stream_list, "remove_sidebar_row", noop);
+    override(stream_list, "update_subscribe_to_more_streams_link", noop);
+    override(unread_ui, "update_unread_counts", noop);
 
     stream_events.mark_unsubscribed(sub);
 

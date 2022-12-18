@@ -14,8 +14,7 @@ module.exports = {
         [
             "@babel/preset-env",
             {
-                corejs: "3.20",
-                loose: true, // Loose mode for…of loops are 5× faster in Firefox
+                corejs: "3.26",
                 shippedProposals: true,
                 useBuiltIns: "usage",
             },

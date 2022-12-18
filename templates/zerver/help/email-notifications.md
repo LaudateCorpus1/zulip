@@ -6,6 +6,15 @@ Zulip can be configured to send message notification emails for [PMs
 and mentions](/help/pm-mention-alert-notifications), as well as
 [stream messages](/help/stream-notifications).
 
+{start_tabs}
+
+{settings_tab|notifications}
+
+1. Toggle the checkboxes for **Streams** and **PMs, mentions, and alerts**
+   in the **Email** column of the **Notification triggers** table.
+
+{end_tabs}
+
 You can [respond to Zulip messages directly][reply-from-email] by
 replying to message notification emails, unless you are connecting to
 a self-hosted Zulip server whose system administrator has not
@@ -37,7 +46,7 @@ To configure the delay for message notification emails:
 
 {settings_tab|notifications}
 
-1. Under **Other notification settings**, select the desired time period from the
+1. Under **Email message notifications**, select the desired time period from the
    **Delay before sending message notification emails** dropdown.
 
 {end_tabs}
@@ -52,7 +61,7 @@ name of the organization in the subject line of your message notification emails
 
 {settings_tab|notifications}
 
-1. Under **Email message notifications**, select
+1. Under **Email message notifications**, toggle
    **Include organization name in subject of message notification emails**.
 
 {end_tabs}

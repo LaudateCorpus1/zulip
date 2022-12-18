@@ -1,10 +1,8 @@
 import $ from "jquery";
 
-import {all_messages_data} from "./all_messages_data";
 import * as blueslip from "./blueslip";
 import * as color_data from "./color_data";
 import * as message_lists from "./message_lists";
-import * as message_util from "./message_util";
 import * as message_view_header from "./message_view_header";
 import * as narrow_state from "./narrow_state";
 import * as overlays from "./overlays";
@@ -17,14 +15,15 @@ import * as stream_list from "./stream_list";
 import * as stream_muting from "./stream_muting";
 import * as stream_settings_ui from "./stream_settings_ui";
 import * as sub_store from "./sub_store";
+import * as unread_ui from "./unread_ui";
 
 // In theory, this function should apply the account-level defaults,
 // however, they are only called after a manual override, so
 // doing so is unnecessary with the current code.  Ideally, we'd do a
 // refactor to address that, however.
 function update_stream_setting(sub, value, setting) {
-    const setting_checkbox = $(`#${CSS.escape(setting)}_${CSS.escape(sub.stream_id)}`);
-    setting_checkbox.prop("checked", value);
+    const $setting_checkbox = $(`#${CSS.escape(setting)}_${CSS.escape(sub.stream_id)}`);
+    $setting_checkbox.prop("checked", value);
     sub[setting] = value;
 }
 
@@ -45,7 +44,12 @@ export function update_property(stream_id, property, value, other_values) {
             stream_color.update_stream_color(sub, value, {update_historical: true});
             break;
         case "in_home_view":
-            stream_muting.update_is_muted(sub, !value);
+            // Legacy in_home_view events are only sent as duplicates of
+            // modern is_muted events, which we handle below.
+            break;
+        case "is_muted":
+            stream_muting.update_is_muted(sub, value);
+            stream_list.refresh_muted_or_unmuted_stream(sub);
             recent_topics_ui.complete_rerender();
             break;
         case "desktop_notifications":
@@ -135,11 +139,12 @@ export function mark_subscribed(sub, subscribers, color) {
         message_lists.current.update_trailing_bookend();
     }
 
-    // Update unread counts as the new stream in sidebar might
-    // need its unread counts re-calculated
-    message_util.do_unread_count_updates(all_messages_data.all_messages());
+    // The new stream in sidebar might need its unread counts
+    // re-calculated.
+    unread_ui.update_unread_counts();
 
     stream_list.add_sidebar_row(sub);
+    stream_list.update_subscribe_to_more_streams_link();
 }
 
 export function mark_unsubscribed(sub) {
@@ -162,7 +167,12 @@ export function mark_unsubscribed(sub) {
         message_lists.current.update_trailing_bookend();
     }
 
+    // Unread messages in the now-unsubscribe stream need to be
+    // removed from global count totals.
+    unread_ui.update_unread_counts();
+
     stream_list.remove_sidebar_row(sub.stream_id);
+    stream_list.update_subscribe_to_more_streams_link();
 }
 
 export function remove_deactivated_user_from_all_streams(user_id) {

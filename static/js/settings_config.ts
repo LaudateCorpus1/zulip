@@ -2,8 +2,13 @@ import Handlebars from "handlebars/runtime";
 
 import {$t, $t_html} from "./i18n";
 import {page_params} from "./page_params";
-import type {RealmDefaultSettingsType} from "./realm_user_settings_defaults";
-import type {UserSettingsType} from "./user_settings";
+import type {RealmDefaultSettings} from "./realm_user_settings_defaults";
+import type {StreamSpecificNotificationSettings} from "./sub_store";
+import type {
+    PmNotificationSettings,
+    StreamNotificationSettings,
+    UserSettings,
+} from "./user_settings";
 
 /*
     This file contains translations between the integer values used in
@@ -34,10 +39,26 @@ export const demote_inactive_streams_values = {
     },
 };
 
+export const user_list_style_values = {
+    compact: {
+        code: 1,
+        description: $t({defaultMessage: "Compact"}),
+    },
+    with_status: {
+        code: 2,
+        description: $t({defaultMessage: "Show status text"}),
+    },
+    // The `with_avatar` design in still in discussion.
+    // with_avatar: {
+    //     code: 3,
+    //     description: $t({defaultMessage: "Show status text and avatar"}),
+    // },
+};
+
 export const default_view_values = {
     recent_topics: {
         code: "recent_topics",
-        description: $t({defaultMessage: "Recent topics"}),
+        description: $t({defaultMessage: "Recent conversations"}),
     },
     all_messages: {
         code: "all_messages",
@@ -81,12 +102,12 @@ export interface DisplaySettings {
     };
 }
 
+/* istanbul ignore next */
 export const get_all_display_settings = (): DisplaySettings => ({
     settings: {
         user_display_settings: [
             "dense_mode",
             "high_contrast_mode",
-            "left_side_userlist",
             "fluid_layout_width",
             "starred_message_counts",
         ],
@@ -206,20 +227,11 @@ export const wildcard_mention_policy_values = {
         code: 7,
         description: $t({defaultMessage: "Admins and moderators"}),
     },
-    // Until we add stream administrators, we mislabel this choice
-    // (which we intend to be the long-term default) as "Admins only"
-    // and don't offer the long-term "Admins only" option.
-    by_stream_admins_only: {
+    by_admins_only: {
         order: 5,
-        code: 4,
-        //  description: $t({defaultMessage: "Organization and stream admins"}),
+        code: 5,
         description: $t({defaultMessage: "Admins only"}),
     },
-    // by_admins_only: {
-    //     order: 5,
-    //     code: 5,
-    //     description: $t({defaultMessage: "Admins only"}),
-    // },
     nobody: {
         order: 6,
         code: 6,
@@ -278,143 +290,54 @@ export const common_message_policy_values = {
     },
 };
 
-const time_limit_dropdown_values = new Map([
-    [
-        "any_time",
-        {
-            text: $t({defaultMessage: "Any time"}),
-            seconds: 0,
-        },
-    ],
-    [
-        "never",
-        {
-            text: $t({defaultMessage: "Never"}),
-        },
-    ],
-    [
-        "upto_two_min",
-        {
-            text: $t(
-                {defaultMessage: "Up to {time_limit} after posting"},
-                {time_limit: $t({defaultMessage: "2 minutes"})},
-            ),
-            seconds: 2 * 60,
-        },
-    ],
-    [
-        "upto_ten_min",
-        {
-            text: $t(
-                {defaultMessage: "Up to {time_limit} after posting"},
-                {time_limit: $t({defaultMessage: "10 minutes"})},
-            ),
-            seconds: 10 * 60,
-        },
-    ],
-    [
-        "upto_one_hour",
-        {
-            text: $t(
-                {defaultMessage: "Up to {time_limit} after posting"},
-                {time_limit: $t({defaultMessage: "1 hour"})},
-            ),
-            seconds: 60 * 60,
-        },
-    ],
-    [
-        "upto_one_day",
-        {
-            text: $t(
-                {defaultMessage: "Up to {time_limit} after posting"},
-                {time_limit: $t({defaultMessage: "1 day"})},
-            ),
-            seconds: 24 * 60 * 60,
-        },
-    ],
-    [
-        "upto_one_week",
-        {
-            text: $t(
-                {defaultMessage: "Up to {time_limit} after posting"},
-                {time_limit: $t({defaultMessage: "1 week"})},
-            ),
-            seconds: 7 * 24 * 60 * 60,
-        },
-    ],
-    [
-        "custom_limit",
-        {
-            text: $t({defaultMessage: "Custom"}),
-        },
-    ],
-]);
+export const time_limit_dropdown_values = [
+    {
+        text: $t({defaultMessage: "Any time"}),
+        value: "any_time",
+    },
+    {
+        text: $t(
+            {defaultMessage: "Up to {time_limit} after posting"},
+            {time_limit: $t({defaultMessage: "2 minutes"})},
+        ),
+        value: 2 * 60,
+    },
+    {
+        text: $t(
+            {defaultMessage: "Up to {time_limit} after posting"},
+            {time_limit: $t({defaultMessage: "10 minutes"})},
+        ),
+        value: 10 * 60,
+    },
+    {
+        text: $t(
+            {defaultMessage: "Up to {time_limit} after posting"},
+            {time_limit: $t({defaultMessage: "1 hour"})},
+        ),
+        value: 60 * 60,
+    },
+    {
+        text: $t(
+            {defaultMessage: "Up to {time_limit} after posting"},
+            {time_limit: $t({defaultMessage: "1 day"})},
+        ),
+        value: 24 * 60 * 60,
+    },
+    {
+        text: $t(
+            {defaultMessage: "Up to {time_limit} after posting"},
+            {time_limit: $t({defaultMessage: "1 week"})},
+        ),
+        value: 7 * 24 * 60 * 60,
+    },
+    {
+        text: $t({defaultMessage: "Custom"}),
+        value: "custom_period",
+    },
+];
 export const msg_edit_limit_dropdown_values = time_limit_dropdown_values;
-export const msg_delete_limit_dropdown_values = new Map([
-    [
-        "any_time",
-        {
-            text: $t({defaultMessage: "Any time"}),
-            seconds: 0,
-        },
-    ],
-    [
-        "upto_two_min",
-        {
-            text: $t(
-                {defaultMessage: "Up to {time_limit} after posting"},
-                {time_limit: $t({defaultMessage: "2 minutes"})},
-            ),
-            seconds: 2 * 60,
-        },
-    ],
-    [
-        "upto_ten_min",
-        {
-            text: $t(
-                {defaultMessage: "Up to {time_limit} after posting"},
-                {time_limit: $t({defaultMessage: "10 minutes"})},
-            ),
-            seconds: 10 * 60,
-        },
-    ],
-    [
-        "upto_one_hour",
-        {
-            text: $t(
-                {defaultMessage: "Up to {time_limit} after posting"},
-                {time_limit: $t({defaultMessage: "1 hour"})},
-            ),
-            seconds: 60 * 60,
-        },
-    ],
-    [
-        "upto_one_day",
-        {
-            text: $t(
-                {defaultMessage: "Up to {time_limit} after posting"},
-                {time_limit: $t({defaultMessage: "1 day"})},
-            ),
-            seconds: 24 * 60 * 60,
-        },
-    ],
-    [
-        "upto_one_week",
-        {
-            text: $t(
-                {defaultMessage: "Up to {time_limit} after posting"},
-                {time_limit: $t({defaultMessage: "1 week"})},
-            ),
-            seconds: 7 * 24 * 60 * 60,
-        },
-    ],
-    [
-        "custom_limit",
-        {
-            text: $t({defaultMessage: "Custom"}),
-        },
-    ],
-]);
+export const msg_delete_limit_dropdown_values = time_limit_dropdown_values;
+
 export const retain_message_forever = -1;
 
 export const user_role_values = {
@@ -440,6 +363,71 @@ export const user_role_values = {
     },
 };
 
+export const all_org_type_values = {
+    // When org_type was added to the database model, 'unspecified'
+    // was the default for existing organizations. To discourage
+    // organizations keeping (or selecting) it as an option, we
+    // use an empty string for its description.
+    unspecified: {
+        code: 0,
+        description: "",
+    },
+    business: {
+        code: 10,
+        description: $t({defaultMessage: "Business"}),
+    },
+    opensource: {
+        code: 20,
+        description: $t({defaultMessage: "Open-source project"}),
+    },
+    education_nonprofit: {
+        code: 30,
+        description: $t({defaultMessage: "Education (non-profit)"}),
+    },
+    education: {
+        code: 35,
+        description: $t({defaultMessage: "Education (for-profit)"}),
+    },
+    research: {
+        code: 40,
+        description: $t({defaultMessage: "Research"}),
+    },
+    event: {
+        code: 50,
+        description: $t({defaultMessage: "Event or conference"}),
+    },
+    nonprofit: {
+        code: 60,
+        description: $t({defaultMessage: "Non-profit (registered)"}),
+    },
+    government: {
+        code: 70,
+        description: $t({defaultMessage: "Government"}),
+    },
+    political_group: {
+        code: 80,
+        description: $t({defaultMessage: "Political group"}),
+    },
+    community: {
+        code: 90,
+        description: $t({defaultMessage: "Community"}),
+    },
+    personal: {
+        code: 100,
+        description: $t({defaultMessage: "Personal"}),
+    },
+    other: {
+        code: 1000,
+        description: $t({defaultMessage: "Other"}),
+    },
+};
+
+// Remove the 'unspecified' org_type for dropdown menu options
+// when an org_type other than 'unspecified' has been selected.
+export const defined_org_type_values = Object.fromEntries(
+    Object.entries(all_org_type_values).slice(1),
+);
+
 export const expires_in_values = {
     // Backend support for this configuration is not available yet.
     // hour: {
@@ -448,31 +436,39 @@ export const expires_in_values = {
     //     default: false,
     // },
     day: {
-        value: 1,
+        value: 24 * 60,
         description: $t({defaultMessage: "1 day"}),
         default: false,
     },
     threeDays: {
-        value: 3,
+        value: 3 * 24 * 60,
         description: $t({defaultMessage: "3 days"}),
         default: false,
     },
     tenDays: {
-        value: 10,
+        value: 10 * 24 * 60,
         description: $t({defaultMessage: "10 days"}),
         default: true,
     },
     thirtyDays: {
-        value: 30,
+        value: 30 * 24 * 60,
         description: $t({defaultMessage: "30 days"}),
         default: false,
     },
-    // Backend support for this configuration is not available yet.
-    // never: {
-    //     value: "never",
-    //     description: $t({defaultMessage: "Never expires"}),
-    //     default: false,
-    // }
+    never: {
+        // Ideally we'd just store `null`, not the string `"null"`, but
+        // .val() will read null back as `""`.  Custom logic in
+        // get_common_invitation_data converts this back to `null`
+        // before sending to the server.
+        value: "null",
+        description: $t({defaultMessage: "Never expires"}),
+        default: false,
+    },
+    custom: {
+        value: "custom",
+        description: $t({defaultMessage: "Custom"}),
+        default: false,
+    },
 };
 
 const user_role_array = Object.values(user_role_values);
@@ -482,9 +478,6 @@ export const display_settings_labels = {
     dense_mode: $t({defaultMessage: "Dense mode"}),
     fluid_layout_width: $t({defaultMessage: "Use full width on wide screens"}),
     high_contrast_mode: $t({defaultMessage: "High contrast mode"}),
-    left_side_userlist: $t({
-        defaultMessage: "Show user list on left sidebar in narrow windows",
-    }),
     starred_message_counts: $t({defaultMessage: "Show counts for starred messages"}),
     twenty_four_hour_time: $t({defaultMessage: "Time format"}),
     translate_emoticons: new Handlebars.SafeString(
@@ -492,18 +485,25 @@ export const display_settings_labels = {
             defaultMessage: "Convert emoticons before sending (<code>:)</code> becomes 😃)",
         }),
     ),
+    display_emoji_reaction_users: new Handlebars.SafeString(
+        $t_html({
+            defaultMessage:
+                "Display names of reacting users when few users have reacted to a message",
+        }),
+    ),
     escape_navigates_to_default_view: $t({defaultMessage: "Escape key navigates to default view"}),
+    default_language_settings_label: $t({defaultMessage: "Language"}),
 };
 
 export const notification_settings_labels = {
     enable_online_push_notifications: $t({
-        defaultMessage: "Send mobile notifications even if I'm online (useful for testing)",
+        defaultMessage: "Send mobile notifications even if I'm online",
     }),
     pm_content_in_desktop_notifications: $t({
         defaultMessage: "Include content of private messages in desktop notifications",
     }),
     desktop_icon_count_display: $t({
-        defaultMessage: "Unread count summary (appears in desktop sidebar and browser tab)",
+        defaultMessage: "Unread count badge (appears in desktop sidebar and browser tab)",
     }),
     enable_digest_emails: $t({defaultMessage: "Send digest emails when I'm away"}),
     enable_login_emails: $t({
@@ -526,12 +526,16 @@ export const realm_user_settings_defaults_labels = {
 
     /* Overrides to remove "I" from labels for the realm-level versions of these labels. */
     enable_online_push_notifications: $t({
-        defaultMessage: "Send mobile notifications even if user is online (useful for testing)",
+        defaultMessage: "Send mobile notifications even if user is online",
     }),
     enable_digest_emails: $t({defaultMessage: "Send digest emails when user is away"}),
 
-    realm_presence_enabled: $t({defaultMessage: "Display availability to other users when online"}),
+    realm_presence_enabled: $t({
+        defaultMessage: "Display availability to other users",
+    }),
+    realm_presence_enabled_parens_text: $t({defaultMessage: "invisible mode off"}),
     realm_enter_sends: $t({defaultMessage: "Enter sends when composing a message"}),
+    realm_send_read_receipts: $t({defaultMessage: "Allow other users to view read receipts"}),
 };
 
 // NOTIFICATIONS
@@ -559,7 +563,7 @@ export const general_notifications_table_labels = {
     },
 };
 
-export const stream_specific_notification_settings = [
+export const stream_specific_notification_settings: (keyof StreamSpecificNotificationSettings)[] = [
     "desktop_notifications",
     "audible_notifications",
     "push_notifications",
@@ -567,9 +571,7 @@ export const stream_specific_notification_settings = [
     "wildcard_mentions_notify",
 ];
 
-type SettingsObjectType = UserSettingsType | RealmDefaultSettingsType;
-type PageParamsItem = keyof SettingsObjectType;
-export const stream_notification_settings: PageParamsItem[] = [
+export const stream_notification_settings: (keyof StreamNotificationSettings)[] = [
     "enable_stream_desktop_notifications",
     "enable_stream_audible_notifications",
     "enable_stream_push_notifications",
@@ -577,7 +579,29 @@ export const stream_notification_settings: PageParamsItem[] = [
     "wildcard_mentions_notify",
 ];
 
-export const pm_mention_notification_settings: PageParamsItem[] = [
+export const generalize_stream_notification_setting: Record<
+    keyof StreamSpecificNotificationSettings,
+    keyof StreamNotificationSettings
+> = {
+    desktop_notifications: "enable_stream_desktop_notifications",
+    audible_notifications: "enable_stream_audible_notifications",
+    push_notifications: "enable_stream_push_notifications",
+    email_notifications: "enable_stream_email_notifications",
+    wildcard_mentions_notify: "wildcard_mentions_notify",
+};
+
+export const specialize_stream_notification_setting: Record<
+    keyof StreamNotificationSettings,
+    keyof StreamSpecificNotificationSettings
+> = {
+    enable_stream_desktop_notifications: "desktop_notifications",
+    enable_stream_audible_notifications: "audible_notifications",
+    enable_stream_push_notifications: "push_notifications",
+    enable_stream_email_notifications: "email_notifications",
+    wildcard_mentions_notify: "wildcard_mentions_notify",
+};
+
+export const pm_mention_notification_settings: (keyof PmNotificationSettings)[] = [
     "enable_desktop_notifications",
     "enable_sounds",
     "enable_offline_push_notifications",
@@ -655,6 +679,8 @@ export const all_notification_settings = other_notification_settings.concat(
     stream_notification_settings,
 );
 
+type Settings = UserSettings | RealmDefaultSettings;
+type PageParamsItem = keyof Settings;
 type NotificationSettingCheckbox = {
     setting_name: string;
     is_disabled: boolean;
@@ -663,7 +689,7 @@ type NotificationSettingCheckbox = {
 
 export function get_notifications_table_row_data(
     notify_settings: PageParamsItem[],
-    settings_object: SettingsObjectType,
+    settings_object: Settings,
 ): NotificationSettingCheckbox[] {
     return general_notifications_table_labels.realm.map((column, index) => {
         const setting_name = notify_settings[index];
@@ -706,7 +732,7 @@ export interface AllNotifications {
     };
 }
 
-export const all_notifications = (settings_object: SettingsObjectType): AllNotifications => ({
+export const all_notifications = (settings_object: Settings): AllNotifications => ({
     general_settings: [
         {
             label: $t({defaultMessage: "Streams"}),

@@ -31,12 +31,12 @@ export function do_settings_change(
         success_continuation,
         error_continuation,
         sticky = false,
-        error_msg_element,
+        $error_msg_element,
     } = {},
 ) {
-    const spinner = $(status_element).expectOne();
-    spinner.fadeTo(0, 1);
-    loading.make_indicator(spinner, {text: strings.saving});
+    const $spinner = $(status_element).expectOne();
+    $spinner.fadeTo(0, 1);
+    loading.make_indicator($spinner, {text: strings.saving});
     const remove_after = sticky ? undefined : 1000;
     const appear_after = 500;
 
@@ -45,19 +45,19 @@ export function do_settings_change(
         data,
         success(reponse_data) {
             setTimeout(() => {
-                ui_report.success(success_msg_html, spinner, remove_after);
-                display_checkmark(spinner);
+                ui_report.success(success_msg_html, $spinner, remove_after);
+                display_checkmark($spinner);
             }, appear_after);
             if (success_continuation !== undefined) {
                 success_continuation(reponse_data);
             }
         },
         error(xhr) {
-            if (error_msg_element) {
-                loading.destroy_indicator(spinner);
-                ui_report.error(failure_msg_html, xhr, error_msg_element);
+            if ($error_msg_element) {
+                loading.destroy_indicator($spinner);
+                ui_report.error(failure_msg_html, xhr, $error_msg_element);
             } else {
-                ui_report.error(failure_msg_html, xhr, spinner);
+                ui_report.error(failure_msg_html, xhr, $spinner);
             }
             if (error_continuation !== undefined) {
                 error_continuation(xhr);
@@ -67,7 +67,7 @@ export function do_settings_change(
 }
 
 // This function is used to disable sub-setting when main setting is checked or unchecked
-// or two settings are inter-dependent on their values values.
+// or two settings are inter-dependent on their values.
 // * is_checked is boolean, shows if the main setting is checked or not.
 // * sub_setting_id is sub setting or setting which depend on main setting,
 //   string id of setting.

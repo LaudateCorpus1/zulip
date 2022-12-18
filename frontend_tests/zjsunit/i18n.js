@@ -12,7 +12,8 @@ exports.intl = createIntl(
         defaultRichTextElements: Object.fromEntries(
             ["b", "code", "em", "i", "kbd", "p", "strong"].map((tag) => [
                 tag,
-                (content_html) => `<${tag}>${content_html}</${tag}>`,
+                /* istanbul ignore next */
+                (content_html) => `<${tag}>${content_html.join("")}</${tag}>`,
             ]),
         ),
     },
@@ -32,7 +33,7 @@ exports.$t = (descriptor, values) =>
 const default_html_elements = Object.fromEntries(
     ["b", "code", "em", "i", "kbd", "p", "strong"].map((tag) => [
         tag,
-        (content_html) => `<${tag}>${content_html}</${tag}>`,
+        (content_html) => `<${tag}>${content_html.join("")}</${tag}>`,
     ]),
 );
 

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from django.core.exceptions import ValidationError
 from django.http import HttpRequest, HttpResponse
@@ -7,22 +7,22 @@ from django.utils.translation import gettext as _
 from django.views.decorators.http import require_safe
 
 from confirmation.models import Confirmation, ConfirmationKeyException, get_object_from_key
-from zerver.decorator import require_realm_admin, require_realm_owner
-from zerver.forms import check_subdomain_available as check_subdomain
-from zerver.lib.actions import (
-    do_change_realm_subdomain,
+from zerver.actions.create_realm import do_change_realm_subdomain
+from zerver.actions.realm_settings import (
+    do_change_realm_org_type,
     do_deactivate_realm,
     do_reactivate_realm,
     do_set_realm_authentication_methods,
-    do_set_realm_message_editing,
     do_set_realm_notifications_stream,
     do_set_realm_property,
     do_set_realm_signup_notifications_stream,
     do_set_realm_user_default_setting,
 )
+from zerver.decorator import require_realm_admin, require_realm_owner
+from zerver.forms import check_subdomain_available as check_subdomain
 from zerver.lib.exceptions import JsonableError, OrganizationOwnerRequired
 from zerver.lib.i18n import get_available_language_codes
-from zerver.lib.message import parse_message_content_delete_limit
+from zerver.lib.message import parse_message_content_edit_or_delete_limit
 from zerver.lib.request import REQ, has_request_variables
 from zerver.lib.response import json_success
 from zerver.lib.retention import parse_message_retention_days
@@ -37,8 +37,10 @@ from zerver.lib.validator import (
     check_string_or_int,
     to_non_negative_int,
 )
-from zerver.models import Realm, RealmUserDefault, UserProfile
+from zerver.models import Realm, RealmReactivationStatus, RealmUserDefault, UserProfile
 from zerver.views.user_settings import check_settings_values
+
+ORG_TYPE_IDS: List[int] = [t["id"] for t in Realm.ORG_TYPES.values()]
 
 
 @require_realm_admin
@@ -79,8 +81,8 @@ def update_realm(
         json_validator=check_int_in(Realm.COMMON_MESSAGE_POLICY_TYPES), default=None
     ),
     mandatory_topics: Optional[bool] = REQ(json_validator=check_bool, default=None),
-    message_content_edit_limit_seconds: Optional[int] = REQ(
-        converter=to_non_negative_int, default=None
+    message_content_edit_limit_seconds_raw: Optional[Union[int, str]] = REQ(
+        "message_content_edit_limit_seconds", json_validator=check_string_or_int, default=None
     ),
     allow_edit_history: Optional[bool] = REQ(json_validator=check_bool, default=None),
     default_language: Optional[str] = REQ(default=None),
@@ -138,7 +140,12 @@ def update_realm(
         str_validator=check_capped_string(Realm.MAX_REALM_SUBDOMAIN_LENGTH),
         default=None,
     ),
+    org_type: Optional[int] = REQ(json_validator=check_int_in(ORG_TYPE_IDS), default=None),
     enable_spectator_access: Optional[bool] = REQ(json_validator=check_bool, default=None),
+    want_advertise_in_communities_directory: Optional[bool] = REQ(
+        json_validator=check_bool, default=None
+    ),
+    enable_read_receipts: Optional[bool] = REQ(json_validator=check_bool, default=None),
 ) -> HttpResponse:
     realm = user_profile.realm
 
@@ -168,25 +175,70 @@ def update_realm(
         message_retention_days = parse_message_retention_days(
             message_retention_days_raw, Realm.MESSAGE_RETENTION_SPECIAL_VALUES_MAP
         )
+    message_retention_days  # used by locals() below
 
-    if invite_to_realm_policy is not None and not user_profile.is_realm_owner:
+    if (
+        invite_to_realm_policy is not None or invite_required is not None
+    ) and not user_profile.is_realm_owner:
         raise OrganizationOwnerRequired()
+
+    if (
+        emails_restricted_to_domains is not None or disallow_disposable_email_addresses is not None
+    ) and not user_profile.is_realm_owner:
+        raise OrganizationOwnerRequired()
+
+    if waiting_period_threshold is not None and not user_profile.is_realm_owner:
+        raise OrganizationOwnerRequired()
+
+    if enable_spectator_access:
+        realm.ensure_not_on_limited_plan()
 
     data: Dict[str, Any] = {}
 
     message_content_delete_limit_seconds: Optional[int] = None
     if message_content_delete_limit_seconds_raw is not None:
-        message_content_delete_limit_seconds = parse_message_content_delete_limit(
+        message_content_delete_limit_seconds = parse_message_content_edit_or_delete_limit(
             message_content_delete_limit_seconds_raw,
-            Realm.MESSAGE_CONTENT_DELETE_LIMIT_SPECIAL_VALUES_MAP,
+            Realm.MESSAGE_CONTENT_EDIT_OR_DELETE_LIMIT_SPECIAL_VALUES_MAP,
+            setting_name="message_content_delete_limit_seconds",
         )
-        do_set_realm_property(
-            realm,
-            "message_content_delete_limit_seconds",
-            message_content_delete_limit_seconds,
-            acting_user=user_profile,
+        if (
+            message_content_delete_limit_seconds is None
+            and realm.message_content_delete_limit_seconds is not None
+        ):
+            # We handle 'None' here separately, since in the loop below,
+            # do_set_realm_property is called only if setting value is
+            # not None.
+            do_set_realm_property(
+                realm,
+                "message_content_delete_limit_seconds",
+                message_content_delete_limit_seconds,
+                acting_user=user_profile,
+            )
+            data["message_content_delete_limit_seconds"] = message_content_delete_limit_seconds
+
+    message_content_edit_limit_seconds: Optional[int] = None
+    if message_content_edit_limit_seconds_raw is not None:
+        message_content_edit_limit_seconds = parse_message_content_edit_or_delete_limit(
+            message_content_edit_limit_seconds_raw,
+            Realm.MESSAGE_CONTENT_EDIT_OR_DELETE_LIMIT_SPECIAL_VALUES_MAP,
+            setting_name="message_content_edit_limit_seconds",
         )
-        data["message_content_delete_limit_seconds"] = message_content_delete_limit_seconds
+
+        if (
+            message_content_edit_limit_seconds is None
+            and realm.message_content_edit_limit_seconds is not None
+        ):
+            # We handle 'None' here separately, since in the loop below,
+            # do_set_realm_property is called only if setting value is
+            # not None.
+            do_set_realm_property(
+                realm,
+                "message_content_edit_limit_seconds",
+                message_content_edit_limit_seconds,
+                acting_user=user_profile,
+            )
+            data["message_content_edit_limit_seconds"] = message_content_edit_limit_seconds
 
     # The user of `locals()` here is a bit of a code smell, but it's
     # restricted to the elements present in realm.property_types.
@@ -212,32 +264,6 @@ def update_realm(
     ):
         do_set_realm_authentication_methods(realm, authentication_methods, acting_user=user_profile)
         data["authentication_methods"] = authentication_methods
-    # The message_editing settings are coupled to each other, and thus don't fit
-    # into the do_set_realm_property framework.
-    if (
-        (allow_message_editing is not None and realm.allow_message_editing != allow_message_editing)
-        or (
-            message_content_edit_limit_seconds is not None
-            and realm.message_content_edit_limit_seconds != message_content_edit_limit_seconds
-        )
-        or (edit_topic_policy is not None and realm.edit_topic_policy != edit_topic_policy)
-    ):
-        if allow_message_editing is None:
-            allow_message_editing = realm.allow_message_editing
-        if message_content_edit_limit_seconds is None:
-            message_content_edit_limit_seconds = realm.message_content_edit_limit_seconds
-        if edit_topic_policy is None:
-            edit_topic_policy = realm.edit_topic_policy
-        do_set_realm_message_editing(
-            realm,
-            allow_message_editing,
-            message_content_edit_limit_seconds,
-            edit_topic_policy,
-            acting_user=user_profile,
-        )
-        data["allow_message_editing"] = allow_message_editing
-        data["message_content_edit_limit_seconds"] = message_content_edit_limit_seconds
-        data["edit_topic_policy"] = edit_topic_policy
 
     # Realm.notifications_stream and Realm.signup_notifications_stream are not boolean,
     # str or integer field, and thus doesn't fit into the do_set_realm_property framework.
@@ -294,7 +320,11 @@ def update_realm(
         do_change_realm_subdomain(realm, string_id, acting_user=user_profile)
         data["realm_uri"] = realm.uri
 
-    return json_success(data)
+    if org_type is not None:
+        do_change_realm_org_type(realm, org_type, acting_user=user_profile)
+        data["org_type"] = org_type
+
+    return json_success(request, data)
 
 
 @require_realm_owner
@@ -302,24 +332,31 @@ def update_realm(
 def deactivate_realm(request: HttpRequest, user: UserProfile) -> HttpResponse:
     realm = user.realm
     do_deactivate_realm(realm, acting_user=user)
-    return json_success()
+    return json_success(request)
 
 
 @require_safe
 def check_subdomain_available(request: HttpRequest, subdomain: str) -> HttpResponse:
     try:
         check_subdomain(subdomain)
-        return json_success({"msg": "available"})
+        return json_success(request, data={"msg": "available"})
     except ValidationError as e:
-        return json_success({"msg": e.message})
+        return json_success(request, data={"msg": e.message})
 
 
 def realm_reactivation(request: HttpRequest, confirmation_key: str) -> HttpResponse:
     try:
-        realm = get_object_from_key(confirmation_key, [Confirmation.REALM_REACTIVATION])
+        obj = get_object_from_key(
+            confirmation_key, [Confirmation.REALM_REACTIVATION], mark_object_used=True
+        )
     except ConfirmationKeyException:
-        return render(request, "zerver/realm_reactivation_link_error.html")
+        return render(request, "zerver/realm_reactivation_link_error.html", status=404)
+
+    assert isinstance(obj, RealmReactivationStatus)
+    realm = obj.realm
+
     do_reactivate_realm(realm)
+
     context = {"realm": realm}
     return render(request, "zerver/realm_reactivation.html", context)
 
@@ -341,6 +378,7 @@ def update_realm_user_settings_defaults(
         json_validator=check_int_in(UserProfile.COLOR_SCHEME_CHOICES), default=None
     ),
     translate_emoticons: Optional[bool] = REQ(json_validator=check_bool, default=None),
+    display_emoji_reaction_users: Optional[bool] = REQ(json_validator=check_bool, default=None),
     default_view: Optional[str] = REQ(
         str_validator=check_string_in(default_view_options), default=None
     ),
@@ -402,6 +440,9 @@ def update_realm_user_settings_defaults(
         json_validator=check_bool, default=None
     ),
     send_read_receipts: Optional[bool] = REQ(json_validator=check_bool, default=None),
+    user_list_style: Optional[int] = REQ(
+        json_validator=check_int_in(UserProfile.USER_LIST_STYLE_CHOICES), default=None
+    ),
 ) -> HttpResponse:
     if notification_sound is not None or email_notifications_batching_period_seconds is not None:
         check_settings_values(notification_sound, email_notifications_batching_period_seconds)
@@ -426,4 +467,4 @@ def update_realm_user_settings_defaults(
     if len(request_notes.ignored_parameters) > 0:
         result["ignored_parameters_unsupported"] = list(request_notes.ignored_parameters)
 
-    return json_success(result)
+    return json_success(request, data=result)

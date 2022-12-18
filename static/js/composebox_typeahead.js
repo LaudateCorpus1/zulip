@@ -1,10 +1,7 @@
-import {formatISO} from "date-fns";
-import ConfirmDatePlugin from "flatpickr/dist/plugins/confirmDate/confirmDate";
 import $ from "jquery";
 import _ from "lodash";
 
 import pygments_data from "../generated/pygments_data.json";
-import * as emoji from "../shared/js/emoji";
 import * as typeahead from "../shared/js/typeahead";
 
 import * as compose from "./compose";
@@ -12,8 +9,10 @@ import * as compose_pm_pill from "./compose_pm_pill";
 import * as compose_state from "./compose_state";
 import * as compose_ui from "./compose_ui";
 import * as compose_validate from "./compose_validate";
-import {get_keydown_hotkey} from "./hotkey";
+import * as emoji from "./emoji";
+import * as flatpickr from "./flatpickr";
 import {$t} from "./i18n";
+import * as keydown_util from "./keydown_util";
 import * as message_store from "./message_store";
 import * as muted_users from "./muted_users";
 import {page_params} from "./page_params";
@@ -36,7 +35,7 @@ import {user_settings} from "./user_settings";
 // And your input to them is rendered as though it were HTML by
 // the default highlighter.
 //
-// So if you are not using trusted input, you MUST use the a
+// So if you are not using trusted input, you MUST use a
 // highlighter that escapes (i.e. one that calls
 // typeahead_helper.highlight_with_escaping).
 
@@ -49,8 +48,10 @@ export let emoji_collection = [];
 export function update_emoji_data() {
     emoji_collection = [];
     for (const emoji_dict of emoji.emojis_by_name.values()) {
+        const {reaction_type} = emoji.get_emoji_details_by_name(emoji_dict.name);
         if (emoji_dict.is_realm_emoji === true) {
             emoji_collection.push({
+                reaction_type,
                 emoji_name: emoji_dict.name,
                 emoji_url: emoji_dict.url,
                 is_realm_emoji: true,
@@ -58,6 +59,7 @@ export function update_emoji_data() {
         } else {
             for (const alias of emoji_dict.aliases) {
                 emoji_collection.push({
+                    reaction_type,
                     emoji_name: alias,
                     emoji_code: emoji_dict.emoji_code,
                 });
@@ -85,23 +87,15 @@ function get_language_matcher(query) {
 }
 
 export function query_matches_person(query, person) {
-    if (!settings_data.show_email()) {
-        return typeahead.query_matches_source_attrs(query, person, ["full_name"], " ");
-    }
-    let email_attr = "email";
-    if (person.delivery_email) {
-        email_attr = "delivery_email";
-    }
-    return typeahead.query_matches_source_attrs(query, person, ["full_name", email_attr], " ");
+    return (
+        typeahead.query_matches_string(query, person.full_name, " ") ||
+        (settings_data.show_email() &&
+            typeahead.query_matches_string(query, people.get_visible_email(person), " "))
+    );
 }
 
-export function query_matches_name_description(query, user_group_or_stream) {
-    return typeahead.query_matches_source_attrs(
-        query,
-        user_group_or_stream,
-        ["name", "description"],
-        " ",
-    );
+export function query_matches_name(query, user_group_or_stream) {
+    return typeahead.query_matches_string(query, user_group_or_stream.name, " ");
 }
 
 function get_stream_or_user_group_matcher(query) {
@@ -109,7 +103,7 @@ function get_stream_or_user_group_matcher(query) {
     query = typeahead.clean_query_lowercase(query);
 
     return function (user_group_or_stream) {
-        return query_matches_name_description(query, user_group_or_stream);
+        return query_matches_name(query, user_group_or_stream);
     };
 }
 
@@ -117,7 +111,10 @@ function get_slash_matcher(query) {
     query = typeahead.clean_query_lowercase(query);
 
     return function (item) {
-        return typeahead.query_matches_source_attrs(query, item, ["name", "aliases"], " ");
+        return (
+            typeahead.query_matches_string(query, item.name, " ") ||
+            typeahead.query_matches_string(query, item.aliases, " ")
+        );
     };
 }
 
@@ -129,7 +126,7 @@ function get_topic_matcher(query) {
             topic,
         };
 
-        return typeahead.query_matches_source_attrs(query, obj, ["topic"], " ");
+        return typeahead.query_matches_string(query, obj.topic, " ");
     };
 }
 
@@ -141,7 +138,7 @@ export function should_enter_send(e) {
         // With the enter_sends setting, we should send
         // the message unless the user was holding a
         // modifier key.
-        this_enter_sends = !has_modifier_key;
+        this_enter_sends = !has_modifier_key && keydown_util.is_enter_event(e);
     } else {
         // If enter_sends is not enabled, just hitting
         // Enter should add a newline, but with a
@@ -155,7 +152,7 @@ export function should_enter_send(e) {
     return this_enter_sends;
 }
 
-export function handle_enter(textarea, e) {
+export function handle_enter($textarea, e) {
     // Used only if Enter doesn't send.
 
     // Since this Enter doesn't send, we just want to do
@@ -177,15 +174,15 @@ export function handle_enter(textarea, e) {
     // To properly emulate browser "Enter", if the
     // user had selected something in the textarea,
     // we need those characters to be cleared.
-    const range = textarea.range();
+    const range = $textarea.range();
     if (range.length > 0) {
-        textarea.range(range.start, range.end).range("");
+        $textarea.range(range.start, range.end).range("");
     }
 
     // Now add the newline, remembering to resize the
     // textarea if needed.
-    textarea.caret("\n");
-    compose_ui.autosize_textarea(textarea);
+    $textarea.caret("\n");
+    compose_ui.autosize_textarea($textarea);
     e.preventDefault();
 }
 
@@ -193,12 +190,12 @@ export function handle_enter(textarea, e) {
 // We can't focus at the time of keydown because we need to wait for typeahead.
 // And we can't compute where to focus at the time of keyup because only the keydown
 // has reliable information about whether it was a Tab or a Shift+Tab.
-let nextFocus = false;
+let $nextFocus = false;
 
 function handle_keydown(e) {
     const key = e.key;
 
-    if (key === "Enter" || (key === "Tab" && !e.shiftKey)) {
+    if (keydown_util.is_enter_event(e) || (key === "Tab" && !e.shiftKey)) {
         // Enter key or Tab key
         let target_sel;
 
@@ -247,11 +244,11 @@ function handle_keydown(e) {
         } else if (on_stream || on_topic || on_pm) {
             // We are doing the focusing on keyup to not abort the typeahead.
             if (on_stream) {
-                nextFocus = $("#stream_message_recipient_topic");
+                $nextFocus = $("#stream_message_recipient_topic");
             } else if (on_topic) {
-                nextFocus = $("#compose-textarea");
+                $nextFocus = $("#compose-textarea");
             } else if (on_pm) {
-                nextFocus = $("#compose-textarea");
+                $nextFocus = $("#compose-textarea");
             }
         }
     }
@@ -260,19 +257,19 @@ function handle_keydown(e) {
 function handle_keyup(e) {
     if (
         // Enter key or Tab key
-        (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) &&
-        nextFocus
+        (keydown_util.is_enter_event(e) || (e.key === "Tab" && !e.shiftKey)) &&
+        $nextFocus
     ) {
-        nextFocus.trigger("focus");
-        nextFocus = false;
+        $nextFocus.trigger("focus");
+        $nextFocus = false;
 
         // Prevent the form from submitting
         e.preventDefault();
     }
 }
 
-export function split_at_cursor(query, input) {
-    const cursor = input.caret();
+export function split_at_cursor(query, $input) {
+    const cursor = $input.caret();
     return [query.slice(0, cursor), query.slice(cursor)];
 }
 
@@ -313,7 +310,7 @@ export function tokenize_compose_str(s) {
             case "_":
                 if (i === 0) {
                     return s;
-                } else if (/[\s()[\]{}]/.test(s[i - 1])) {
+                } else if (/[\s"'(/<[{]/.test(s[i - 1])) {
                     return s.slice(i);
                 }
                 break;
@@ -345,12 +342,16 @@ export function tokenize_compose_str(s) {
 }
 
 export function broadcast_mentions() {
-    return ["all", "everyone", "stream"].map((mention, idx) => ({
-        special_item_text: $t(
-            {defaultMessage: "{wildcard_mention_token} (Notify stream)"},
-            {wildcard_mention_token: mention},
-        ),
-
+    const wildcard_mention_array = ["all", "everyone"];
+    let wildcard_string = "";
+    if (compose_state.get_message_type() === "private") {
+        wildcard_string = $t({defaultMessage: "Notify recipients"});
+    } else {
+        wildcard_string = $t({defaultMessage: "Notify stream"});
+        wildcard_mention_array.push("stream");
+    }
+    return wildcard_mention_array.map((mention, idx) => ({
+        special_item_text: `${mention} (${wildcard_string})`,
         email: mention,
 
         // Always sort above, under the assumption that names will
@@ -422,6 +423,7 @@ export const slash_commands = [
         text: $t({defaultMessage: "/poll Where should we go to lunch today? (Create a poll)"}),
         name: "poll",
         aliases: "",
+        placeholder: $t({defaultMessage: "Question"}),
     },
     {
         text: $t({defaultMessage: "/todo (Create a todo list)"}),
@@ -470,7 +472,7 @@ export function get_person_suggestions(query, opts) {
 
     const groups = user_groups.get_realm_user_groups();
 
-    const filtered_groups = groups.filter((item) => query_matches_name_description(query, item));
+    const filtered_groups = groups.filter((item) => query_matches_name(query, item));
 
     /*
         Let's say you're on a big realm and type
@@ -518,10 +520,10 @@ export function get_person_suggestions(query, opts) {
 
 export function get_stream_topic_data(hacky_this) {
     const opts = {};
-    const message_row = hacky_this.$element.closest(".message_row");
-    if (message_row.length === 1) {
+    const $message_row = hacky_this.$element.closest(".message_row");
+    if ($message_row.length === 1) {
         // we are editing a message so we try to use it's keys.
-        const msg = message_store.get(rows.id(message_row));
+        const msg = message_store.get(rows.id($message_row));
         if (msg.type === "stream") {
             opts.stream = msg.stream;
             opts.topic = msg.topic;
@@ -722,6 +724,12 @@ export function get_candidates(query) {
             if (tokens[1]) {
                 const stream_name = tokens[1];
                 this.token = tokens[2] || "";
+
+                // Don't autocomplete if there is a space following '>'
+                if (this.token[0] === " ") {
+                    return false;
+                }
+
                 const topic_list = topics_seen_for(stream_name);
                 if (should_show_custom_query(this.token, topic_list)) {
                     topic_list.push(this.token);
@@ -734,7 +742,7 @@ export function get_candidates(query) {
         const time_jump_regex = /<time(:([^>]*?)>?)?$/;
         if (time_jump_regex.test(split[0])) {
             this.completing = "time_jump";
-            return [$t({defaultMessage: "Mention a timezone-aware time"})];
+            return [$t({defaultMessage: "Mention a time-zone-aware time"})];
         }
     }
     return false;
@@ -767,123 +775,16 @@ export function content_highlighter(item) {
     }
 }
 
-function is_numeric_key(key) {
-    return ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].includes(key);
-}
-
-export function show_flatpickr(element, callback, default_timestamp, options = {}) {
-    const flatpickr_input = $("<input id='#timestamp_flatpickr'>");
-
-    const instance = flatpickr_input.flatpickr({
-        mode: "single",
-        enableTime: true,
-        clickOpens: false,
-        defaultDate: default_timestamp,
-        plugins: [
-            new ConfirmDatePlugin({
-                showAlways: true,
-                confirmText: $t({defaultMessage: "Confirm"}),
-                confirmIcon: "",
-            }),
-        ],
-        positionElement: element,
-        dateFormat: "Z",
-        formatDate: (date) => formatISO(date),
-        disableMobile: true,
-        onKeyDown: (selectedDates, dateStr, instance, event) => {
-            if (is_numeric_key(event.key)) {
-                // Don't attempt to get_keydown_hotkey for numeric inputs
-                // as it would return undefined.
-                return;
-            }
-
-            const hotkey = get_keydown_hotkey(event);
-
-            if (["tab", "shift_tab"].includes(hotkey.name)) {
-                const elems = [
-                    instance.selectedDateElem,
-                    instance.hourElement,
-                    instance.minuteElement,
-                    instance.amPM,
-                    $(".flatpickr-confirm")[0],
-                ];
-                const i = elems.indexOf(event.target);
-                const n = elems.length;
-                const remain = (i + (event.shiftKey ? -1 : 1)) % n;
-                const target = elems[Math.floor(remain >= 0 ? remain : remain + n)];
-                event.preventDefault();
-                event.stopPropagation();
-                target.focus();
-            }
-
-            event.stopPropagation();
-        },
-        ...options,
-    });
-
-    const container = $($(instance.innerContainer).parent());
-
-    container.on("keydown", (e) => {
-        if (is_numeric_key(e.key)) {
-            // Let users type numeric values
-            return true;
-        }
-
-        const hotkey = get_keydown_hotkey(e);
-
-        if (!hotkey) {
-            return false;
-        }
-
-        if (hotkey.name === "backspace" || hotkey.name === "delete") {
-            // Let backspace or delete be handled normally
-            return true;
-        }
-
-        if (hotkey.name === "enter") {
-            if (e.target.classList[0] === "flatpickr-day") {
-                return true; // use flatpickr default implementation
-            }
-            $(element).toggleClass("has_popover");
-            container.find(".flatpickr-confirm").trigger("click");
-        }
-
-        if (hotkey.name === "escape") {
-            $(element).toggleClass("has_popover");
-            instance.close();
-            instance.destroy();
-        }
-
-        if (["tab", "shift_tab"].includes(hotkey.name)) {
-            return true; // use flatpickr default implementation
-        }
-
-        if (["right_arrow", "up_arrow", "left_arrow", "down_arrow"].includes(hotkey.name)) {
-            return true; // use flatpickr default implementation
-        }
-
-        e.stopPropagation();
-        e.preventDefault();
-
-        return true;
-    });
-
-    container.on("click", ".flatpickr-confirm", () => {
-        callback(flatpickr_input.val());
-        instance.close();
-        instance.destroy();
-    });
-    instance.open();
-    instance.selectedDateElem.focus();
-
-    return instance;
-}
-
 export function content_typeahead_selected(item, event) {
     const pieces = split_at_cursor(this.query, this.$element);
     let beginning = pieces[0];
     let rest = pieces[1];
-    const textbox = this.$element;
+    const $textbox = this.$element;
+    // Accepting some typeahead selections, like polls, will generate
+    // placeholder text that is selected, in order to clarify for the
+    // user what a given parameter is for. This object stores the
+    // highlight offsets for that purpose.
+    const highlight = {};
 
     switch (this.completing) {
         case "emoji":
@@ -936,6 +837,11 @@ export function content_typeahead_selected(item, event) {
         }
         case "slash":
             beginning = beginning.slice(0, -this.token.length - 1) + "/" + item.name + " ";
+            if (item.placeholder) {
+                beginning = beginning + item.placeholder;
+                highlight.start = item.name.length + 2;
+                highlight.end = highlight.start + item.placeholder.length;
+            }
             break;
         case "stream":
             beginning = beginning.slice(0, -this.token.length - 1);
@@ -957,16 +863,21 @@ export function content_typeahead_selected(item, event) {
             // Isolate the end index of the triple backticks/tildes, including
             // possibly a space afterward
             const backticks = beginning.length - this.token.length;
+            beginning = beginning.slice(0, backticks) + item;
+            if (item === "spoiler") {
+                // to add in and highlight placeholder "Header"
+                const placeholder = $t({defaultMessage: "Header"});
+                highlight.start = beginning.length + 1;
+                beginning = beginning + " " + placeholder;
+                highlight.end = highlight.start + placeholder.length;
+            }
+            // If cursor is at end of input ("rest" is empty), then
+            // add a closing fence after the cursor
+            // If there is more text after the cursor, then don't
+            // touch "rest" (i.e. do not add a closing fence)
             if (rest === "") {
-                // If cursor is at end of input ("rest" is empty), then
-                // complete the token before the cursor, and add a closing fence
-                // after the cursor
-                beginning = beginning.slice(0, backticks) + item + "\n";
+                beginning = beginning + "\n";
                 rest = "\n" + beginning.slice(Math.max(0, backticks - 4), backticks).trim() + rest;
-            } else {
-                // If more text after the input, then complete the token, but don't touch
-                // "rest" (i.e. do not add a closing fence)
-                beginning = beginning.slice(0, backticks) + item;
             }
             break;
         }
@@ -1003,21 +914,27 @@ export function content_typeahead_selected(item, event) {
                 if (rest.startsWith(">")) {
                     rest = rest.slice(1);
                 }
-                textbox.val(beginning + rest);
-                textbox.caret(beginning.length, beginning.length);
-                compose_ui.autosize_textarea(textbox);
+                $textbox.val(beginning + rest);
+                $textbox.caret(beginning.length, beginning.length);
+                compose_ui.autosize_textarea($textbox);
             };
-            show_flatpickr(this.$element[0], on_timestamp_selection, timestamp);
+            flatpickr.show_flatpickr(this.$element[0], on_timestamp_selection, timestamp);
             return beginning + rest;
         }
     }
 
-    // Keep the cursor after the newly inserted text, as Bootstrap will call textbox.change() to
+    // Keep the cursor after the newly inserted text / selecting the
+    // placeholder text, as Bootstrap will call $textbox.change() to
     // overwrite the text in the textbox.
     setTimeout(() => {
-        textbox.caret(beginning.length, beginning.length);
+        // Select any placeholder text configured to be highlighted.
+        if (highlight.start && highlight.end) {
+            $textbox.range(highlight.start, highlight.end);
+        } else {
+            $textbox.caret(beginning.length, beginning.length);
+        }
         // Also, trigger autosize to check if compose box needs to be resized.
-        compose_ui.autosize_textarea(textbox);
+        compose_ui.autosize_textarea($textbox);
     }, 0);
     return beginning + rest;
 }

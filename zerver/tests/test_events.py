@@ -13,94 +13,108 @@ from unittest import mock
 import orjson
 from django.utils.timezone import now as timezone_now
 
-from zerver.lib.actions import (
-    bulk_add_members_to_user_group,
-    bulk_add_subscriptions,
-    bulk_remove_subscriptions,
-    check_add_realm_emoji,
-    check_add_user_group,
-    check_delete_user_group,
-    check_send_typing_notification,
-    do_add_alert_words,
-    do_add_default_stream,
-    do_add_linkifier,
-    do_add_reaction,
-    do_add_realm_domain,
-    do_add_realm_playground,
-    do_add_streams_to_default_stream_group,
-    do_add_submessage,
-    do_change_avatar_fields,
+from zerver.actions.alert_words import do_add_alert_words, do_remove_alert_words
+from zerver.actions.bots import (
     do_change_bot_owner,
     do_change_default_all_public_streams,
     do_change_default_events_register_stream,
     do_change_default_sending_stream,
+)
+from zerver.actions.create_user import do_create_user, do_reactivate_user
+from zerver.actions.custom_profile_fields import (
+    do_remove_realm_custom_profile_field,
+    do_update_user_custom_profile_data_if_changed,
+    try_add_realm_custom_profile_field,
+    try_update_realm_custom_profile_field,
+)
+from zerver.actions.default_streams import (
+    do_add_default_stream,
+    do_add_streams_to_default_stream_group,
     do_change_default_stream_group_description,
     do_change_default_stream_group_name,
-    do_change_full_name,
-    do_change_icon_source,
-    do_change_logo_source,
+    do_create_default_stream_group,
+    do_remove_default_stream,
+    do_remove_default_stream_group,
+    do_remove_streams_from_default_stream_group,
+    lookup_default_stream_groups,
+)
+from zerver.actions.hotspots import do_mark_hotspot_as_read
+from zerver.actions.invites import (
+    do_create_multiuse_invite_link,
+    do_invite_users,
+    do_revoke_multi_use_invite,
+    do_revoke_user_invite,
+)
+from zerver.actions.message_delete import do_delete_messages
+from zerver.actions.message_edit import do_update_embedded_data, do_update_message
+from zerver.actions.message_flags import do_update_message_flags
+from zerver.actions.muted_users import do_mute_user, do_unmute_user
+from zerver.actions.presence import do_update_user_presence
+from zerver.actions.reactions import do_add_reaction, do_remove_reaction
+from zerver.actions.realm_domains import (
+    do_add_realm_domain,
     do_change_realm_domain,
+    do_remove_realm_domain,
+)
+from zerver.actions.realm_emoji import check_add_realm_emoji, do_remove_realm_emoji
+from zerver.actions.realm_icon import do_change_icon_source
+from zerver.actions.realm_linkifiers import (
+    do_add_linkifier,
+    do_remove_linkifier,
+    do_update_linkifier,
+)
+from zerver.actions.realm_logo import do_change_logo_source
+from zerver.actions.realm_playgrounds import do_add_realm_playground, do_remove_realm_playground
+from zerver.actions.realm_settings import (
+    do_change_realm_org_type,
     do_change_realm_plan_type,
+    do_deactivate_realm,
+    do_set_realm_authentication_methods,
+    do_set_realm_notifications_stream,
+    do_set_realm_property,
+    do_set_realm_signup_notifications_stream,
+    do_set_realm_user_default_setting,
+)
+from zerver.actions.streams import (
+    bulk_add_subscriptions,
+    bulk_remove_subscriptions,
+    do_change_can_remove_subscribers_group,
     do_change_stream_description,
     do_change_stream_message_retention_days,
     do_change_stream_permission,
     do_change_stream_post_policy,
     do_change_subscription_property,
-    do_change_user_delivery_email,
-    do_change_user_role,
-    do_change_user_setting,
-    do_create_default_stream_group,
-    do_create_multiuse_invite_link,
-    do_create_user,
-    do_deactivate_realm,
     do_deactivate_stream,
-    do_deactivate_user,
-    do_delete_messages,
-    do_invite_users,
-    do_make_user_billing_admin,
-    do_mark_hotspot_as_read,
-    do_mute_topic,
-    do_mute_user,
-    do_reactivate_user,
-    do_regenerate_api_key,
-    do_remove_alert_words,
-    do_remove_default_stream,
-    do_remove_default_stream_group,
-    do_remove_linkifier,
-    do_remove_reaction,
-    do_remove_realm_custom_profile_field,
-    do_remove_realm_domain,
-    do_remove_realm_emoji,
-    do_remove_realm_playground,
-    do_remove_streams_from_default_stream_group,
     do_rename_stream,
-    do_revoke_multi_use_invite,
-    do_revoke_user_invite,
-    do_send_stream_typing_notification,
-    do_set_realm_authentication_methods,
-    do_set_realm_message_editing,
-    do_set_realm_notifications_stream,
-    do_set_realm_property,
-    do_set_realm_signup_notifications_stream,
-    do_set_realm_user_default_setting,
-    do_set_zoom_token,
-    do_unmute_topic,
-    do_unmute_user,
-    do_update_embedded_data,
-    do_update_linkifier,
-    do_update_message,
-    do_update_message_flags,
-    do_update_outgoing_webhook_service,
-    do_update_user_custom_profile_data_if_changed,
+)
+from zerver.actions.submessage import do_add_submessage
+from zerver.actions.typing import check_send_typing_notification, do_send_stream_typing_notification
+from zerver.actions.user_groups import (
+    add_subgroups_to_user_group,
+    bulk_add_members_to_user_group,
+    check_add_user_group,
+    check_delete_user_group,
     do_update_user_group_description,
     do_update_user_group_name,
-    do_update_user_presence,
-    do_update_user_status,
-    lookup_default_stream_groups,
     remove_members_from_user_group,
-    try_add_realm_custom_profile_field,
-    try_update_realm_custom_profile_field,
+    remove_subgroups_from_user_group,
 )
+from zerver.actions.user_settings import (
+    do_change_avatar_fields,
+    do_change_full_name,
+    do_change_user_delivery_email,
+    do_change_user_setting,
+    do_regenerate_api_key,
+)
+from zerver.actions.user_status import do_update_user_status
+from zerver.actions.user_topics import do_mute_topic, do_unmute_topic
+from zerver.actions.users import (
+    do_change_user_role,
+    do_deactivate_user,
+    do_make_user_billing_admin,
+    do_update_outgoing_webhook_service,
+)
+from zerver.actions.video_calls import do_set_zoom_token
 from zerver.lib.drafts import do_create_drafts, do_delete_draft, do_edit_draft
 from zerver.lib.event_schema import (
     check_alert_words,
@@ -154,16 +168,18 @@ from zerver.lib.event_schema import (
     check_update_display_settings,
     check_update_global_notifications,
     check_update_message,
-    check_update_message_embedded,
     check_update_message_flags_add,
     check_update_message_flags_remove,
     check_user_group_add,
     check_user_group_add_members,
+    check_user_group_add_subgroups,
     check_user_group_remove,
     check_user_group_remove_members,
+    check_user_group_remove_subgroups,
     check_user_group_update,
     check_user_settings_update,
     check_user_status,
+    check_user_topic,
 )
 from zerver.lib.events import (
     RestartEventException,
@@ -182,6 +198,8 @@ from zerver.lib.test_helpers import (
     stdout_suppressed,
 )
 from zerver.lib.topic import TOPIC_NAME
+from zerver.lib.types import ProfileDataElementUpdateDict
+from zerver.lib.user_groups import create_user_group
 from zerver.lib.user_mutes import get_mute_object
 from zerver.models import (
     Attachment,
@@ -244,6 +262,7 @@ class BaseAction(ZulipTestCase):
         bulk_message_deletion: bool = True,
         stream_typing_notifications: bool = True,
         user_settings_object: bool = False,
+        pronouns_field_type_supported: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Make sure we have a clean slate of client descriptors for these tests.
@@ -271,6 +290,7 @@ class BaseAction(ZulipTestCase):
                 bulk_message_deletion=bulk_message_deletion,
                 stream_typing_notifications=stream_typing_notifications,
                 user_settings_object=user_settings_object,
+                pronouns_field_type_supported=pronouns_field_type_supported,
             )
         )
 
@@ -284,6 +304,7 @@ class BaseAction(ZulipTestCase):
             slim_presence=slim_presence,
             include_subscribers=include_subscribers,
             include_streams=include_streams,
+            pronouns_field_type_supported=pronouns_field_type_supported,
         )
 
         # We want even those `send_event` calls which have been hooked to
@@ -339,6 +360,7 @@ class BaseAction(ZulipTestCase):
             slim_presence=slim_presence,
             include_subscribers=include_subscribers,
             include_streams=include_streams,
+            pronouns_field_type_supported=pronouns_field_type_supported,
         )
         post_process_state(self.user_profile, normal_state, notification_settings_null)
         self.match_states(hybrid_state, normal_state, events)
@@ -348,14 +370,17 @@ class BaseAction(ZulipTestCase):
         self, state1: Dict[str, Any], state2: Dict[str, Any], events: List[Dict[str, Any]]
     ) -> None:
         def normalize(state: Dict[str, Any]) -> None:
-            for u in state["never_subscribed"]:
-                if "subscribers" in u:
-                    u["subscribers"].sort()
-            for u in state["subscriptions"]:
-                if "subscribers" in u:
-                    u["subscribers"].sort()
-            state["subscriptions"] = {u["name"]: u for u in state["subscriptions"]}
-            state["unsubscribed"] = {u["name"]: u for u in state["unsubscribed"]}
+            if "never_subscribed" in state:
+                for u in state["never_subscribed"]:
+                    if "subscribers" in u:
+                        u["subscribers"].sort()
+            if "subscriptions" in state:
+                for u in state["subscriptions"]:
+                    if "subscribers" in u:
+                        u["subscribers"].sort()
+                state["subscriptions"] = {u["name"]: u for u in state["subscriptions"]}
+            if "unsubscribed" in state:
+                state["unsubscribed"] = {u["name"]: u for u in state["unsubscribed"]}
             if "realm_bots" in state:
                 state["realm_bots"] = {u["email"]: u for u in state["realm_bots"]}
             # Since time is different for every call, just fix the value
@@ -466,6 +491,7 @@ class NormalActionsTest(BaseAction):
             has_content=True,
             has_topic=False,
             has_new_stream_id=False,
+            is_embedded_update_only=False,
         )
 
     def test_huddle_send_message_events(self) -> None:
@@ -526,6 +552,7 @@ class NormalActionsTest(BaseAction):
             has_content=True,
             has_topic=False,
             has_new_stream_id=False,
+            is_embedded_update_only=False,
         )
 
         # Verify stream message editing - topic only
@@ -555,15 +582,25 @@ class NormalActionsTest(BaseAction):
             has_content=False,
             has_topic=True,
             has_new_stream_id=False,
+            is_embedded_update_only=False,
         )
 
+        # Verify special case of embedded content update
         content = "embed_content"
         rendering_result = render_markdown(message, content)
         events = self.verify_action(
             lambda: do_update_embedded_data(self.user_profile, message, content, rendering_result),
             state_change_expected=False,
         )
-        check_update_message_embedded("events[0]", events[0])
+        check_update_message(
+            "events[0]",
+            events[0],
+            is_stream_message=False,
+            has_content=False,
+            has_topic=False,
+            has_new_stream_id=False,
+            is_embedded_update_only=True,
+        )
 
         # Verify move topic to different stream.
 
@@ -602,6 +639,7 @@ class NormalActionsTest(BaseAction):
             has_content=False,
             has_topic=False,
             has_new_stream_id=True,
+            is_embedded_update_only=False,
         )
 
     def test_update_message_flags(self) -> None:
@@ -613,17 +651,13 @@ class NormalActionsTest(BaseAction):
         )
         user_profile = self.example_user("hamlet")
         events = self.verify_action(
-            lambda: do_update_message_flags(
-                user_profile, get_client("website"), "add", "starred", [message]
-            ),
+            lambda: do_update_message_flags(user_profile, "add", "starred", [message]),
             state_change_expected=True,
         )
         check_update_message_flags_add("events[0]", events[0])
 
         events = self.verify_action(
-            lambda: do_update_message_flags(
-                user_profile, get_client("website"), "remove", "starred", [message]
-            ),
+            lambda: do_update_message_flags(user_profile, "remove", "starred", [message]),
             state_change_expected=True,
         )
         check_update_message_flags_remove("events[0]", events[0])
@@ -641,11 +675,46 @@ class NormalActionsTest(BaseAction):
             )
 
             self.verify_action(
-                lambda: do_update_message_flags(
-                    user_profile, get_client("website"), "add", "read", [message]
-                ),
+                lambda: do_update_message_flags(user_profile, "add", "read", [message]),
                 state_change_expected=True,
             )
+
+            events = self.verify_action(
+                lambda: do_update_message_flags(user_profile, "remove", "read", [message]),
+                state_change_expected=True,
+            )
+            check_update_message_flags_remove("events[0]", events[0])
+
+            personal_message = self.send_personal_message(
+                from_user=user_profile, to_user=self.example_user("cordelia"), content=content
+            )
+            self.verify_action(
+                lambda: do_update_message_flags(user_profile, "add", "read", [personal_message]),
+                state_change_expected=True,
+            )
+
+            events = self.verify_action(
+                lambda: do_update_message_flags(user_profile, "remove", "read", [personal_message]),
+                state_change_expected=True,
+            )
+            check_update_message_flags_remove("events[0]", events[0])
+
+            huddle_message = self.send_huddle_message(
+                from_user=self.example_user("cordelia"),
+                to_users=[user_profile, self.example_user("othello")],
+                content=content,
+            )
+
+            self.verify_action(
+                lambda: do_update_message_flags(user_profile, "add", "read", [huddle_message]),
+                state_change_expected=True,
+            )
+
+            events = self.verify_action(
+                lambda: do_update_message_flags(user_profile, "remove", "read", [huddle_message]),
+                state_change_expected=True,
+            )
+            check_update_message_flags_remove("events[0]", events[0])
 
     def test_send_message_to_existing_recipient(self) -> None:
         sender = self.example_user("cordelia")
@@ -714,13 +783,13 @@ class NormalActionsTest(BaseAction):
         for stream_name in ["Denmark", "Scotland"]:
             streams.append(get_stream(stream_name, self.user_profile.realm))
 
-        invite_expires_in_days = 2
+        invite_expires_in_minutes = 2 * 24 * 60
         events = self.verify_action(
             lambda: do_invite_users(
                 self.user_profile,
                 ["foo@zulip.com"],
                 streams,
-                invite_expires_in_days=invite_expires_in_days,
+                invite_expires_in_minutes=invite_expires_in_minutes,
             ),
             state_change_expected=False,
         )
@@ -732,12 +801,12 @@ class NormalActionsTest(BaseAction):
         for stream_name in ["Denmark", "Verona"]:
             streams.append(get_stream(stream_name, self.user_profile.realm))
 
-        invite_expires_in_days = 2
+        invite_expires_in_minutes = 2 * 24 * 60
         events = self.verify_action(
             lambda: do_create_multiuse_invite_link(
                 self.user_profile,
                 PreregistrationUser.INVITE_AS["MEMBER"],
-                invite_expires_in_days,
+                invite_expires_in_minutes,
                 streams,
             ),
             state_change_expected=False,
@@ -747,12 +816,12 @@ class NormalActionsTest(BaseAction):
     def test_deactivate_user_invites_changed_event(self) -> None:
         self.user_profile = self.example_user("iago")
         user_profile = self.example_user("cordelia")
-        invite_expires_in_days = 2
+        invite_expires_in_minutes = 2 * 24 * 60
         do_invite_users(
             user_profile,
             ["foo@zulip.com"],
             [],
-            invite_expires_in_days=invite_expires_in_days,
+            invite_expires_in_minutes=invite_expires_in_minutes,
         )
 
         events = self.verify_action(
@@ -768,12 +837,12 @@ class NormalActionsTest(BaseAction):
         for stream_name in ["Denmark", "Verona"]:
             streams.append(get_stream(stream_name, self.user_profile.realm))
 
-        invite_expires_in_days = 2
+        invite_expires_in_minutes = 2 * 24 * 60
         do_invite_users(
             self.user_profile,
             ["foo@zulip.com"],
             streams,
-            invite_expires_in_days=invite_expires_in_days,
+            invite_expires_in_minutes=invite_expires_in_minutes,
         )
         prereg_users = PreregistrationUser.objects.filter(
             referred_by__realm=self.user_profile.realm
@@ -790,11 +859,11 @@ class NormalActionsTest(BaseAction):
         for stream_name in ["Denmark", "Verona"]:
             streams.append(get_stream(stream_name, self.user_profile.realm))
 
-        invite_expires_in_days = 2
+        invite_expires_in_minutes = 2 * 24 * 60
         do_create_multiuse_invite_link(
             self.user_profile,
             PreregistrationUser.INVITE_AS["MEMBER"],
-            invite_expires_in_days,
+            invite_expires_in_minutes,
             streams,
         )
 
@@ -813,12 +882,12 @@ class NormalActionsTest(BaseAction):
         for stream_name in ["Denmark", "Scotland"]:
             streams.append(get_stream(stream_name, self.user_profile.realm))
 
-        invite_expires_in_days = 2
+        invite_expires_in_minutes = 2 * 24 * 60
         do_invite_users(
             self.user_profile,
             ["foo@zulip.com"],
             streams,
-            invite_expires_in_days=invite_expires_in_days,
+            invite_expires_in_minutes=invite_expires_in_minutes,
         )
         prereg_user = PreregistrationUser.objects.get(email="foo@zulip.com")
 
@@ -832,7 +901,7 @@ class NormalActionsTest(BaseAction):
                 acting_user=None,
             ),
             state_change_expected=True,
-            num_events=5,
+            num_events=7,
         )
 
         check_invites_changed("events[3]", events[3])
@@ -920,20 +989,50 @@ class NormalActionsTest(BaseAction):
         field = realm.customprofilefield_set.get(realm=realm, name="Biography")
         name = field.name
         hint = "Biography of the user"
+        display_in_profile_summary = False
 
         events = self.verify_action(
-            lambda: try_update_realm_custom_profile_field(realm, field, name, hint=hint)
+            lambda: try_update_realm_custom_profile_field(
+                realm, field, name, hint=hint, display_in_profile_summary=display_in_profile_summary
+            )
         )
         check_custom_profile_fields("events[0]", events[0])
 
         events = self.verify_action(lambda: do_remove_realm_custom_profile_field(realm, field))
         check_custom_profile_fields("events[0]", events[0])
 
+    def test_pronouns_type_support_in_custom_profile_fields_events(self) -> None:
+        realm = self.user_profile.realm
+        field = CustomProfileField.objects.get(realm=realm, name="Pronouns")
+        name = field.name
+        hint = "What pronouns should people use for you?"
+
+        events = self.verify_action(
+            lambda: try_update_realm_custom_profile_field(realm, field, name, hint=hint),
+            pronouns_field_type_supported=True,
+        )
+        check_custom_profile_fields("events[0]", events[0])
+        pronouns_field = [
+            field_obj for field_obj in events[0]["fields"] if field_obj["id"] == field.id
+        ][0]
+        self.assertEqual(pronouns_field["type"], CustomProfileField.PRONOUNS)
+
+        hint = "What pronouns should people use to refer you?"
+        events = self.verify_action(
+            lambda: try_update_realm_custom_profile_field(realm, field, name, hint=hint),
+            pronouns_field_type_supported=False,
+        )
+        check_custom_profile_fields("events[0]", events[0])
+        pronouns_field = [
+            field_obj for field_obj in events[0]["fields"] if field_obj["id"] == field.id
+        ][0]
+        self.assertEqual(pronouns_field["type"], CustomProfileField.SHORT_TEXT)
+
     def test_custom_profile_field_data_events(self) -> None:
         field_id = self.user_profile.realm.customprofilefield_set.get(
             realm=self.user_profile.realm, name="Biography"
         ).id
-        field = {
+        field: ProfileDataElementUpdateDict = {
             "id": field_id,
             "value": "New value",
         }
@@ -1020,8 +1119,8 @@ class NormalActionsTest(BaseAction):
         )
 
     def test_register_events(self) -> None:
-        events = self.verify_action(lambda: self.register("test1@zulip.com", "test1"), num_events=3)
-        self.assert_length(events, 3)
+        events = self.verify_action(lambda: self.register("test1@zulip.com", "test1"), num_events=5)
+        self.assert_length(events, 5)
 
         check_realm_user_add("events[0]", events[0])
         new_user_profile = get_user_by_delivery_email("test1@zulip.com", self.user_profile.realm)
@@ -1035,6 +1134,9 @@ class NormalActionsTest(BaseAction):
             events[2]["message"]["content"],
         )
 
+        check_user_group_add_members("events[3]", events[3])
+        check_user_group_add_members("events[4]", events[4])
+
     def test_register_events_email_address_visibility(self) -> None:
         do_set_realm_property(
             self.user_profile.realm,
@@ -1043,8 +1145,8 @@ class NormalActionsTest(BaseAction):
             acting_user=None,
         )
 
-        events = self.verify_action(lambda: self.register("test1@zulip.com", "test1"), num_events=3)
-        self.assert_length(events, 3)
+        events = self.verify_action(lambda: self.register("test1@zulip.com", "test1"), num_events=5)
+        self.assert_length(events, 5)
         check_realm_user_add("events[0]", events[0])
         new_user_profile = get_user_by_delivery_email("test1@zulip.com", self.user_profile.realm)
         self.assertEqual(new_user_profile.email, f"user{new_user_profile.id}@zulip.testserver")
@@ -1057,6 +1159,9 @@ class NormalActionsTest(BaseAction):
             events[2]["message"]["content"],
         )
 
+        check_user_group_add_members("events[3]", events[3])
+        check_user_group_add_members("events[4]", events[4])
+
     def test_alert_words_events(self) -> None:
         events = self.verify_action(lambda: do_add_alert_words(self.user_profile, ["alert_word"]))
         check_alert_words("events[0]", events[0])
@@ -1068,16 +1173,20 @@ class NormalActionsTest(BaseAction):
 
     def test_away_events(self) -> None:
         client = get_client("website")
+
+        # Set all
+        away_val = True
         events = self.verify_action(
             lambda: do_update_user_status(
                 user_profile=self.user_profile,
-                away=True,
+                away=away_val,
                 status_text="out to lunch",
                 emoji_name="car",
                 emoji_code="1f697",
                 reaction_type=UserStatus.UNICODE_EMOJI,
                 client_id=client.id,
-            )
+            ),
+            num_events=4,
         )
 
         check_user_status(
@@ -1085,16 +1194,29 @@ class NormalActionsTest(BaseAction):
             events[0],
             {"away", "status_text", "emoji_name", "emoji_code", "reaction_type"},
         )
+        check_user_settings_update("events[1]", events[1])
+        check_update_global_notifications("events[2]", events[2], not away_val)
+        check_presence(
+            "events[3]",
+            events[3],
+            has_email=True,
+            presence_key="website",
+            status="active" if not away_val else "idle",
+        )
+
+        # Remove all
+        away_val = False
         events = self.verify_action(
             lambda: do_update_user_status(
                 user_profile=self.user_profile,
-                away=False,
+                away=away_val,
                 status_text="",
                 emoji_name="",
                 emoji_code="",
                 reaction_type=UserStatus.UNICODE_EMOJI,
                 client_id=client.id,
-            )
+            ),
+            num_events=4,
         )
 
         check_user_status(
@@ -1102,21 +1224,43 @@ class NormalActionsTest(BaseAction):
             events[0],
             {"away", "status_text", "emoji_name", "emoji_code", "reaction_type"},
         )
+        check_user_settings_update("events[1]", events[1])
+        check_update_global_notifications("events[2]", events[2], not away_val)
+        check_presence(
+            "events[3]",
+            events[3],
+            has_email=True,
+            presence_key="website",
+            status="active" if not away_val else "idle",
+        )
 
+        # Only set away
+        away_val = True
         events = self.verify_action(
             lambda: do_update_user_status(
                 user_profile=self.user_profile,
-                away=True,
+                away=away_val,
                 status_text=None,
                 emoji_name=None,
                 emoji_code=None,
                 reaction_type=None,
                 client_id=client.id,
-            )
+            ),
+            num_events=4,
         )
 
         check_user_status("events[0]", events[0], {"away"})
+        check_user_settings_update("events[1]", events[1])
+        check_update_global_notifications("events[2]", events[2], not away_val)
+        check_presence(
+            "events[3]",
+            events[3],
+            has_email=True,
+            presence_key="website",
+            status="active" if not away_val else "idle",
+        )
 
+        # Only set status_text
         events = self.verify_action(
             lambda: do_update_user_status(
                 user_profile=self.user_profile,
@@ -1152,13 +1296,25 @@ class NormalActionsTest(BaseAction):
 
         # Test add members
         hamlet = self.example_user("hamlet")
-        events = self.verify_action(lambda: bulk_add_members_to_user_group(backend, [hamlet]))
+        events = self.verify_action(lambda: bulk_add_members_to_user_group(backend, [hamlet.id]))
         check_user_group_add_members("events[0]", events[0])
 
         # Test remove members
         hamlet = self.example_user("hamlet")
-        events = self.verify_action(lambda: remove_members_from_user_group(backend, [hamlet]))
+        events = self.verify_action(lambda: remove_members_from_user_group(backend, [hamlet.id]))
         check_user_group_remove_members("events[0]", events[0])
+
+        api_design = create_user_group(
+            "api-design", [hamlet], hamlet.realm, description="API design team"
+        )
+
+        # Test add subgroups
+        events = self.verify_action(lambda: add_subgroups_to_user_group(backend, [api_design]))
+        check_user_group_add_subgroups("events[0]", events[0])
+
+        # Test remove subgroups
+        events = self.verify_action(lambda: remove_subgroups_from_user_group(backend, [api_design]))
+        check_user_group_remove_subgroups("events[0]", events[0])
 
         # Test remove event
         events = self.verify_action(lambda: check_delete_user_group(backend.id, othello))
@@ -1248,19 +1404,30 @@ class NormalActionsTest(BaseAction):
 
     def test_muted_topics_events(self) -> None:
         stream = get_stream("Denmark", self.user_profile.realm)
-        events = self.verify_action(lambda: do_mute_topic(self.user_profile, stream, "topic"))
+        events = self.verify_action(
+            lambda: do_mute_topic(self.user_profile, stream, "topic"), num_events=2
+        )
         check_muted_topics("events[0]", events[0])
+        check_user_topic("events[1]", events[1])
 
-        events = self.verify_action(lambda: do_unmute_topic(self.user_profile, stream, "topic"))
+        events = self.verify_action(
+            lambda: do_unmute_topic(self.user_profile, stream, "topic"), num_events=2
+        )
         check_muted_topics("events[0]", events[0])
+        check_user_topic("events[1]", events[1])
+
+        events = self.verify_action(
+            lambda: do_mute_topic(self.user_profile, stream, "topic"),
+            event_types=["muted_topics", "user_topic"],
+        )
+        check_user_topic("events[0]", events[0])
 
     def test_muted_users_events(self) -> None:
         muted_user = self.example_user("othello")
         events = self.verify_action(
-            lambda: do_mute_user(self.user_profile, muted_user), num_events=2
+            lambda: do_mute_user(self.user_profile, muted_user), num_events=1
         )
-        check_update_message_flags_add("events[0]", events[0])
-        check_muted_users("events[1]", events[1])
+        check_muted_users("events[0]", events[0])
 
         mute_object = get_mute_object(self.user_profile, muted_user)
         assert mute_object is not None
@@ -1385,6 +1552,55 @@ class NormalActionsTest(BaseAction):
                 value=pinned,
             )
 
+    def test_mute_and_unmute_stream(self) -> None:
+        stream = get_stream("Denmark", self.user_profile.realm)
+        sub = get_subscription(stream.name, self.user_profile)
+
+        # While migrating events API from in_home_view to is_muted:
+        # First, test in_home_view sends 2 events: in_home_view and is_muted.
+        do_change_subscription_property(
+            self.user_profile, sub, stream, "in_home_view", False, acting_user=None
+        )
+
+        events = self.verify_action(
+            lambda: do_change_subscription_property(
+                self.user_profile, sub, stream, "in_home_view", True, acting_user=None
+            ),
+            num_events=2,
+        )
+        check_subscription_update(
+            "events[0]",
+            events[0],
+            property="in_home_view",
+            value=True,
+        )
+        check_subscription_update(
+            "events[1]",
+            events[1],
+            property="is_muted",
+            value=False,
+        )
+
+        # Then, test is_muted also sends both events, in the same order.
+        events = self.verify_action(
+            lambda: do_change_subscription_property(
+                self.user_profile, sub, stream, "is_muted", True, acting_user=None
+            ),
+            num_events=2,
+        )
+        check_subscription_update(
+            "events[0]",
+            events[0],
+            property="in_home_view",
+            value=False,
+        )
+        check_subscription_update(
+            "events[1]",
+            events[1],
+            property="is_muted",
+            value=True,
+        )
+
     def test_change_stream_notification_settings(self) -> None:
         for setting_name in ["email_notifications"]:
             stream = get_stream("Denmark", self.user_profile.realm)
@@ -1417,27 +1633,6 @@ class NormalActionsTest(BaseAction):
                     property=setting_name,
                     value=value,
                 )
-
-    def test_change_realm_message_edit_settings(self) -> None:
-        # Test every transition among the four possibilities {T,F} x {0, non-0}
-        for (allow_message_editing, message_content_edit_limit_seconds) in (
-            (True, 0),
-            (False, 0),
-            (False, 1234),
-            (True, 600),
-            (False, 0),
-            (True, 1234),
-        ):
-            events = self.verify_action(
-                lambda: do_set_realm_message_editing(
-                    self.user_profile.realm,
-                    allow_message_editing,
-                    message_content_edit_limit_seconds,
-                    Realm.POLICY_ADMINS_ONLY,
-                    acting_user=None,
-                )
-            )
-            check_realm_update_dict("events[0]", events[0])
 
     def test_change_realm_notifications_stream(self) -> None:
 
@@ -1482,10 +1677,19 @@ class NormalActionsTest(BaseAction):
         do_change_user_role(self.user_profile, UserProfile.ROLE_MEMBER, acting_user=None)
         for role in [UserProfile.ROLE_REALM_ADMINISTRATOR, UserProfile.ROLE_MEMBER]:
             events = self.verify_action(
-                lambda: do_change_user_role(self.user_profile, role, acting_user=None)
+                lambda: do_change_user_role(self.user_profile, role, acting_user=None),
+                num_events=4,
             )
             check_realm_user_update("events[0]", events[0], "role")
             self.assertEqual(events[0]["person"]["role"], role)
+
+            check_user_group_remove_members("events[1]", events[1])
+            check_user_group_add_members("events[2]", events[2])
+
+            if role == UserProfile.ROLE_REALM_ADMINISTRATOR:
+                check_user_group_remove_members("events[3]", events[3])
+            else:
+                check_user_group_add_members("events[3]", events[3])
 
     def test_change_is_billing_admin(self) -> None:
         reset_emails_in_zulip_realm()
@@ -1510,10 +1714,19 @@ class NormalActionsTest(BaseAction):
         do_change_user_role(self.user_profile, UserProfile.ROLE_MEMBER, acting_user=None)
         for role in [UserProfile.ROLE_REALM_OWNER, UserProfile.ROLE_MEMBER]:
             events = self.verify_action(
-                lambda: do_change_user_role(self.user_profile, role, acting_user=None)
+                lambda: do_change_user_role(self.user_profile, role, acting_user=None),
+                num_events=4,
             )
             check_realm_user_update("events[0]", events[0], "role")
             self.assertEqual(events[0]["person"]["role"], role)
+
+            check_user_group_remove_members("events[1]", events[1])
+            check_user_group_add_members("events[2]", events[2])
+
+            if role == UserProfile.ROLE_REALM_OWNER:
+                check_user_group_remove_members("events[3]", events[3])
+            else:
+                check_user_group_add_members("events[3]", events[3])
 
     def test_change_is_moderator(self) -> None:
         reset_emails_in_zulip_realm()
@@ -1526,10 +1739,19 @@ class NormalActionsTest(BaseAction):
         do_change_user_role(self.user_profile, UserProfile.ROLE_MEMBER, acting_user=None)
         for role in [UserProfile.ROLE_MODERATOR, UserProfile.ROLE_MEMBER]:
             events = self.verify_action(
-                lambda: do_change_user_role(self.user_profile, role, acting_user=None)
+                lambda: do_change_user_role(self.user_profile, role, acting_user=None),
+                num_events=4,
             )
             check_realm_user_update("events[0]", events[0], "role")
             self.assertEqual(events[0]["person"]["role"], role)
+
+            check_user_group_remove_members("events[1]", events[1])
+            check_user_group_add_members("events[2]", events[2])
+
+            if role == UserProfile.ROLE_MODERATOR:
+                check_user_group_remove_members("events[3]", events[3])
+            else:
+                check_user_group_add_members("events[3]", events[3])
 
     def test_change_is_guest(self) -> None:
         stream = Stream.objects.get(name="Denmark")
@@ -1545,14 +1767,27 @@ class NormalActionsTest(BaseAction):
         do_change_user_role(self.user_profile, UserProfile.ROLE_MEMBER, acting_user=None)
         for role in [UserProfile.ROLE_GUEST, UserProfile.ROLE_MEMBER]:
             events = self.verify_action(
-                lambda: do_change_user_role(self.user_profile, role, acting_user=None)
+                lambda: do_change_user_role(self.user_profile, role, acting_user=None),
+                num_events=4,
             )
             check_realm_user_update("events[0]", events[0], "role")
             self.assertEqual(events[0]["person"]["role"], role)
 
+            check_user_group_remove_members("events[1]", events[1])
+            check_user_group_add_members("events[2]", events[2])
+
+            if role == UserProfile.ROLE_GUEST:
+                check_user_group_remove_members("events[3]", events[3])
+            else:
+                check_user_group_add_members("events[3]", events[3])
+
     def test_change_notification_settings(self) -> None:
         for notification_setting, v in self.user_profile.notification_setting_types.items():
-            if notification_setting in ["notification_sound", "desktop_icon_count_display"]:
+            if notification_setting in [
+                "notification_sound",
+                "desktop_icon_count_display",
+                "presence_enabled",
+            ]:
                 # These settings are tested in their own tests.
                 continue
 
@@ -1588,6 +1823,26 @@ class NormalActionsTest(BaseAction):
                 check_user_settings_update("events[0]", events[0])
                 check_update_global_notifications("events[1]", events[1], setting_value)
 
+    def test_change_presence_enabled(self) -> None:
+        presence_enabled_setting = "presence_enabled"
+
+        for val in [True, False]:
+            events = self.verify_action(
+                lambda: do_change_user_setting(
+                    self.user_profile, presence_enabled_setting, val, acting_user=self.user_profile
+                ),
+                num_events=3,
+            )
+            check_user_settings_update("events[0]", events[0])
+            check_update_global_notifications("events[1]", events[1], val)
+            check_presence(
+                "events[2]",
+                events[2],
+                has_email=True,
+                presence_key="website",
+                status="active" if val else "idle",
+            )
+
     def test_change_notification_sound(self) -> None:
         notification_setting = "notification_sound"
 
@@ -1621,6 +1876,22 @@ class NormalActionsTest(BaseAction):
         check_user_settings_update("events[0]", events[0])
         check_update_global_notifications("events[1]", events[1], 1)
 
+    def test_realm_update_org_type(self) -> None:
+        realm = self.user_profile.realm
+
+        state_data = fetch_initial_state_data(self.user_profile)
+        self.assertEqual(state_data["realm_org_type"], Realm.ORG_TYPES["business"]["id"])
+
+        events = self.verify_action(
+            lambda: do_change_realm_org_type(
+                realm, Realm.ORG_TYPES["government"]["id"], acting_user=self.user_profile
+            )
+        )
+        check_realm_update("events[0]", events[0], "org_type")
+
+        state_data = fetch_initial_state_data(self.user_profile)
+        self.assertEqual(state_data["realm_org_type"], Realm.ORG_TYPES["government"]["id"])
+
     def test_realm_update_plan_type(self) -> None:
         realm = self.user_profile.realm
 
@@ -1631,9 +1902,11 @@ class NormalActionsTest(BaseAction):
         events = self.verify_action(
             lambda: do_change_realm_plan_type(
                 realm, Realm.PLAN_TYPE_LIMITED, acting_user=self.user_profile
-            )
+            ),
+            num_events=2,
         )
-        check_realm_update("events[0]", events[0], "plan_type")
+        check_realm_update("events[0]", events[0], "enable_spectator_access")
+        check_realm_update("events[1]", events[1], "plan_type")
 
         state_data = fetch_initial_state_data(self.user_profile)
         self.assertEqual(state_data["realm_plan_type"], Realm.PLAN_TYPE_LIMITED)
@@ -1649,7 +1922,9 @@ class NormalActionsTest(BaseAction):
         check_realm_emoji_update("events[0]", events[0])
 
         events = self.verify_action(
-            lambda: do_remove_realm_emoji(self.user_profile.realm, "my_emoji")
+            lambda: do_remove_realm_emoji(
+                self.user_profile.realm, "my_emoji", acting_user=self.user_profile
+            )
         )
         check_realm_emoji_update("events[0]", events[0])
 
@@ -1658,7 +1933,8 @@ class NormalActionsTest(BaseAction):
         url = "https://realm.com/my_realm_filter/%(id)s"
 
         events = self.verify_action(
-            lambda: do_add_linkifier(self.user_profile.realm, regex, url), num_events=2
+            lambda: do_add_linkifier(self.user_profile.realm, regex, url, acting_user=None),
+            num_events=2,
         )
         check_realm_linkifiers("events[0]", events[0])
         check_realm_filters("events[1]", events[1])
@@ -1666,21 +1942,26 @@ class NormalActionsTest(BaseAction):
         regex = "#(?P<id>[0-9]+)"
         linkifier_id = events[0]["realm_linkifiers"][0]["id"]
         events = self.verify_action(
-            lambda: do_update_linkifier(self.user_profile.realm, linkifier_id, regex, url),
+            lambda: do_update_linkifier(
+                self.user_profile.realm, linkifier_id, regex, url, acting_user=None
+            ),
             num_events=2,
         )
         check_realm_linkifiers("events[0]", events[0])
         check_realm_filters("events[1]", events[1])
 
         events = self.verify_action(
-            lambda: do_remove_linkifier(self.user_profile.realm, regex), num_events=2
+            lambda: do_remove_linkifier(self.user_profile.realm, regex, acting_user=None),
+            num_events=2,
         )
         check_realm_linkifiers("events[0]", events[0])
         check_realm_filters("events[1]", events[1])
 
     def test_realm_domain_events(self) -> None:
         events = self.verify_action(
-            lambda: do_add_realm_domain(self.user_profile.realm, "zulip.org", False)
+            lambda: do_add_realm_domain(
+                self.user_profile.realm, "zulip.org", False, acting_user=None
+            )
         )
 
         check_realm_domains_add("events[0]", events[0])
@@ -1688,7 +1969,9 @@ class NormalActionsTest(BaseAction):
         self.assertEqual(events[0]["realm_domain"]["allow_subdomains"], False)
 
         test_domain = RealmDomain.objects.get(realm=self.user_profile.realm, domain="zulip.org")
-        events = self.verify_action(lambda: do_change_realm_domain(test_domain, True))
+        events = self.verify_action(
+            lambda: do_change_realm_domain(test_domain, True, acting_user=None)
+        )
 
         check_realm_domains_change("events[0]", events[0])
         self.assertEqual(events[0]["realm_domain"]["domain"], "zulip.org")
@@ -1706,7 +1989,9 @@ class NormalActionsTest(BaseAction):
             url_prefix="https://python.example.com",
         )
         events = self.verify_action(
-            lambda: do_add_realm_playground(self.user_profile.realm, **playground_info)
+            lambda: do_add_realm_playground(
+                self.user_profile.realm, acting_user=None, **playground_info
+            )
         )
         check_realm_playgrounds("events[0]", events[0])
 
@@ -1715,13 +2000,15 @@ class NormalActionsTest(BaseAction):
         last_id = last_realm_playground.id
         realm_playground = access_playground_by_id(self.user_profile.realm, last_id)
         events = self.verify_action(
-            lambda: do_remove_realm_playground(self.user_profile.realm, realm_playground)
+            lambda: do_remove_realm_playground(
+                self.user_profile.realm, realm_playground, acting_user=None
+            )
         )
         check_realm_playgrounds("events[0]", events[0])
 
     def test_create_bot(self) -> None:
         action = lambda: self.create_bot("test")
-        events = self.verify_action(action, num_events=2)
+        events = self.verify_action(action, num_events=4)
         check_realm_bot_add("events[1]", events[1])
 
         action = lambda: self.create_bot(
@@ -1731,7 +2018,7 @@ class NormalActionsTest(BaseAction):
             interface_type=Service.GENERIC,
             bot_type=UserProfile.OUTGOING_WEBHOOK_BOT,
         )
-        events = self.verify_action(action, num_events=2)
+        events = self.verify_action(action, num_events=4)
         # The third event is the second call of notify_created_bot, which contains additional
         # data for services (in contrast to the first call).
         check_realm_bot_add("events[1]", events[1])
@@ -1743,7 +2030,7 @@ class NormalActionsTest(BaseAction):
             config_data=orjson.dumps({"foo": "bar"}).decode(),
             bot_type=UserProfile.EMBEDDED_BOT,
         )
-        events = self.verify_action(action, num_events=2)
+        events = self.verify_action(action, num_events=4)
         check_realm_bot_add("events[1]", events[1])
 
     def test_change_bot_full_name(self) -> None:
@@ -2071,9 +2358,9 @@ class NormalActionsTest(BaseAction):
             nonlocal uri
             result = self.client_post("/json/user_uploads", {"file": fp})
 
-            self.assert_json_success(result)
-            self.assertIn("uri", result.json())
-            uri = result.json()["uri"]
+            response_dict = self.assert_json_success(result)
+            self.assertIn("uri", response_dict)
+            uri = response_dict["uri"]
             base = "/user_uploads/"
             self.assertEqual(base, uri[: len(base)])
 
@@ -2171,7 +2458,7 @@ class NormalActionsTest(BaseAction):
         self.login_user(self.user_profile)
 
         with mock.patch(
-            "zerver.lib.export.do_export_realm", side_effect=Exception("test")
+            "zerver.lib.export.do_export_realm", side_effect=Exception("Some failure")
         ), self.assertLogs(level="ERROR") as error_log:
             with stdout_suppressed():
                 events = self.verify_action(
@@ -2184,6 +2471,7 @@ class NormalActionsTest(BaseAction):
             # Where last floating number is time and will vary in each test hence the following assertion is
             # independent of time bit by not matching exact log but only part of it.
             self.assertTrue("ERROR:root:Data export for zulip failed after" in error_log.output[0])
+            self.assertTrue("Some failure" in error_log.output[0])
 
         # We get two events for the export.
         check_realm_export(
@@ -2250,7 +2538,7 @@ class RealmPropertyActionTest(BaseAction):
             digest_weekday=[0, 1, 2],
             message_retention_days=[10, 20],
             name=["Zulip", "New Name"],
-            waiting_period_threshold=[10, 20],
+            waiting_period_threshold=[1000, 2000],
             create_public_stream_policy=Realm.COMMON_POLICY_TYPES,
             create_private_stream_policy=Realm.COMMON_POLICY_TYPES,
             create_web_public_stream_policy=Realm.CREATE_WEB_PUBLIC_STREAM_POLICY_TYPES,
@@ -2272,6 +2560,8 @@ class RealmPropertyActionTest(BaseAction):
             move_messages_between_streams_policy=Realm.COMMON_POLICY_TYPES,
             add_custom_emoji_policy=Realm.COMMON_POLICY_TYPES,
             delete_own_message_policy=Realm.COMMON_MESSAGE_POLICY_TYPES,
+            edit_topic_policy=Realm.COMMON_MESSAGE_POLICY_TYPES,
+            message_content_edit_limit_seconds=[1000, 1100, 1200, None],
         )
 
         vals = test_values.get(name)
@@ -2328,7 +2618,15 @@ class RealmPropertyActionTest(BaseAction):
                 ).count(),
                 1,
             )
-            check_realm_update("events[0]", events[0], name)
+
+            if name in [
+                "allow_message_editing",
+                "edit_topic_policy",
+                "message_content_edit_limit_seconds",
+            ]:
+                check_realm_update_dict("events[0]", events[0])
+            else:
+                check_realm_update("events[0]", events[0], name)
 
             if name == "email_address_visibility" and Realm.EMAIL_ADDRESS_VISIBILITY_EVERYONE in [
                 old_value,
@@ -2348,6 +2646,7 @@ class RealmPropertyActionTest(BaseAction):
             default_view=["recent_topics", "all_messages"],
             emojiset=[emojiset["key"] for emojiset in RealmUserDefault.emojiset_choices()],
             demote_inactive_streams=UserProfile.DEMOTE_STREAMS_CHOICES,
+            user_list_style=UserProfile.USER_LIST_STYLE_CHOICES,
             desktop_icon_count_display=[1, 2, 3],
             notification_sound=["zulip", "ding"],
             email_notifications_batching_period_seconds=[120, 300],
@@ -2421,6 +2720,7 @@ class UserDisplayActionTest(BaseAction):
             default_language=["es", "de", "en"],
             default_view=["all_messages", "recent_topics"],
             demote_inactive_streams=[2, 3, 1],
+            user_list_style=[1, 2, 3],
             color_scheme=[2, 3, 1],
         )
 
@@ -2534,7 +2834,7 @@ class SubscribeActionTest(BaseAction):
         # Now remove the user himself, to test the 'remove' event flow
         action = lambda: bulk_remove_subscriptions(realm, [hamlet], [stream], acting_user=None)
         events = self.verify_action(
-            action, include_subscribers=include_subscribers, include_streams=False, num_events=2
+            action, include_subscribers=include_subscribers, include_streams=False, num_events=1
         )
         check_subscription_remove("events[0]", events[0])
         self.assert_length(events[0]["subscriptions"], 1)
@@ -2576,7 +2876,7 @@ class SubscribeActionTest(BaseAction):
         check_stream_update("events[0]", events[0])
         check_message("events[1]", events[1])
 
-        # Update stream privacy - make stream web public
+        # Update stream privacy - make stream web-public
         action = lambda: do_change_stream_permission(
             stream,
             invite_only=False,
@@ -2600,6 +2900,40 @@ class SubscribeActionTest(BaseAction):
         check_stream_update("events[0]", events[0])
         check_message("events[1]", events[1])
 
+        # Update stream privacy - make stream public
+        self.user_profile = self.example_user("cordelia")
+        action = lambda: do_change_stream_permission(
+            stream,
+            invite_only=False,
+            history_public_to_subscribers=True,
+            is_web_public=False,
+            acting_user=self.example_user("hamlet"),
+        )
+        events = self.verify_action(action, include_subscribers=include_subscribers, num_events=2)
+        check_stream_create("events[0]", events[0])
+        check_subscription_peer_add("events[1]", events[1])
+
+        do_change_stream_permission(
+            stream,
+            invite_only=True,
+            history_public_to_subscribers=True,
+            is_web_public=False,
+            acting_user=self.example_user("hamlet"),
+        )
+        self.subscribe(self.example_user("cordelia"), stream.name)
+        self.unsubscribe(self.example_user("cordelia"), stream.name)
+        action = lambda: do_change_stream_permission(
+            stream,
+            invite_only=False,
+            history_public_to_subscribers=True,
+            is_web_public=False,
+            acting_user=self.example_user("hamlet"),
+        )
+        events = self.verify_action(
+            action, include_subscribers=include_subscribers, num_events=2, include_streams=False
+        )
+
+        self.user_profile = self.example_user("hamlet")
         # Update stream stream_post_policy property
         action = lambda: do_change_stream_post_policy(
             stream, Stream.STREAM_POST_POLICY_ADMINS, acting_user=self.example_user("hamlet")
@@ -2612,6 +2946,17 @@ class SubscribeActionTest(BaseAction):
             stream, self.example_user("hamlet"), -1
         )
         events = self.verify_action(action, include_subscribers=include_subscribers, num_events=2)
+        check_stream_update("events[0]", events[0])
+
+        moderators_group = UserGroup.objects.get(
+            name=UserGroup.MODERATORS_GROUP_NAME,
+            is_system_group=True,
+            realm=self.user_profile.realm,
+        )
+        action = lambda: do_change_can_remove_subscribers_group(
+            stream, moderators_group, acting_user=self.example_user("hamlet")
+        )
+        events = self.verify_action(action, include_subscribers=include_subscribers, num_events=1)
         check_stream_update("events[0]", events[0])
 
         # Subscribe to a totally new invite-only stream, so it's just Hamlet on it

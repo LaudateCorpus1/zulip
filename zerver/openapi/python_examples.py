@@ -15,9 +15,11 @@
 import json
 import os
 import sys
+from email.headerregistry import Address
 from functools import wraps
-from typing import Any, Callable, Dict, List, Set, TypeVar, cast
+from typing import Any, Callable, Dict, List, Set, TypeVar
 
+from typing_extensions import ParamSpec
 from zulip import Client
 
 from zerver.models import get_realm, get_user
@@ -29,10 +31,13 @@ TEST_FUNCTIONS: Dict[str, Callable[..., object]] = {}
 REGISTERED_TEST_FUNCTIONS: Set[str] = set()
 CALLED_TEST_FUNCTIONS: Set[str] = set()
 
-FuncT = TypeVar("FuncT", bound=Callable[..., object])
+ParamT = ParamSpec("ParamT")
+ReturnT = TypeVar("ReturnT")
 
 
-def openapi_test_function(endpoint: str) -> Callable[[FuncT], FuncT]:
+def openapi_test_function(
+    endpoint: str,
+) -> Callable[[Callable[ParamT, ReturnT]], Callable[ParamT, ReturnT]]:
     """This decorator is used to register an OpenAPI test function with
     its endpoint. Example usage:
 
@@ -40,16 +45,16 @@ def openapi_test_function(endpoint: str) -> Callable[[FuncT], FuncT]:
     def ...
     """
 
-    def wrapper(test_func: FuncT) -> FuncT:
+    def wrapper(test_func: Callable[ParamT, ReturnT]) -> Callable[ParamT, ReturnT]:
         @wraps(test_func)
-        def _record_calls_wrapper(*args: object, **kwargs: object) -> object:
+        def _record_calls_wrapper(*args: ParamT.args, **kwargs: ParamT.kwargs) -> ReturnT:
             CALLED_TEST_FUNCTIONS.add(test_func.__name__)
             return test_func(*args, **kwargs)
 
         REGISTERED_TEST_FUNCTIONS.add(test_func.__name__)
         TEST_FUNCTIONS[endpoint] = _record_calls_wrapper
 
-        return cast(FuncT, _record_calls_wrapper)  # https://github.com/python/mypy/issues/1927
+        return _record_calls_wrapper
 
     return wrapper
 
@@ -58,7 +63,10 @@ def ensure_users(ids_list: List[int], user_names: List[str]) -> None:
     # Ensure that the list of user ids (ids_list)
     # matches the users we want to refer to (user_names).
     realm = get_realm("zulip")
-    user_ids = [get_user(name + "@zulip.com", realm).id for name in user_names]
+    user_ids = [
+        get_user(Address(username=name, domain="zulip.com").addr_spec, realm).id
+        for name in user_names
+    ]
 
     assert ids_list == user_ids
 
@@ -138,6 +146,46 @@ def test_authorization_errors_fatal(client: Client, nonadmin_client: Client) -> 
     )
 
     validate_against_openapi_schema(result, "/users/me/subscriptions", "post", "400")
+
+
+@openapi_test_function("/realm/presence:get")
+def get_presence(client: Client) -> None:
+
+    # {code_example|start}
+    # Get presence information of all the users in an organization.
+    result = client.get_realm_presence()
+    # {code_example|end}
+    validate_against_openapi_schema(result, "/realm/presence", "get", "200")
+
+
+@openapi_test_function("/default_streams:post")
+def add_default_stream(client: Client) -> None:
+
+    # {code_example|start}
+    # Add a stream to the set of default streams for new users.
+    stream_id = 7
+
+    result = client.add_default_stream(stream_id)
+    # {code_example|end}
+
+    validate_against_openapi_schema(result, "/default_streams", "post", "200")
+
+
+@openapi_test_function("/default_streams:delete")
+def remove_default_stream(client: Client) -> None:
+
+    # {code_example|start}
+    # Remove a stream from the set of default streams for new users.
+    request = {"stream_id": 7}
+
+    result = client.call_endpoint(
+        url="/default_streams",
+        method="DELETE",
+        request=request,
+    )
+    # {code_example|end}
+
+    validate_against_openapi_schema(result, "/default_streams", "delete", "200")
 
 
 @openapi_test_function("/users/{user_id_or_email}/presence:get")
@@ -369,7 +417,7 @@ def get_realm_profile_fields(client: Client) -> None:
 def reorder_realm_profile_fields(client: Client) -> None:
     # {code_example|start}
     # Reorder the custom profile fields in the user's organization.
-    order = [8, 7, 6, 5, 4, 3, 2, 1]
+    order = [9, 8, 7, 6, 5, 4, 3, 2, 1]
     request = {"order": json.dumps(order)}
 
     result = client.call_endpoint(url="/realm/profile_fields", method="PATCH", request=request)
@@ -971,6 +1019,15 @@ def remove_reaction(client: Client, message_id: int) -> None:
     validate_against_openapi_schema(result, "/messages/{message_id}/reactions", "delete", "200")
 
 
+@openapi_test_function("/messages/{message_id}/read_receipts:get")
+def get_read_receipts(client: Client, message_id: int) -> None:
+    # {code_example|start}
+    # Get read receipts for a message
+    result = client.call_endpoint(f"/messages/{message_id}/read_receipts", method="GET")
+    # {code_example|end}
+    validate_against_openapi_schema(result, "/messages/{message_id}/read_receipts", "get", "200")
+
+
 def test_nonexistent_stream_error(client: Client) -> None:
     request = {
         "type": "stream",
@@ -1326,25 +1383,40 @@ def upload_custom_emoji(client: Client) -> None:
 
 @openapi_test_function("/users/me/alert_words:get")
 def get_alert_words(client: Client) -> None:
+
+    # {code_example|start}
+    # Get all of the user's configured alert words.
     result = client.get_alert_words()
+    # {code_example|end}
+    validate_against_openapi_schema(result, "/users/me/alert_words", "get", "200")
 
     assert result["result"] == "success"
 
 
 @openapi_test_function("/users/me/alert_words:post")
 def add_alert_words(client: Client) -> None:
+
+    # {code_example|start}
+    # Add words (or phrases) to the user's set of configured alert words.
     word = ["foo", "bar"]
 
     result = client.add_alert_words(word)
+    # {code_example|end}
+    validate_against_openapi_schema(result, "/users/me/alert_words", "post", "200")
 
     assert result["result"] == "success"
 
 
 @openapi_test_function("/users/me/alert_words:delete")
 def remove_alert_words(client: Client) -> None:
+
+    # {code_example|start}
+    # Remove words (or phrases) from the user's set of configured alert words.
     word = ["foo"]
 
     result = client.remove_alert_words(word)
+    # {code_example|end}
+    validate_against_openapi_schema(result, "/users/me/alert_words", "delete", "200")
 
     assert result["result"] == "success"
 
@@ -1454,6 +1526,7 @@ def test_messages(client: Client, nonadmin_client: Client) -> None:
     get_messages(client)
     check_messages_match_narrow(client)
     get_message_history(client, message_id)
+    get_read_receipts(client, message_id)
     delete_message(client, message_id)
     mark_all_as_read(client)
     mark_stream_as_read(client)
@@ -1485,6 +1558,7 @@ def test_users(client: Client, owner_client: Client) -> None:
     set_typing_status(client)
     update_presence(client)
     get_user_presence(client)
+    get_presence(client)
     create_user_group(client)
     user_group_id = get_user_groups(client)
     update_user_group(client, user_group_id)
@@ -1496,6 +1570,9 @@ def test_users(client: Client, owner_client: Client) -> None:
     deactivate_own_user(client, owner_client)
     add_user_mute(client)
     remove_user_mute(client)
+    get_alert_words(client)
+    add_alert_words(client)
+    remove_alert_words(client)
 
 
 def test_streams(client: Client, nonadmin_client: Client) -> None:
@@ -1513,6 +1590,8 @@ def test_streams(client: Client, nonadmin_client: Client) -> None:
     get_stream_topics(client, 1)
     delete_topic(client, 1, "test")
     archive_stream(client, stream_id)
+    add_default_stream(client)
+    remove_default_stream(client)
 
     test_user_not_authorized_error(nonadmin_client)
     test_authorization_errors_fatal(client, nonadmin_client)

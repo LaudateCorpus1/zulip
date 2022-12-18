@@ -270,8 +270,8 @@ Next, read the following to learn more about developing for Zulip:
 - [Using the development environment][rtd-using-dev-env]
 - [Testing][rtd-testing]
 
-[install-direct]: ../development/setup-advanced.html#installing-directly-on-ubuntu-debian-centos-or-fedora
-[install-vagrant]: ../development/setup-vagrant.md
+[install-direct]: setup-advanced.md#installing-directly-on-ubuntu-debian-centos-or-fedora
+[install-vagrant]: setup-recommended.md
 [rtd-git-guide]: ../git/index.md
 [rtd-using-dev-env]: using.md
 [rtd-testing]: ../testing/testing.md
@@ -285,14 +285,14 @@ Next, read the following to learn more about developing for Zulip:
 For some applications (e.g. developing an OAuth2 integration for
 Facebook), you may need your Zulip development to have a valid SSL
 certificate. While `run-dev.py` doesn't support that, you can do this
-with an `nginx` reverse proxy sitting in front of `run-dev.py.`.
+with an `nginx` reverse proxy sitting in front of `run-dev.py`.
 
 The following instructions assume you have a Zulip Droplet working and
 that the user is `zulipdev`; edit accordingly if the situation is
 different.
 
 1. First, get an SSL certificate; you can use
-   [our certbot wrapper script used for production](../production/ssl-certificates.html#certbot-recommended)
+   [our certbot wrapper script used for production](../production/ssl-certificates.md#certbot-recommended)
    by running the following commands as root:
 
    ```bash

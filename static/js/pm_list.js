@@ -1,157 +1,196 @@
 import $ from "jquery";
+import _ from "lodash";
 
-import * as buddy_data from "./buddy_data";
-import * as hash_util from "./hash_util";
-import * as narrow_state from "./narrow_state";
-import * as people from "./people";
-import * as pm_conversations from "./pm_conversations";
+import * as pm_list_data from "./pm_list_data";
 import * as pm_list_dom from "./pm_list_dom";
-import * as stream_popover from "./stream_popover";
+import * as resize from "./resize";
+import * as topic_zoom from "./topic_zoom";
 import * as ui from "./ui";
 import * as ui_util from "./ui_util";
-import * as unread from "./unread";
 import * as vdom from "./vdom";
 
 let prior_dom;
-let private_messages_open = false;
-
-export function clear_for_testing() {
-    prior_dom = undefined;
-    private_messages_open = false;
-}
 
 // This module manages the "Private messages" section in the upper
 // left corner of the app.  This was split out from stream_list.js.
 
-function get_filter_li() {
-    return $(".top_left_private_messages .private_messages_header");
+let private_messages_collapsed = false;
+
+// The private messages section can be zoomed in to view more messages.
+// This keeps track of if we're zoomed in or not.
+let zoomed = false;
+
+function get_private_messages_section_header() {
+    return $(
+        ".private_messages_container #private_messages_section #private_messages_section_header",
+    );
 }
 
-function set_count(count) {
-    ui_util.update_unread_count_in_dom(get_filter_li(), count);
+export function set_count(count) {
+    ui_util.update_unread_count_in_dom(get_private_messages_section_header(), count);
 }
 
-function remove_expanded_private_messages() {
-    stream_popover.hide_topic_popover();
-    ui.get_content_element($("#private-container")).empty();
-}
+function close() {
+    private_messages_collapsed = true;
+    $("#toggle_private_messages_section_icon").removeClass("fa-caret-down");
+    $("#toggle_private_messages_section_icon").addClass("fa-caret-right");
 
-export function close() {
-    private_messages_open = false;
-    prior_dom = undefined;
-    remove_expanded_private_messages();
-}
-
-export function get_active_user_ids_string() {
-    const filter = narrow_state.filter();
-
-    if (!filter) {
-        return undefined;
-    }
-
-    const emails = filter.operands("pm-with")[0];
-
-    if (!emails) {
-        return undefined;
-    }
-
-    return people.emails_strings_to_user_ids_string(emails);
-}
-
-export function _get_convos() {
-    const private_messages = pm_conversations.recent.get();
-    const display_messages = [];
-    const active_user_ids_string = get_active_user_ids_string();
-
-    for (const private_message_obj of private_messages) {
-        const user_ids_string = private_message_obj.user_ids_string;
-        const reply_to = people.user_ids_string_to_emails_string(user_ids_string);
-        const recipients_string = people.get_recipients(user_ids_string);
-
-        const num_unread = unread.num_unread_for_person(user_ids_string);
-
-        const is_group = user_ids_string.includes(",");
-
-        const is_active = user_ids_string === active_user_ids_string;
-
-        let user_circle_class;
-
-        if (is_group) {
-            user_circle_class = "user_circle_fraction";
-        } else {
-            const user_id = Number.parseInt(user_ids_string, 10);
-            user_circle_class = buddy_data.get_user_circle_class(user_id);
-            const recipient_user_obj = people.get_by_user_id(user_id);
-
-            if (recipient_user_obj.is_bot) {
-                user_circle_class = "user_circle_green";
-            }
-        }
-
-        const display_message = {
-            recipients: recipients_string,
-            user_ids_string,
-            unread: num_unread,
-            is_zero: num_unread === 0,
-            is_active,
-            url: hash_util.pm_with_uri(reply_to),
-            user_circle_class,
-            is_group,
-        };
-        display_messages.push(display_message);
-    }
-
-    return display_messages;
+    update_private_messages();
 }
 
 export function _build_private_messages_list() {
-    const convos = _get_convos();
-    const dom_ast = pm_list_dom.pm_ul(convos);
+    const conversations = pm_list_data.get_conversations();
+    const pm_list_info = pm_list_data.get_list_info(zoomed);
+    const conversations_to_be_shown = pm_list_info.conversations_to_be_shown;
+    const more_conversations_unread_count = pm_list_info.more_conversations_unread_count;
+
+    const pm_list_nodes = conversations_to_be_shown.map((conversation) =>
+        pm_list_dom.keyed_pm_li(conversation),
+    );
+
+    const all_conversations_shown = conversations_to_be_shown.length === conversations.length;
+    if (!all_conversations_shown) {
+        pm_list_nodes.push(
+            pm_list_dom.more_private_conversations_li(more_conversations_unread_count),
+        );
+    }
+    const dom_ast = pm_list_dom.pm_ul(pm_list_nodes);
     return dom_ast;
 }
 
-export function update_private_messages() {
-    if (!narrow_state.active()) {
-        return;
+function set_dom_to(new_dom) {
+    const $container = ui.get_content_element($("#private_messages_list"));
+
+    function replace_content(html) {
+        $container.html(html);
     }
 
-    if (private_messages_open) {
-        const container = ui.get_content_element($("#private-container"));
-        const new_dom = _build_private_messages_list();
-
-        function replace_content(html) {
-            container.html(html);
-        }
-
-        function find() {
-            return container.find("ul");
-        }
-
-        vdom.update(replace_content, find, new_dom, prior_dom);
-        prior_dom = new_dom;
+    function find() {
+        return $container.find("ul");
     }
+
+    vdom.update(replace_content, find, new_dom, prior_dom);
+    prior_dom = new_dom;
 }
 
-export function is_all_privates() {
-    const filter = narrow_state.filter();
+export function update_private_messages() {
+    if (private_messages_collapsed) {
+        // In the collapsed state, we will still display the current
+        // conversation, to preserve the UI invariant that there's
+        // always something highlighted in the left sidebar.
+        const conversations = pm_list_data.get_conversations();
+        const active_conversation = conversations.find((conversation) => conversation.is_active);
 
-    if (!filter) {
-        return false;
+        if (active_conversation) {
+            const node = [pm_list_dom.keyed_pm_li(active_conversation)];
+            const new_dom = pm_list_dom.pm_ul(node);
+            set_dom_to(new_dom);
+        } else {
+            // Otherwise, empty the section.
+            $(".pm-list").empty();
+            prior_dom = undefined;
+        }
+    } else {
+        const new_dom = _build_private_messages_list();
+        set_dom_to(new_dom);
     }
-
-    return filter.operands("is").includes("private");
+    // Make sure to update the left sidebar heights after updating PMs.
+    setTimeout(resize.resize_stream_filters_container, 0);
 }
 
 export function expand() {
-    private_messages_open = true;
-    stream_popover.hide_topic_popover();
+    private_messages_collapsed = false;
+    $("#toggle_private_messages_section_icon").addClass("fa-caret-down");
+    $("#toggle_private_messages_section_icon").removeClass("fa-caret-right");
     update_private_messages();
-    if (is_all_privates()) {
-        $(".top_left_private_messages").addClass("active-filter");
-    }
 }
 
 export function update_dom_with_unread_counts(counts) {
+    // In theory, we could support passing the counts object through
+    // to pm_list_data, rather than fetching it directly there. But
+    // it's not an important optimization, because it's unlikely a
+    // user would have 10,000s of unread PMs where it could matter.
     update_private_messages();
+    // This is just the global unread count.
     set_count(counts.private_message_count);
+}
+
+export function highlight_all_private_messages_view() {
+    $(".private_messages_container").addClass("active_private_messages_section");
+}
+
+function unhighlight_all_private_messages_view() {
+    $(".private_messages_container").removeClass("active_private_messages_section");
+}
+
+export function handle_narrow_activated(filter) {
+    const active_filter = filter;
+    const is_all_private_message_view = _.isEqual(active_filter.sorted_term_types(), [
+        "is-private",
+    ]);
+    const narrow_to_private_messages_section = active_filter.operands("pm-with").length !== 0;
+
+    if (is_all_private_message_view) {
+        highlight_all_private_messages_view();
+    } else {
+        unhighlight_all_private_messages_view();
+    }
+    if (narrow_to_private_messages_section) {
+        update_private_messages();
+    }
+}
+
+export function handle_narrow_deactivated() {
+    // Since one can renarrow via the keyboard shortcut or similar, we
+    // avoid disturbing the zoomed state here.
+    unhighlight_all_private_messages_view();
+    update_private_messages();
+}
+
+export function is_private_messages_collapsed() {
+    return private_messages_collapsed;
+}
+
+export function toggle_private_messages_section() {
+    // change the state of PM section depending on the previous state.
+    if (private_messages_collapsed) {
+        expand();
+    } else {
+        close();
+    }
+}
+
+function zoom_in() {
+    zoomed = true;
+    if (topic_zoom.is_zoomed_in()) {
+        topic_zoom.zoom_out();
+    }
+    update_private_messages();
+    $(".private_messages_container").removeClass("zoom-out").addClass("zoom-in");
+    $("#streams_list").hide();
+    $(".left-sidebar .right-sidebar-items").hide();
+}
+
+function zoom_out() {
+    zoomed = false;
+    update_private_messages();
+    $(".private_messages_container").removeClass("zoom-in").addClass("zoom-out");
+    $("#streams_list").show();
+    $(".left-sidebar .right-sidebar-items").show();
+}
+
+export function initialize() {
+    $(".private_messages_container").on("click", "#show_more_private_messages", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+
+        zoom_in();
+    });
+
+    $(".private_messages_container").on("click", "#hide_more_private_messages", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+
+        zoom_out();
+    });
 }

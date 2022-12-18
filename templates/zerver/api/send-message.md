@@ -1,6 +1,4 @@
-{generate_api_title(/messages:post)}
-
-{generate_api_description(/messages:post)}
+{generate_api_header(/messages:post)}
 
 ## Usage examples
 
@@ -17,8 +15,8 @@
 curl -X POST {{ api_url }}/v1/messages \
     -u BOT_EMAIL_ADDRESS:BOT_API_KEY \
     --data-urlencode type=stream \
-    --data-urlencode to=Denmark \
-    --data-urlencode subject=Castle \
+    --data-urlencode 'to="Denmark"' \
+    --data-urlencode topic=Castle \
     --data-urlencode 'content=I come not, friends, to steal away your hearts.'
 
 # For private messages
@@ -74,6 +72,6 @@ file.
 
 {generate_response_description(/messages:post)}
 
-#### Example response
+#### Example response(s)
 
 {generate_code_example|/messages:post|fixture}

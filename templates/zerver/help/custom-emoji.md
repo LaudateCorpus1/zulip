@@ -45,35 +45,28 @@ to replace it. You can find the primary name of an emoji by hovering over it
 in the [emoji picker](/help/emoji-and-emoticons#select-from-the-emoji-picker),
 while the search box is empty (you may have to scroll down a bit to find it).
 
-## Delete custom emoji
+## Deactivate custom emoji
 
 {start_tabs}
 
 {settings_tab|emoji-settings}
 
 1. Click the trash icon (<i class="fa fa-trash-o"></i>) next to the
-   emoji that you would like to delete.
+   emoji that you would like to deactivate.
 
 {end_tabs}
 
-Deleting an emoji will not affect any existing messages or emoji
-reactions. Anyone can delete custom emoji they added, and organization
-administrators can delete anyone's custom emoji.
+Deactivating an emoji will not affect any existing messages or emoji
+reactions. Anyone can deactivate custom emoji they added, and organization
+administrators can deactivate anyone's custom emoji.
 
-## Editing permissions
-
-By default, anyone other than guests can [add custom emoji](/help/custom-emoji) to the
-organization. However, you can restrict the permission to add custom emoji to other sets of
-roles:
-
-* Organization administrators
-* Organization administrators and moderators
-* Organization administrators and all members
-* Organization administrators and [full members](/help/restrict-permissions-of-new-members)
-
-### Change who can add custom emoji
+## Change who can add custom emoji
 
 {!admin-only.md!}
+
+By default, anyone other than guests can [add custom emoji](/help/custom-emoji)
+to the organization. However, you can restrict the ability to do so to specific
+[roles](/help/roles-and-permissions).
 
 {start_tabs}
 

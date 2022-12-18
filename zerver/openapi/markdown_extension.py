@@ -18,7 +18,7 @@ from markdown.extensions import Extension
 from markdown.preprocessors import Preprocessor
 
 import zerver.openapi.python_examples
-from zerver.lib.markdown.preprocessor_priorities import PREPROCESSOR_PRIORITES
+from zerver.lib.markdown.priorities import PREPROCESSOR_PRIORITES
 from zerver.openapi.openapi import (
     check_additional_imports,
     check_requires_administrator,
@@ -49,8 +49,7 @@ MACRO_REGEXP = re.compile(
 )
 PYTHON_EXAMPLE_REGEX = re.compile(r"\# \{code_example\|\s*(start|end)\s*\}")
 JS_EXAMPLE_REGEX = re.compile(r"\/\/ \{code_example\|\s*(start|end)\s*\}")
-MACRO_REGEXP_DESC = re.compile(rf"{{generate_api_description\(\s*({API_ENDPOINT_NAME})\s*\)}}")
-MACRO_REGEXP_TITLE = re.compile(rf"{{generate_api_title\(\s*({API_ENDPOINT_NAME})\s*\)}}")
+MACRO_REGEXP_HEADER = re.compile(rf"{{generate_api_header\(\s*({API_ENDPOINT_NAME})\s*\)}}")
 MACRO_REGEXP_RESPONSE_DESC = re.compile(
     rf"{{generate_response_description\(\s*({API_ENDPOINT_NAME})\s*\)}}"
 )
@@ -169,7 +168,7 @@ def render_python_code_example(
 def render_javascript_code_example(
     function: str, admin_config: bool = False, **kwargs: Any
 ) -> List[str]:
-    pattern = fr'^add_example\(\s*"[^"]*",\s*{re.escape(json.dumps(function))},\s*\d+,\s*async \(client, console\) => \{{\n(.*?)^(?:\}}| *\}},\n)\);$'
+    pattern = rf'^add_example\(\s*"[^"]*",\s*{re.escape(json.dumps(function))},\s*\d+,\s*async \(client, console\) => \{{\n(.*?)^(?:\}}| *\}},\n)\);$'
     with open("zerver/openapi/javascript_examples.js") as f:
         m = re.search(pattern, f.read(), re.M | re.S)
     if m is None:
@@ -300,7 +299,7 @@ def generate_curl_example(
     example_endpoint = endpoint.format_map(format_dict)
 
     curl_first_line_parts = ["curl", *curl_method_arguments(example_endpoint, method, api_url)]
-    lines.append(" ".join(map(shlex.quote, curl_first_line_parts)))
+    lines.append(shlex.join(curl_first_line_parts))
 
     insecure_operations = ["/dev_fetch_api_key:post", "/fetch_api_key:post"]
     if operation_security is None:
@@ -420,14 +419,9 @@ class APIMarkdownExtension(Extension):
             PREPROCESSOR_PRIORITES["generate_code_example"],
         )
         md.preprocessors.register(
-            APIDescriptionPreprocessor(md, self.getConfigs()),
-            "generate_api_description",
-            PREPROCESSOR_PRIORITES["generate_api_description"],
-        )
-        md.preprocessors.register(
-            APITitlePreprocessor(md, self.getConfigs()),
-            "generate_api_title",
-            PREPROCESSOR_PRIORITES["generate_api_title"],
+            APIHeaderPreprocessor(md, self.getConfigs()),
+            "generate_api_header",
+            PREPROCESSOR_PRIORITES["generate_api_header"],
         )
         md.preprocessors.register(
             ResponseDescriptionPreprocessor(md, self.getConfigs()),
@@ -443,11 +437,11 @@ class APIMarkdownExtension(Extension):
 
 class BasePreprocessor(Preprocessor):
     def __init__(
-        self, REGEXP: Pattern[str], md: markdown.Markdown, config: Mapping[str, Any]
+        self, regexp: Pattern[str], md: markdown.Markdown, config: Mapping[str, Any]
     ) -> None:
         super().__init__(md)
         self.api_url = config["api_url"]
-        self.REGEXP = REGEXP
+        self.REGEXP = regexp
 
     def run(self, lines: List[str]) -> List[str]:
         done = False
@@ -510,32 +504,22 @@ class APICodeExamplesPreprocessor(BasePreprocessor):
         return generate_openapi_fixture(path, method)
 
 
-class APIDescriptionPreprocessor(BasePreprocessor):
+class APIHeaderPreprocessor(BasePreprocessor):
     def __init__(self, md: markdown.Markdown, config: Mapping[str, Any]) -> None:
-        super().__init__(MACRO_REGEXP_DESC, md, config)
+        super().__init__(MACRO_REGEXP_HEADER, md, config)
 
     def render(self, function: str) -> List[str]:
-        description: List[str] = []
-        path, method = function.rsplit(":", 1)
-        description_dict = get_openapi_description(path, method)
-        description_dict = description_dict.replace("{{api_url}}", self.api_url)
-        description.extend(description_dict.splitlines())
-        return description
-
-
-class APITitlePreprocessor(BasePreprocessor):
-    def __init__(self, md: markdown.Markdown, config: Mapping[str, Any]) -> None:
-        super().__init__(MACRO_REGEXP_TITLE, md, config)
-
-    def render(self, function: str) -> List[str]:
-        title: List[str] = []
         path, method = function.rsplit(":", 1)
         raw_title = get_openapi_summary(path, method)
-        title.extend(raw_title.splitlines())
-        title = ["# " + line for line in title]
-        if check_requires_administrator(path, method):
-            title.append("{!api-admin-only.md!}")
-        return title
+        description_dict = get_openapi_description(path, method)
+        return [
+            *("# " + line for line in raw_title.splitlines()),
+            *(["{!api-admin-only.md!}"] if check_requires_administrator(path, method) else []),
+            "",
+            f"`{method.upper()} {self.api_url}/v1{path}`",
+            "",
+            *description_dict.splitlines(),
+        ]
 
 
 class ResponseDescriptionPreprocessor(BasePreprocessor):
@@ -543,11 +527,9 @@ class ResponseDescriptionPreprocessor(BasePreprocessor):
         super().__init__(MACRO_REGEXP_RESPONSE_DESC, md, config)
 
     def render(self, function: str) -> List[str]:
-        description: List[str] = []
         path, method = function.rsplit(":", 1)
         raw_description = get_responses_description(path, method)
-        description.extend(raw_description.splitlines())
-        return description
+        return raw_description.splitlines()
 
 
 class ParameterDescriptionPreprocessor(BasePreprocessor):
@@ -555,11 +537,9 @@ class ParameterDescriptionPreprocessor(BasePreprocessor):
         super().__init__(MACRO_REGEXP_PARAMETER_DESC, md, config)
 
     def render(self, function: str) -> List[str]:
-        description: List[str] = []
         path, method = function.rsplit(":", 1)
         raw_description = get_parameters_description(path, method)
-        description.extend(raw_description.splitlines())
-        return description
+        return raw_description.splitlines()
 
 
 def makeExtension(*args: Any, **kwargs: str) -> APIMarkdownExtension:

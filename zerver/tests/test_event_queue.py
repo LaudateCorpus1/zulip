@@ -5,15 +5,16 @@ from unittest import mock
 import orjson
 from django.http import HttpRequest, HttpResponse
 
-from zerver.lib.actions import do_change_subscription_property, do_mute_topic
+from zerver.actions.streams import do_change_subscription_property
+from zerver.actions.user_topics import do_mute_topic
 from zerver.lib.test_classes import ZulipTestCase
-from zerver.lib.test_helpers import HostRequestMock, mock_queue_publish
+from zerver.lib.test_helpers import HostRequestMock, dummy_handler, mock_queue_publish
 from zerver.lib.user_groups import create_user_group, remove_user_from_user_group
 from zerver.models import Recipient, Stream, Subscription, UserProfile, get_stream
 from zerver.tornado.event_queue import (
     ClientDescriptor,
+    access_client_descriptor,
     allocate_client_descriptor,
-    get_client_descriptor,
     maybe_enqueue_notifications,
     missedmessage_hook,
     persistent_queue_filename,
@@ -83,7 +84,7 @@ class MissedMessageNotificationsTest(ZulipTestCase):
         user_profile: UserProfile,
         post_data: Dict[str, Any],
     ) -> HttpResponse:
-        request = HostRequestMock(post_data, user_profile)
+        request = HostRequestMock(post_data, user_profile, tornado_handler=dummy_handler)
         return view_func(request, user_profile)
 
     def test_stream_watchers(self) -> None:
@@ -172,7 +173,7 @@ class MissedMessageNotificationsTest(ZulipTestCase):
             )
             self.assert_json_success(result)
             queue_id = orjson.loads(result.content)["queue_id"]
-            return get_client_descriptor(queue_id)
+            return access_client_descriptor(user.id, queue_id)
 
         def destroy_event_queue(user: UserProfile, queue_id: str) -> None:
             result = self.tornado_call(cleanup_event_queue, user, {"queue_id": queue_id})
@@ -582,8 +583,8 @@ class MissedMessageNotificationsTest(ZulipTestCase):
             "bot_type": "1",
         }
         result = self.client_post("/json/bots", bot_info)
-        self.assert_json_success(result)
-        hambot = UserProfile.objects.get(id=result.json()["user_id"])
+        response_dict = self.assert_json_success(result)
+        hambot = UserProfile.objects.get(id=response_dict["user_id"])
         client_descriptor = allocate_event_queue(hambot)
         self.assertTrue(client_descriptor.event_queue.empty())
         msg_id = self.send_personal_message(iago, hambot)
@@ -885,7 +886,7 @@ class EventQueueTest(ZulipTestCase):
 
     def test_collapse_event(self) -> None:
         """
-        This mostly focues on the internals of
+        This mostly focuses on the internals of
         how we store "virtual_events" that we
         can collapse if subsequent events are
         of the same form.  See the code in

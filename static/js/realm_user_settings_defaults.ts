@@ -1,10 +1,11 @@
-export type RealmDefaultSettingsType = {
+export type RealmDefaultSettings = {
     color_scheme: number;
     default_language: string;
     default_view: string;
     desktop_icon_count_display: number;
     demote_inactive_streams: number;
     dense_mode: boolean;
+    display_emoji_reaction_users: boolean;
     email_notifications_batching_period_seconds: number;
     emojiset: string;
     enable_desktop_notifications: boolean;
@@ -24,7 +25,6 @@ export type RealmDefaultSettingsType = {
     escape_navigates_to_default_view: boolean;
     fluid_layout_width: boolean;
     high_contrast_mode: boolean;
-    left_side_userlist: boolean;
     message_content_in_email_notifications: boolean;
     notification_sound: string;
     pm_content_in_desktop_notifications: boolean;
@@ -33,11 +33,12 @@ export type RealmDefaultSettingsType = {
     starred_message_counts: boolean;
     translate_emoticons: boolean;
     twenty_four_hour_time: boolean;
+    user_list_style: boolean;
     wildcard_mentions_notify: boolean;
 };
 
-export let realm_user_settings_defaults = {} as RealmDefaultSettingsType;
+export let realm_user_settings_defaults = {} as RealmDefaultSettings;
 
-export function initialize(params: Record<string, RealmDefaultSettingsType>): void {
+export function initialize(params: Record<string, RealmDefaultSettings>): void {
     realm_user_settings_defaults = params.realm_user_settings_defaults;
 }

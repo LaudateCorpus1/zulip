@@ -8,6 +8,7 @@ import urllib
 from contextlib import contextmanager
 from datetime import timedelta
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Collection,
@@ -21,6 +22,7 @@ from typing import (
     Set,
     Tuple,
     Union,
+    cast,
 )
 from unittest import TestResult, mock
 
@@ -43,35 +45,34 @@ from django.utils import translation
 from django.utils.module_loading import import_string
 from django.utils.timezone import now as timezone_now
 from fakeldap import MockLDAP
-from two_factor.models import PhoneDevice
+from two_factor.plugins.phonenumber.models import PhoneDevice
 
 from corporate.models import Customer, CustomerPlan, LicenseLedger
+from zerver.actions.message_send import check_send_message, check_send_stream_message
+from zerver.actions.realm_settings import do_set_realm_property
+from zerver.actions.streams import bulk_add_subscriptions, bulk_remove_subscriptions
 from zerver.decorator import do_two_factor_login
-from zerver.lib.actions import (
-    bulk_add_subscriptions,
-    bulk_remove_subscriptions,
-    check_send_message,
-    check_send_stream_message,
-    do_set_realm_property,
-    gather_subscriptions,
-)
 from zerver.lib.cache import bounce_key_prefix_for_testing
 from zerver.lib.initial_password import initial_password
 from zerver.lib.notification_data import UserMessageNotificationsData
 from zerver.lib.rate_limiter import bounce_redis_key_prefix_for_testing
 from zerver.lib.sessions import get_session_dict_user
+from zerver.lib.soft_deactivation import do_soft_deactivate_users
 from zerver.lib.stream_subscription import get_stream_subscriptions_for_user
 from zerver.lib.streams import (
     create_stream_if_needed,
     get_default_value_for_history_public_to_subscribers,
 )
+from zerver.lib.subscription_info import gather_subscriptions
 from zerver.lib.test_console_output import (
     ExtraConsoleOutputFinder,
     ExtraConsoleOutputInTestException,
     tee_stderr_and_find_extra_console_output,
     tee_stdout_and_find_extra_console_output,
 )
-from zerver.lib.test_helpers import find_key_by_email, instrument_url
+from zerver.lib.test_helpers import find_key_by_email, instrument_url, queries_captured
+from zerver.lib.topic import filter_by_topic_name_via_message
+from zerver.lib.user_groups import get_system_user_group_for_user
 from zerver.lib.users import get_api_key
 from zerver.lib.validator import check_string
 from zerver.lib.webhooks.common import (
@@ -88,6 +89,8 @@ from zerver.models import (
     Recipient,
     Stream,
     Subscription,
+    UserGroup,
+    UserGroupMembership,
     UserMessage,
     UserProfile,
     UserStatus,
@@ -107,6 +110,9 @@ from zerver.tornado.event_queue import clear_client_event_queues_for_testing
 if settings.ZILENCER_ENABLED:
     from zilencer.models import get_remote_server_by_uuid
 
+if TYPE_CHECKING:
+    from django.test.client import _MonkeyPatchedWSGIResponse as TestHttpResponse
+
 
 class EmptyResponseError(Exception):
     pass
@@ -124,23 +130,17 @@ class UploadSerializeMixin(SerializeMixin):
     lockfile = "var/upload_lock"
 
     @classmethod
-    def setUpClass(cls: Any, *args: Any, **kwargs: Any) -> None:
+    def setUpClass(cls: Any) -> None:
         if not os.path.exists(cls.lockfile):
             with open(cls.lockfile, "w"):  # nocoverage - rare locking case
                 pass
 
-        super().setUpClass(*args, **kwargs)
-
-
-# We could be more specific about which arguments are bool (Django's
-# follow and secure, our intentionally_undocumented) and which are str
-# (everything else), but explaining that to mypy is tedious.
-ClientArg = Union[str, bool]
+        super().setUpClass()
 
 
 class ZulipTestCase(TestCase):
     # Ensure that the test system just shows us diffs
-    maxDiff: Optional[int] = None
+    maxDiff: Optional[int] = None  # noqa: N815
 
     def setUp(self) -> None:
         super().setUp()
@@ -205,21 +205,21 @@ Output:
 
     The linter will prevent direct calls to self.client.foo, so the wrapper
     functions have to fake out the linter by using a local variable called
-    django_client to fool the regext.
+    django_client to fool the regex.
     """
     DEFAULT_SUBDOMAIN = "zulip"
     TOKENIZED_NOREPLY_REGEX = settings.TOKENIZED_NOREPLY_EMAIL_ADDRESS.format(token="[a-z0-9_]{24}")
 
-    def set_http_headers(self, kwargs: Dict[str, ClientArg]) -> None:
-        if "subdomain" in kwargs:
-            assert isinstance(kwargs["subdomain"], str)
-            kwargs["HTTP_HOST"] = Realm.host_for_subdomain(kwargs["subdomain"])
-            del kwargs["subdomain"]
-        elif "HTTP_HOST" not in kwargs:
-            kwargs["HTTP_HOST"] = Realm.host_for_subdomain(self.DEFAULT_SUBDOMAIN)
+    def set_http_headers(self, extra: Dict[str, str], skip_user_agent: bool = False) -> None:
+        if "subdomain" in extra:
+            assert isinstance(extra["subdomain"], str)
+            extra["HTTP_HOST"] = Realm.host_for_subdomain(extra["subdomain"])
+            del extra["subdomain"]
+        elif "HTTP_HOST" not in extra:
+            extra["HTTP_HOST"] = Realm.host_for_subdomain(self.DEFAULT_SUBDOMAIN)
 
         # set User-Agent
-        if "HTTP_AUTHORIZATION" in kwargs:
+        if "HTTP_AUTHORIZATION" in extra:
             # An API request; use mobile as the default user agent
             default_user_agent = "ZulipMobile/26.22.145 (iOS 10.3.1)"
         else:
@@ -229,12 +229,11 @@ Output:
                 + "AppleWebKit/537.36 (KHTML, like Gecko) "
                 + "Chrome/79.0.3945.130 Safari/537.36"
             )
-        if kwargs.get("skip_user_agent"):
+        if skip_user_agent:
             # Provide a way to disable setting User-Agent if desired.
-            assert "HTTP_USER_AGENT" not in kwargs
-            del kwargs["skip_user_agent"]
-        elif "HTTP_USER_AGENT" not in kwargs:
-            kwargs["HTTP_USER_AGENT"] = default_user_agent
+            assert "HTTP_USER_AGENT" not in extra
+        elif "HTTP_USER_AGENT" not in extra:
+            extra["HTTP_USER_AGENT"] = default_user_agent
 
     def extract_api_suffix_url(self, url: str) -> Tuple[str, Dict[str, List[str]]]:
         """
@@ -253,9 +252,9 @@ Output:
         self,
         url: str,
         method: str,
-        result: HttpResponse,
-        data: Union[str, bytes, Dict[str, Any]],
-        kwargs: Dict[str, ClientArg],
+        result: "TestHttpResponse",
+        data: Union[str, bytes, Mapping[str, Any]],
+        extra: Dict[str, str],
         intentionally_undocumented: bool = False,
     ) -> None:
         """
@@ -283,12 +282,11 @@ Output:
             content, url, method, str(result.status_code)
         )
         if response_validated:
-            http_headers = {k: v for k, v in kwargs.items() if isinstance(v, str)}
             validate_request(
                 url,
                 method,
                 data,
-                http_headers,
+                extra,
                 json_url,
                 str(result.status_code),
                 intentionally_undocumented=intentionally_undocumented,
@@ -298,31 +296,42 @@ Output:
     def client_patch(
         self,
         url: str,
-        info: Dict[str, Any] = {},
+        info: Mapping[str, Any] = {},
+        skip_user_agent: bool = False,
+        follow: bool = False,
+        secure: bool = False,
         intentionally_undocumented: bool = False,
-        **kwargs: ClientArg,
-    ) -> HttpResponse:
+        **extra: str,
+    ) -> "TestHttpResponse":
         """
         We need to urlencode, since Django's function won't do it for us.
         """
         encoded = urllib.parse.urlencode(info)
+        extra["content_type"] = "application/x-www-form-urlencoded"
         django_client = self.client  # see WRAPPER_COMMENT
-        self.set_http_headers(kwargs)
-        result = django_client.patch(url, encoded, **kwargs)
+        self.set_http_headers(extra, skip_user_agent)
+        result = django_client.patch(url, encoded, follow=follow, secure=secure, **extra)
         self.validate_api_response_openapi(
             url,
             "patch",
             result,
             info,
-            kwargs,
+            extra,
             intentionally_undocumented=intentionally_undocumented,
         )
         return result
 
     @instrument_url
     def client_patch_multipart(
-        self, url: str, info: Dict[str, Any] = {}, **kwargs: ClientArg
-    ) -> HttpResponse:
+        self,
+        url: str,
+        info: Mapping[str, Any] = {},
+        skip_user_agent: bool = False,
+        follow: bool = False,
+        secure: bool = False,
+        intentionally_undocumented: bool = False,
+        **extra: str,
+    ) -> "TestHttpResponse":
         """
         Use this for patch requests that have file uploads or
         that need some sort of multi-part content.  In the future
@@ -331,80 +340,150 @@ Output:
         with the Django test client, it deals with MULTIPART_CONTENT
         automatically, but not patch.)
         """
-        encoded = encode_multipart(BOUNDARY, info)
+        encoded = encode_multipart(BOUNDARY, dict(info))
         django_client = self.client  # see WRAPPER_COMMENT
-        self.set_http_headers(kwargs)
-        result = django_client.patch(url, encoded, content_type=MULTIPART_CONTENT, **kwargs)
-        self.validate_api_response_openapi(url, "patch", result, info, kwargs)
+        self.set_http_headers(extra, skip_user_agent)
+        result = django_client.patch(
+            url, encoded, content_type=MULTIPART_CONTENT, follow=follow, secure=secure, **extra
+        )
+        self.validate_api_response_openapi(
+            url,
+            "patch",
+            result,
+            info,
+            extra,
+            intentionally_undocumented=intentionally_undocumented,
+        )
         return result
 
     def json_patch(
-        self, url: str, payload: Dict[str, Any] = {}, **kwargs: ClientArg
-    ) -> HttpResponse:
+        self,
+        url: str,
+        payload: Mapping[str, Any] = {},
+        skip_user_agent: bool = False,
+        follow: bool = False,
+        secure: bool = False,
+        **extra: str,
+    ) -> "TestHttpResponse":
         data = orjson.dumps(payload)
         django_client = self.client  # see WRAPPER_COMMENT
-        self.set_http_headers(kwargs)
-        return django_client.patch(url, data=data, content_type="application/json", **kwargs)
+        self.set_http_headers(extra, skip_user_agent)
+        return django_client.patch(
+            url, data=data, content_type="application/json", follow=follow, secure=secure, **extra
+        )
 
     @instrument_url
-    def client_put(self, url: str, info: Dict[str, Any] = {}, **kwargs: ClientArg) -> HttpResponse:
+    def client_put(
+        self,
+        url: str,
+        info: Mapping[str, Any] = {},
+        skip_user_agent: bool = False,
+        follow: bool = False,
+        secure: bool = False,
+        **extra: str,
+    ) -> "TestHttpResponse":
         encoded = urllib.parse.urlencode(info)
+        extra["content_type"] = "application/x-www-form-urlencoded"
         django_client = self.client  # see WRAPPER_COMMENT
-        self.set_http_headers(kwargs)
-        return django_client.put(url, encoded, **kwargs)
+        self.set_http_headers(extra, skip_user_agent)
+        return django_client.put(url, encoded, follow=follow, secure=secure, **extra)
 
-    def json_put(self, url: str, payload: Dict[str, Any] = {}, **kwargs: ClientArg) -> HttpResponse:
+    def json_put(
+        self,
+        url: str,
+        payload: Mapping[str, Any] = {},
+        skip_user_agent: bool = False,
+        follow: bool = False,
+        secure: bool = False,
+        **extra: str,
+    ) -> "TestHttpResponse":
         data = orjson.dumps(payload)
         django_client = self.client  # see WRAPPER_COMMENT
-        self.set_http_headers(kwargs)
-        return django_client.put(url, data=data, content_type="application/json", **kwargs)
+        self.set_http_headers(extra, skip_user_agent)
+        return django_client.put(
+            url, data=data, content_type="application/json", follow=follow, secure=secure, **extra
+        )
 
     @instrument_url
     def client_delete(
-        self, url: str, info: Dict[str, Any] = {}, **kwargs: ClientArg
-    ) -> HttpResponse:
+        self,
+        url: str,
+        info: Mapping[str, Any] = {},
+        skip_user_agent: bool = False,
+        follow: bool = False,
+        secure: bool = False,
+        intentionally_undocumented: bool = False,
+        **extra: str,
+    ) -> "TestHttpResponse":
         encoded = urllib.parse.urlencode(info)
+        extra["content_type"] = "application/x-www-form-urlencoded"
         django_client = self.client  # see WRAPPER_COMMENT
-        self.set_http_headers(kwargs)
-        result = django_client.delete(url, encoded, **kwargs)
-        self.validate_api_response_openapi(url, "delete", result, info, kwargs)
+        self.set_http_headers(extra, skip_user_agent)
+        result = django_client.delete(url, encoded, follow=follow, secure=secure, **extra)
+        self.validate_api_response_openapi(
+            url,
+            "delete",
+            result,
+            info,
+            extra,
+            intentionally_undocumented=intentionally_undocumented,
+        )
         return result
 
     @instrument_url
     def client_options(
-        self, url: str, info: Dict[str, Any] = {}, **kwargs: ClientArg
-    ) -> HttpResponse:
-        encoded = urllib.parse.urlencode(info)
+        self,
+        url: str,
+        info: Mapping[str, Any] = {},
+        skip_user_agent: bool = False,
+        follow: bool = False,
+        secure: bool = False,
+        **extra: str,
+    ) -> "TestHttpResponse":
         django_client = self.client  # see WRAPPER_COMMENT
-        self.set_http_headers(kwargs)
-        return django_client.options(url, encoded, **kwargs)
+        self.set_http_headers(extra, skip_user_agent)
+        return django_client.options(url, dict(info), follow=follow, secure=secure, **extra)
 
     @instrument_url
-    def client_head(self, url: str, info: Dict[str, Any] = {}, **kwargs: ClientArg) -> HttpResponse:
-        encoded = urllib.parse.urlencode(info)
+    def client_head(
+        self,
+        url: str,
+        info: Mapping[str, Any] = {},
+        skip_user_agent: bool = False,
+        follow: bool = False,
+        secure: bool = False,
+        **extra: str,
+    ) -> "TestHttpResponse":
         django_client = self.client  # see WRAPPER_COMMENT
-        self.set_http_headers(kwargs)
-        return django_client.head(url, encoded, **kwargs)
+        self.set_http_headers(extra, skip_user_agent)
+        return django_client.head(url, info, follow=follow, secure=secure, **extra)
 
     @instrument_url
     def client_post(
         self,
         url: str,
         info: Union[str, bytes, Dict[str, Any]] = {},
-        **kwargs: ClientArg,
-    ) -> HttpResponse:
-        intentionally_undocumented = kwargs.pop("intentionally_undocumented", False)
-        assert isinstance(intentionally_undocumented, bool)
+        skip_user_agent: bool = False,
+        follow: bool = False,
+        secure: bool = False,
+        intentionally_undocumented: bool = False,
+        **extra: str,
+    ) -> "TestHttpResponse":
         django_client = self.client  # see WRAPPER_COMMENT
-        self.set_http_headers(kwargs)
-        result = django_client.post(url, info, **kwargs)
+        self.set_http_headers(extra, skip_user_agent)
+        result = django_client.post(url, info, follow=follow, secure=secure, **extra)
         self.validate_api_response_openapi(
-            url, "post", result, info, kwargs, intentionally_undocumented=intentionally_undocumented
+            url,
+            "post",
+            result,
+            info,
+            extra,
+            intentionally_undocumented=intentionally_undocumented,
         )
         return result
 
     @instrument_url
-    def client_post_request(self, url: str, req: Any) -> HttpResponse:
+    def client_post_request(self, url: str, req: Any) -> "TestHttpResponse":
         """
         We simulate hitting an endpoint here, although we
         actually resolve the URL manually and hit the view
@@ -418,14 +497,21 @@ Output:
         return match.func(req)
 
     @instrument_url
-    def client_get(self, url: str, info: Dict[str, Any] = {}, **kwargs: ClientArg) -> HttpResponse:
-        intentionally_undocumented = kwargs.pop("intentionally_undocumented", False)
-        assert isinstance(intentionally_undocumented, bool)
+    def client_get(
+        self,
+        url: str,
+        info: Mapping[str, Any] = {},
+        skip_user_agent: bool = False,
+        follow: bool = False,
+        secure: bool = False,
+        intentionally_undocumented: bool = False,
+        **extra: str,
+    ) -> "TestHttpResponse":
         django_client = self.client  # see WRAPPER_COMMENT
-        self.set_http_headers(kwargs)
-        result = django_client.get(url, info, **kwargs)
+        self.set_http_headers(extra, skip_user_agent)
+        result = django_client.get(url, info, follow=follow, secure=secure, **extra)
         self.validate_api_response_openapi(
-            url, "get", result, info, kwargs, intentionally_undocumented=intentionally_undocumented
+            url, "get", result, info, extra, intentionally_undocumented=intentionally_undocumented
         )
         return result
 
@@ -538,15 +624,17 @@ Output:
         result = self.client_post("/json/bots", bot_info)
         self.assert_json_error(result, assert_json_error_msg)
 
-    def _get_page_params(self, result: HttpResponse) -> Dict[str, Any]:
+    def _get_page_params(self, result: "TestHttpResponse") -> Dict[str, Any]:
         """Helper for parsing page_params after fetching the web app's home view."""
         doc = lxml.html.document_fromstring(result.content)
-        [div] = doc.xpath("//div[@id='page-params']")
+        div = cast(lxml.html.HtmlMixin, doc).get_element_by_id("page-params")
+        assert div is not None
         page_params_json = div.get("data-params")
+        assert page_params_json is not None
         page_params = orjson.loads(page_params_json)
         return page_params
 
-    def check_rendered_logged_in_app(self, result: HttpResponse) -> None:
+    def check_rendered_logged_in_app(self, result: "TestHttpResponse") -> None:
         """Verifies that a visit of / was a 200 that rendered page_params
         and not for a (logged-out) spectator."""
         self.assertEqual(result.status_code, 200)
@@ -557,12 +645,18 @@ Output:
         self.assertEqual(page_params["is_spectator"], False)
 
     def login_with_return(
-        self, email: str, password: Optional[str] = None, **kwargs: ClientArg
-    ) -> HttpResponse:
+        self, email: str, password: Optional[str] = None, **extra: str
+    ) -> "TestHttpResponse":
         if password is None:
             password = initial_password(email)
         result = self.client_post(
-            "/accounts/login/", {"username": email, "password": password}, **kwargs
+            "/accounts/login/",
+            {"username": email, "password": password},
+            skip_user_agent=False,
+            follow=False,
+            secure=False,
+            intentionally_undocumented=False,
+            **extra,
         )
         self.assertNotEqual(result.status_code, 500)
         return result
@@ -635,9 +729,13 @@ Output:
     def logout(self) -> None:
         self.client.logout()
 
-    def register(self, email: str, password: str, **kwargs: Any) -> HttpResponse:
-        self.client_post("/accounts/home/", {"email": email}, **kwargs)
-        return self.submit_reg_form_for_user(email, password, **kwargs)
+    def register(self, email: str, password: str, subdomain: str = DEFAULT_SUBDOMAIN) -> None:
+        response = self.client_post("/accounts/home/", {"email": email}, subdomain=subdomain)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], f"/accounts/send_confirm/{email}")
+        response = self.submit_reg_form_for_user(email, password, subdomain=subdomain)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], f"http://{Realm.host_for_subdomain(subdomain)}/")
 
     def submit_reg_form_for_user(
         self,
@@ -655,15 +753,15 @@ Output:
         realm_type: int = Realm.ORG_TYPES["business"]["id"],
         enable_marketing_emails: Optional[bool] = None,
         is_demo_organization: bool = False,
-        **kwargs: ClientArg,
-    ) -> HttpResponse:
+        **extra: str,
+    ) -> "TestHttpResponse":
         """
         Stage two of the two-step registration process.
 
         If things are working correctly the account should be fully
         registered after this call.
 
-        You can pass the HTTP_HOST variable for subdomains via kwargs.
+        You can pass the HTTP_HOST variable for subdomains via extra.
         """
         if full_name is None:
             full_name = email.replace("@", "_")
@@ -686,7 +784,15 @@ Output:
             payload["password"] = password
         if realm_in_root_domain is not None:
             payload["realm_in_root_domain"] = realm_in_root_domain
-        return self.client_post("/accounts/register/", payload, **kwargs)
+        return self.client_post(
+            "/accounts/register/",
+            payload,
+            skip_user_agent=False,
+            follow=False,
+            secure=False,
+            intentionally_undocumented=False,
+            **extra,
+        )
 
     def get_confirmation_url_from_outbox(
         self,
@@ -752,55 +858,97 @@ Output:
         return "Basic " + base64.b64encode(credentials.encode()).decode()
 
     def uuid_get(
-        self, identifier: str, url: str, info: Dict[str, Any] = {}, **kwargs: ClientArg
-    ) -> HttpResponse:
-        kwargs["HTTP_AUTHORIZATION"] = self.encode_uuid(identifier)
-        return self.client_get(url, info, **kwargs)
+        self, identifier: str, url: str, info: Mapping[str, Any] = {}, **extra: str
+    ) -> "TestHttpResponse":
+        extra["HTTP_AUTHORIZATION"] = self.encode_uuid(identifier)
+        return self.client_get(
+            url,
+            info,
+            skip_user_agent=False,
+            follow=False,
+            secure=False,
+            intentionally_undocumented=False,
+            **extra,
+        )
 
     def uuid_post(
         self,
         identifier: str,
         url: str,
         info: Union[str, bytes, Dict[str, Any]] = {},
-        **kwargs: ClientArg,
-    ) -> HttpResponse:
-        kwargs["HTTP_AUTHORIZATION"] = self.encode_uuid(identifier)
-        return self.client_post(url, info, **kwargs)
+        **extra: str,
+    ) -> "TestHttpResponse":
+        extra["HTTP_AUTHORIZATION"] = self.encode_uuid(identifier)
+        return self.client_post(
+            url,
+            info,
+            skip_user_agent=False,
+            follow=False,
+            secure=False,
+            intentionally_undocumented=False,
+            **extra,
+        )
 
     def api_get(
-        self, user: UserProfile, url: str, info: Dict[str, Any] = {}, **kwargs: ClientArg
-    ) -> HttpResponse:
-        kwargs["HTTP_AUTHORIZATION"] = self.encode_user(user)
-        return self.client_get(url, info, **kwargs)
+        self, user: UserProfile, url: str, info: Mapping[str, Any] = {}, **extra: str
+    ) -> "TestHttpResponse":
+        extra["HTTP_AUTHORIZATION"] = self.encode_user(user)
+        return self.client_get(
+            url,
+            info,
+            skip_user_agent=False,
+            follow=False,
+            secure=False,
+            intentionally_undocumented=False,
+            **extra,
+        )
 
     def api_post(
         self,
         user: UserProfile,
         url: str,
         info: Union[str, bytes, Dict[str, Any]] = {},
-        **kwargs: ClientArg,
-    ) -> HttpResponse:
-        kwargs["HTTP_AUTHORIZATION"] = self.encode_user(user)
-        return self.client_post(url, info, **kwargs)
+        intentionally_undocumented: bool = False,
+        **extra: str,
+    ) -> "TestHttpResponse":
+        extra["HTTP_AUTHORIZATION"] = self.encode_user(user)
+        return self.client_post(
+            url,
+            info,
+            skip_user_agent=False,
+            follow=False,
+            secure=False,
+            intentionally_undocumented=intentionally_undocumented,
+            **extra,
+        )
 
     def api_patch(
-        self,
-        user: UserProfile,
-        url: str,
-        info: Dict[str, Any] = {},
-        intentionally_undocumented: bool = False,
-        **kwargs: ClientArg,
-    ) -> HttpResponse:
-        kwargs["HTTP_AUTHORIZATION"] = self.encode_user(user)
+        self, user: UserProfile, url: str, info: Mapping[str, Any] = {}, **extra: str
+    ) -> "TestHttpResponse":
+        extra["HTTP_AUTHORIZATION"] = self.encode_user(user)
         return self.client_patch(
-            url, info, intentionally_undocumented=intentionally_undocumented, **kwargs
+            url,
+            info,
+            skip_user_agent=False,
+            follow=False,
+            secure=False,
+            intentionally_undocumented=False,
+            **extra,
         )
 
     def api_delete(
-        self, user: UserProfile, url: str, info: Dict[str, Any] = {}, **kwargs: ClientArg
-    ) -> HttpResponse:
-        kwargs["HTTP_AUTHORIZATION"] = self.encode_user(user)
-        return self.client_delete(url, info, **kwargs)
+        self, user: UserProfile, url: str, info: Mapping[str, Any] = {}, **extra: str
+    ) -> "TestHttpResponse":
+        extra["HTTP_AUTHORIZATION"] = self.encode_user(user)
+        return self.client_delete(
+            url,
+            info,
+            skip_user_agent=False,
+            follow=False,
+            secure=False,
+            intentionally_undocumented=False,
+            **extra,
+        )
 
     def get_streams(self, user_profile: UserProfile) -> List[str]:
         """
@@ -896,12 +1044,14 @@ Output:
         num_before: int = 100,
         num_after: int = 100,
         use_first_unread_anchor: bool = False,
+        include_anchor: bool = True,
     ) -> Dict[str, List[Dict[str, Any]]]:
         post_params = {
             "anchor": anchor,
             "num_before": num_before,
             "num_after": num_after,
             "use_first_unread_anchor": orjson.dumps(use_first_unread_anchor).decode(),
+            "include_anchor": orjson.dumps(include_anchor).decode(),
         }
         result = self.client_get("/json/messages", dict(post_params))
         data = result.json()
@@ -924,12 +1074,14 @@ Output:
 
         return [subscription.user_profile for subscription in subscriptions]
 
-    def assert_streaming_content(self, response: HttpResponse, result: bytes) -> None:
+    def assert_streaming_content(self, response: "TestHttpResponse", result: bytes) -> None:
         assert isinstance(response, StreamingHttpResponse)
         data = b"".join(response.streaming_content)
         self.assertEqual(result, data)
 
-    def assert_json_success(self, result: HttpResponse) -> Dict[str, Any]:
+    def assert_json_success(
+        self, result: Union["TestHttpResponse", HttpResponse]
+    ) -> Dict[str, Any]:
         """
         Successful POSTs return a 200 and JSON of the form {"result": "success",
         "msg": ""}.
@@ -946,7 +1098,7 @@ Output:
         self.assertNotEqual(json["msg"], "Error parsing JSON in response!")
         return json
 
-    def get_json_error(self, result: HttpResponse, status_code: int = 400) -> str:
+    def get_json_error(self, result: "TestHttpResponse", status_code: int = 400) -> str:
         try:
             json = orjson.loads(result.content)
         except orjson.JSONDecodeError:  # nocoverage
@@ -955,7 +1107,9 @@ Output:
         self.assertEqual(json.get("result"), "error")
         return json["msg"]
 
-    def assert_json_error(self, result: HttpResponse, msg: str, status_code: int = 400) -> None:
+    def assert_json_error(
+        self, result: "TestHttpResponse", msg: str, status_code: int = 400
+    ) -> None:
         """
         Invalid POSTs return an error status code and JSON of the form
         {"result": "error", "msg": "reason"}.
@@ -971,21 +1125,55 @@ Output:
             print(f"\nexpected length: {count}\nactual length: {actual_count}")
             raise AssertionError(f"{str(type(items))} is of unexpected size!")
 
+    @contextmanager
+    def assert_database_query_count(
+        self, count: int, include_savepoints: bool = False, keep_cache_warm: bool = False
+    ) -> Iterator[None]:
+        """
+        This captures the queries executed and check the total number of queries.
+        Useful when minimizing unnecessary roundtrips to the database is important.
+        """
+        with queries_captured(
+            include_savepoints=include_savepoints, keep_cache_warm=keep_cache_warm
+        ) as queries:
+            yield
+        actual_count = len(queries)
+        if actual_count != count:  # nocoverage
+            print("\nITEMS:\n")
+            for index, query in enumerate(queries):
+                print(f"#{index + 1}\nsql: {str(query['sql'])}\ntime: {query['time']}\n")
+            print(f"expected count: {count}\nactual count: {actual_count}")
+            raise AssertionError(
+                f"""
+    {count} queries expected, got {actual_count}.
+    This is a performance-critical code path, where we check
+    the number of database queries used in order to avoid accidental regressions.
+    If an unnecessary query was removed or the new query is necessary, you should
+    update this test, and explain what queries we added/removed in the pull request
+    and why any new queries can't be avoided."""
+            )
+
     def assert_json_error_contains(
-        self, result: HttpResponse, msg_substring: str, status_code: int = 400
+        self, result: "TestHttpResponse", msg_substring: str, status_code: int = 400
     ) -> None:
         self.assertIn(msg_substring, self.get_json_error(result, status_code=status_code))
 
-    def assert_in_response(self, substring: str, response: HttpResponse) -> None:
+    def assert_in_response(
+        self, substring: str, response: Union["TestHttpResponse", HttpResponse]
+    ) -> None:
         self.assertIn(substring, response.content.decode())
 
-    def assert_in_success_response(self, substrings: List[str], response: HttpResponse) -> None:
+    def assert_in_success_response(
+        self, substrings: List[str], response: Union["TestHttpResponse", HttpResponse]
+    ) -> None:
         self.assertEqual(response.status_code, 200)
         decoded = response.content.decode()
         for substring in substrings:
             self.assertIn(substring, decoded)
 
-    def assert_not_in_success_response(self, substrings: List[str], response: HttpResponse) -> None:
+    def assert_not_in_success_response(
+        self, substrings: List[str], response: Union["TestHttpResponse", HttpResponse]
+    ) -> None:
         self.assertEqual(response.status_code, 200)
         decoded = response.content.decode()
         for substring in substrings:
@@ -1031,6 +1219,9 @@ Output:
         history_public_to_subscribers = get_default_value_for_history_public_to_subscribers(
             realm, invite_only, history_public_to_subscribers
         )
+        administrators_user_group = UserGroup.objects.get(
+            name=UserGroup.ADMINISTRATORS_GROUP_NAME, realm=realm, is_system_group=True
+        )
 
         try:
             stream = Stream.objects.create(
@@ -1039,6 +1230,7 @@ Output:
                 invite_only=invite_only,
                 is_web_public=is_web_public,
                 history_public_to_subscribers=history_public_to_subscribers,
+                can_remove_subscribers_group=administrators_user_group,
             )
         except IntegrityError:  # nocoverage -- this is for bugs in the tests
             raise Exception(
@@ -1085,19 +1277,25 @@ Output:
         self,
         user: UserProfile,
         streams: Iterable[str],
-        extra_post_data: Dict[str, Any] = {},
+        extra_post_data: Mapping[str, Any] = {},
         invite_only: bool = False,
         is_web_public: bool = False,
         allow_fail: bool = False,
-        **kwargs: ClientArg,
-    ) -> HttpResponse:
+        **extra: str,
+    ) -> "TestHttpResponse":
         post_data = {
             "subscriptions": orjson.dumps([{"name": stream} for stream in streams]).decode(),
             "is_web_public": orjson.dumps(is_web_public).decode(),
             "invite_only": orjson.dumps(invite_only).decode(),
         }
         post_data.update(extra_post_data)
-        result = self.api_post(user, "/api/v1/users/me/subscriptions", post_data, **kwargs)
+        result = self.api_post(
+            user,
+            "/api/v1/users/me/subscriptions",
+            post_data,
+            intentionally_undocumented=False,
+            **extra,
+        )
         if not allow_fail:
             self.assert_json_success(result)
         return result
@@ -1122,7 +1320,7 @@ Output:
         user_profile: UserProfile,
         url: str,
         payload: Union[str, Dict[str, Any]],
-        **post_params: ClientArg,
+        **extra: str,
     ) -> Message:
         """
         Send a webhook payload to the server, and verify that the
@@ -1145,7 +1343,15 @@ Output:
 
         prior_msg = self.get_last_message()
 
-        result = self.client_post(url, payload, **post_params)
+        result = self.client_post(
+            url,
+            payload,
+            skip_user_agent=False,
+            follow=False,
+            secure=False,
+            intentionally_undocumented=False,
+            **extra,
+        )
         self.assert_json_success(result)
 
         # Check the correct message was sent
@@ -1485,36 +1691,60 @@ Output:
         """
         DB tables that refer to RealmEmoji use int(emoji_code) as the
         foreign key. Those tables tend to de-normalize emoji_name due
-        to our inherintance-based setup. This helper makes sure those
+        to our inheritance-based setup. This helper makes sure those
         invariants are intact, which is particularly tricky during
         the import/export process (or during conversions from things
         like Slack/RocketChat/MatterMost/etc.).
         """
         dct = {}
 
-        for row in RealmEmoji.objects.all():
-            dct[row.id] = row
+        for realm_emoji in RealmEmoji.objects.all():
+            dct[realm_emoji.id] = realm_emoji
 
         if not dct:
             raise AssertionError("test needs RealmEmoji rows")
 
         count = 0
-        for row in Reaction.objects.filter(reaction_type=Reaction.REALM_EMOJI):
-            realm_emoji_id = int(row.emoji_code)
+        for reaction in Reaction.objects.filter(reaction_type=Reaction.REALM_EMOJI):
+            realm_emoji_id = int(reaction.emoji_code)
             assert realm_emoji_id in dct
-            self.assertEqual(dct[realm_emoji_id].name, row.emoji_name)
-            self.assertEqual(dct[realm_emoji_id].realm_id, row.user_profile.realm_id)
+            self.assertEqual(dct[realm_emoji_id].name, reaction.emoji_name)
+            self.assertEqual(dct[realm_emoji_id].realm_id, reaction.user_profile.realm_id)
             count += 1
 
-        for row in UserStatus.objects.filter(reaction_type=UserStatus.REALM_EMOJI):
-            realm_emoji_id = int(row.emoji_code)
+        for user_status in UserStatus.objects.filter(reaction_type=UserStatus.REALM_EMOJI):
+            realm_emoji_id = int(user_status.emoji_code)
             assert realm_emoji_id in dct
-            self.assertEqual(dct[realm_emoji_id].name, row.emoji_name)
-            self.assertEqual(dct[realm_emoji_id].realm_id, row.user_profile.realm_id)
+            self.assertEqual(dct[realm_emoji_id].name, user_status.emoji_name)
+            self.assertEqual(dct[realm_emoji_id].realm_id, user_status.user_profile.realm_id)
             count += 1
 
         if count == 0:
             raise AssertionError("test is meaningless without any pertinent rows")
+
+    def check_user_added_in_system_group(self, user: UserProfile) -> None:
+        user_group = get_system_user_group_for_user(user)
+        self.assertTrue(
+            UserGroupMembership.objects.filter(user_profile=user, user_group=user_group).exists()
+        )
+
+    @contextmanager
+    def soft_deactivate_and_check_long_term_idle(
+        self, user: UserProfile, expected: bool
+    ) -> Iterator[None]:
+        """
+        Ensure that the user is soft deactivated (long term idle), and check if the user
+        has been reactivated when exiting the context with an assertion
+        """
+        if not user.long_term_idle:
+            do_soft_deactivate_users([user])
+            self.assertTrue(user.long_term_idle)
+        try:
+            yield
+        finally:
+            # Prevent from using the old user object
+            user.refresh_from_db()
+            self.assertEqual(user.long_term_idle, expected)
 
 
 class WebhookTestCase(ZulipTestCase):
@@ -1582,7 +1812,7 @@ class WebhookTestCase(ZulipTestCase):
                     complete_event_type is not None
                     and all_event_types is not None
                     and complete_event_type not in all_event_types
-                ):
+                ):  # nocoverage
                     raise Exception(
                         f"""
 Error: This test triggered a message using the event "{complete_event_type}", which was not properly
@@ -1609,11 +1839,16 @@ You can fix this by adding "{complete_event_type}" to ALL_EVENT_TYPES for this w
         expected_message: Optional[str] = None,
         content_type: Optional[str] = "application/json",
         expect_noop: bool = False,
-        **kwargs: ClientArg,
-    ) -> HttpResponse:
-        kwargs["HTTP_AUTHORIZATION"] = self.encode_user(user)
-        return self.check_webhook(
-            fixture_name, expected_topic, expected_message, content_type, expect_noop, **kwargs
+        **extra: str,
+    ) -> None:
+        extra["HTTP_AUTHORIZATION"] = self.encode_user(user)
+        self.check_webhook(
+            fixture_name,
+            expected_topic,
+            expected_message,
+            content_type,
+            expect_noop,
+            **extra,
         )
 
     def check_webhook(
@@ -1623,7 +1858,7 @@ You can fix this by adding "{complete_event_type}" to ALL_EVENT_TYPES for this w
         expected_message: Optional[str] = None,
         content_type: Optional[str] = "application/json",
         expect_noop: bool = False,
-        **kwargs: ClientArg,
+        **extra: str,
     ) -> None:
         """
         check_webhook is the main way to test "normal" webhooks that
@@ -1638,7 +1873,7 @@ You can fix this by adding "{complete_event_type}" to ALL_EVENT_TYPES for this w
             expected_message: content
 
         We simulate the delivery of the payload with `content_type`,
-        and you can pass other headers via `kwargs`.
+        and you can pass other headers via `extra`.
 
         For the rare cases of webhooks actually sending private messages,
         see send_and_test_private_message.
@@ -1650,17 +1885,17 @@ You can fix this by adding "{complete_event_type}" to ALL_EVENT_TYPES for this w
 
         payload = self.get_payload(fixture_name)
         if content_type is not None:
-            kwargs["content_type"] = content_type
+            extra["content_type"] = content_type
         if self.WEBHOOK_DIR_NAME is not None:
             headers = get_fixture_http_headers(self.WEBHOOK_DIR_NAME, fixture_name)
             headers = standardize_headers(headers)
-            kwargs.update(headers)
+            extra.update(headers)
         try:
             msg = self.send_webhook_payload(
                 self.test_user,
                 self.url,
                 payload,
-                **kwargs,
+                **extra,
             )
         except EmptyResponseError:
             if expect_noop:
@@ -1705,7 +1940,7 @@ one or more new messages.
         content_type: str = "application/json",
         *,
         sender: Optional[UserProfile] = None,
-        **kwargs: ClientArg,
+        **extra: str,
     ) -> Message:
         """
         For the rare cases that you are testing a webhook that sends
@@ -1715,12 +1950,12 @@ one or more new messages.
         check_webhook.
         """
         payload = self.get_payload(fixture_name)
-        kwargs["content_type"] = content_type
+        extra["content_type"] = content_type
 
         if self.WEBHOOK_DIR_NAME is not None:
             headers = get_fixture_http_headers(self.WEBHOOK_DIR_NAME, fixture_name)
             headers = standardize_headers(headers)
-            kwargs.update(headers)
+            extra.update(headers)
 
         if sender is None:
             sender = self.test_user
@@ -1729,7 +1964,7 @@ one or more new messages.
             sender,
             self.url,
             payload,
-            **kwargs,
+            **extra,
         )
         self.assertEqual(msg.content, expected_message)
 
@@ -1809,3 +2044,11 @@ class MigrationsTestCase(ZulipTestCase):  # nocoverage
 
     def setUpBeforeMigration(self, apps: StateApps) -> None:
         pass  # nocoverage
+
+
+def get_topic_messages(user_profile: UserProfile, stream: Stream, topic_name: str) -> List[Message]:
+    query = UserMessage.objects.filter(
+        user_profile=user_profile,
+        message__recipient=stream.recipient,
+    ).order_by("id")
+    return [um.message for um in filter_by_topic_name_via_message(query, topic_name)]

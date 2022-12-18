@@ -9,11 +9,13 @@
 * [Add an emoji reaction](/api/add-reaction)
 * [Remove an emoji reaction](/api/remove-reaction)
 * [Render a message](/api/render-message)
-* [Get a message's raw Markdown](/api/get-raw-message)
+* [Fetch a single message](/api/get-message)
 * [Check if messages match narrow](/api/check-messages-match-narrow)
 * [Get a message's edit history](/api/get-message-history)
 * [Update personal message flags](/api/update-message-flags)
+* [Update personal message flags for narrow](/api/update-message-flags-for-narrow)
 * [Mark messages as read in bulk](/api/mark-all-as-read)
+* [Get a message's read receipts](/api/get-read-receipts)
 
 #### Drafts
 
@@ -31,6 +33,7 @@
 * [Get all subscribers](/api/get-subscribers)
 * [Update subscription settings](/api/update-subscription-settings)
 * [Get all streams](/api/get-streams)
+* [Get a stream by ID](/api/get-stream-by-id)
 * [Get stream ID](/api/get-stream-id)
 * [Create a stream](/api/create-stream)
 * [Update a stream](/api/update-stream)
@@ -38,6 +41,8 @@
 * [Get topics in a stream](/api/get-stream-topics)
 * [Topic muting](/api/mute-topic)
 * [Delete a topic](/api/delete-topic)
+* [Add a default stream](/api/add-default-stream)
+* [Remove a default stream](/api/remove-default-stream)
 
 #### Users
 
@@ -53,6 +58,7 @@
 * [Deactivate own user](/api/deactivate-own-user)
 * [Set "typing" status](/api/set-typing-status)
 * [Get user presence](/api/get-user-presence)
+* [Get presence of all users](/api/get-presence)
 * [Get attachments](/api/get-attachments)
 * [Delete an attachment](/api/remove-attachment)
 * [Update settings](/api/update-settings)
@@ -61,8 +67,15 @@
 * [Update a user group](/api/update-user-group)
 * [Delete a user group](/api/remove-user-group)
 * [Update user group members](/api/update-user-group-members)
+* [Update user group subgroups](/api/update-user-group-subgroups)
+* [Get user group membership status](/api/get-is-user-group-member)
+* [Get user group members](/api/get-user-group-members)
+* [Get subgroups of user group](/api/get-user-group-subgroups)
 * [Mute a user](/api/mute-user)
 * [Unmute a user](/api/unmute-user)
+* [Get all alert words](/api/get-alert-words)
+* [Add alert words](/api/add-alert-words)
+* [Remove alert words](/api/remove-alert-words)
 
 #### Server & organizations
 

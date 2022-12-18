@@ -16,7 +16,7 @@ import * as settings_playgrounds from "./settings_playgrounds";
 import * as settings_profile_fields from "./settings_profile_fields";
 import * as settings_realm_user_settings_defaults from "./settings_realm_user_settings_defaults";
 import * as settings_streams from "./settings_streams";
-import * as settings_user_groups from "./settings_user_groups";
+import * as settings_user_groups from "./settings_user_groups_legacy";
 import * as settings_users from "./settings_users";
 
 const load_func_dict = new Map(); // group -> function
@@ -115,5 +115,6 @@ export function reset_sections() {
     settings_user_groups.reset();
     settings_muted_topics.reset();
     settings_muted_users.reset();
+    alert_words_ui.reset();
     // settings_users doesn't need a reset()
 }

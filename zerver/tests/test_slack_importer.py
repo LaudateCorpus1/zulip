@@ -25,6 +25,7 @@ from zerver.data_import.slack import (
     AddedChannelsT,
     AddedMPIMsT,
     DMMembersT,
+    SlackBotEmail,
     channel_message_to_zerver_message,
     channels_to_zerver_stream,
     convert_slack_workspace_messages,
@@ -38,6 +39,7 @@ from zerver.data_import.slack import (
     get_subscription,
     get_user_timezone,
     process_message_files,
+    slack_emoji_name_to_codepoint,
     slack_workspace_to_realm,
     users_to_zerver_userprofile,
 )
@@ -45,7 +47,7 @@ from zerver.lib.import_realm import do_import_realm
 from zerver.lib.test_classes import ZulipTestCase
 from zerver.lib.test_helpers import read_test_image_file
 from zerver.lib.topic import EXPORT_TOPIC_NAME
-from zerver.models import Realm, RealmAuditLog, Recipient, UserProfile, get_realm
+from zerver.models import Message, Realm, RealmAuditLog, Recipient, UserProfile, get_realm
 
 
 def remove_folder(path: str) -> None:
@@ -392,7 +394,7 @@ class SlackImporter(ZulipTestCase):
                 "is_bot": False,
                 "is_mirror_dummy": False,
                 "profile": {
-                    "email": "geroge@yahoo.com",
+                    "email": "george@yahoo.com",
                     "avatar_hash": "hash",
                     "image_32": "https://secure.gravatar.com/avatar/random5.png",
                 },
@@ -683,6 +685,7 @@ class SlackImporter(ZulipTestCase):
         self.assertEqual(zerver_stream[0]["deactivated"], True)
         self.assertEqual(zerver_stream[0]["description"], "no purpose")
         self.assertEqual(zerver_stream[0]["invite_only"], False)
+        self.assertEqual(zerver_stream[0]["history_public_to_subscribers"], True)
         self.assertEqual(zerver_stream[0]["realm"], realm_id)
         self.assertEqual(zerver_stream[2]["id"], test_added_channels[zerver_stream[2]["name"]][1])
 
@@ -1105,7 +1108,9 @@ class SlackImporter(ZulipTestCase):
         ]
         mock_requests_get.return_value.raw = BytesIO(read_test_image_file("img.png"))
 
-        with self.assertLogs(level="INFO"):
+        with self.assertLogs(level="INFO"), self.settings(EXTERNAL_HOST="zulip.example.com"):
+            # We need to mock EXTERNAL_HOST to be a valid domain because Slack's importer
+            # uses it to generate email addresses for users without an email specified.
             do_convert_data(test_slack_zip_file, output_dir, token)
 
         self.assertTrue(os.path.exists(output_dir))
@@ -1142,6 +1147,8 @@ class SlackImporter(ZulipTestCase):
                 RealmAuditLog.REALM_CREATED,
             },
         )
+
+        self.assertEqual(Message.objects.filter(realm=realm).count(), 82)
 
         Realm.objects.filter(name=test_realm_subdomain).delete()
 
@@ -1213,3 +1220,44 @@ class SlackImporter(ZulipTestCase):
         self.assertEqual(uploads_list[0]["s3_path"], image_path)
         self.assertEqual(uploads_list[0]["realm_id"], realm_id)
         self.assertEqual(uploads_list[0]["user_profile_email"], "alice@example.com")
+
+    def test_bot_duplicates(self) -> None:
+        self.assertEqual(
+            SlackBotEmail.get_email(
+                {"real_name_normalized": "Real Bot", "bot_id": "foo"}, "example.com"
+            ),
+            "real-bot@example.com",
+        )
+
+        # SlackBotEmail keeps state -- doing it again appends a "2", "3", etc
+        self.assertEqual(
+            SlackBotEmail.get_email(
+                {"real_name_normalized": "Real Bot", "bot_id": "bar"}, "example.com"
+            ),
+            "real-bot-2@example.com",
+        )
+        self.assertEqual(
+            SlackBotEmail.get_email(
+                {"real_name_normalized": "Real Bot", "bot_id": "baz"}, "example.com"
+            ),
+            "real-bot-3@example.com",
+        )
+
+        # But caches based on the bot_id
+        self.assertEqual(
+            SlackBotEmail.get_email(
+                {"real_name_normalized": "Real Bot", "bot_id": "foo"}, "example.com"
+            ),
+            "real-bot@example.com",
+        )
+
+        self.assertEqual(
+            SlackBotEmail.get_email({"first_name": "Other Name", "bot_id": "other"}, "example.com"),
+            "othername-bot@example.com",
+        )
+
+    def test_slack_emoji_name_to_codepoint(self) -> None:
+        self.assertEqual(slack_emoji_name_to_codepoint["thinking_face"], "1f914")
+        self.assertEqual(slack_emoji_name_to_codepoint["tophat"], "1f3a9")
+        self.assertEqual(slack_emoji_name_to_codepoint["dog2"], "1f415")
+        self.assertEqual(slack_emoji_name_to_codepoint["dog"], "1f436")

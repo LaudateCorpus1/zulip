@@ -43,7 +43,7 @@ run_test("get_editability", ({override}) => {
     assert.equal(
         get_editability({
             sent_by_me: true,
-            local_id: "25",
+            locally_echoed: true,
         }),
         editability_types.NO,
     );
@@ -59,7 +59,7 @@ run_test("get_editability", ({override}) => {
 
     page_params.realm_allow_message_editing = true;
     // Limit of 0 means no time limit on editing messages
-    page_params.realm_message_content_edit_limit_seconds = 0;
+    page_params.realm_message_content_edit_limit_seconds = null;
     assert.equal(get_editability(message), editability_types.FULL);
 
     page_params.realm_message_content_edit_limit_seconds = 10;
@@ -77,9 +77,9 @@ run_test("get_editability", ({override}) => {
     assert.equal(get_editability(message, 45), editability_types.TOPIC_ONLY);
     delete message.submessages;
     message.type = "private";
-    assert.equal(get_editability(message, 45), editability_types.NO_LONGER);
+    assert.equal(get_editability(message, 45), editability_types.NO);
     // If we don't pass a second argument, treat it as 0
-    assert.equal(get_editability(message), editability_types.NO_LONGER);
+    assert.equal(get_editability(message), editability_types.NO);
 
     message = {
         sent_by_me: false,
@@ -88,27 +88,47 @@ run_test("get_editability", ({override}) => {
     page_params.realm_edit_topic_policy =
         settings_config.common_message_policy_values.by_everyone.code;
     page_params.realm_allow_message_editing = true;
-    page_params.realm_message_content_edit_limit_seconds = 0;
+    page_params.realm_message_content_edit_limit_seconds = null;
     page_params.realm_community_topic_editing_limit_seconds = 259200;
     page_params.is_admin = false;
     message.timestamp = current_timestamp - 60;
     assert.equal(get_editability(message), editability_types.TOPIC_ONLY);
+});
 
-    // Test `message_edit.is_topic_editable()`
-    assert.equal(message_edit.is_topic_editable(message), true);
+run_test("is_topic_editable", ({override}) => {
+    const now = new Date();
+    const current_timestamp = now / 1000;
 
-    message.sent_by_me = true;
-    override(settings_data, "user_can_edit_topic_of_any_message", () => false);
-    assert.equal(message_edit.is_topic_editable(message), true);
+    const message = {
+        sent_by_me: true,
+        locally_echoed: true,
+    };
+    page_params.realm_allow_message_editing = true;
 
-    message.sent_by_me = false;
     assert.equal(message_edit.is_topic_editable(message), false);
+
+    message.locally_echoed = false;
+    message.failed_request = true;
+    assert.equal(message_edit.is_topic_editable(message), false);
+
+    message.failed_request = false;
+    assert.equal(message_edit.is_topic_editable(message), true);
 
     message.sent_by_me = false;
     page_params.is_admin = true;
     assert.equal(message_edit.is_topic_editable(message), true);
 
     page_params.is_admin = false;
+    message.topic = "translated: (no topic)";
+    assert.equal(message_edit.is_topic_editable(message), true);
+
+    message.topic = "test topic";
+    override(settings_data, "user_can_edit_topic_of_any_message", () => false);
+    assert.equal(message_edit.is_topic_editable(message), false);
+
+    page_params.realm_community_topic_editing_limit_seconds = 259200;
+    message.timestamp = current_timestamp - 60;
+
     override(settings_data, "user_can_edit_topic_of_any_message", () => true);
     assert.equal(message_edit.is_topic_editable(message), true);
 
@@ -157,4 +177,115 @@ run_test("get_deletability", ({override}) => {
 
     message.timestamp = current_timestamp - 60;
     assert.equal(message_edit.get_deletability(message), false);
+});
+
+run_test("stream_and_topic_exist_in_edit_history", () => {
+    // A message with no edit history should always return false;
+    // the message's current stream_id and topic are not compared
+    // to the stream_id and topic parameters.
+    const message_no_edits = {
+        stream_id: 1,
+        topic: "topic match",
+    };
+    assert.equal(
+        message_edit.stream_and_topic_exist_in_edit_history(message_no_edits, 2, "no match"),
+        false,
+    );
+    assert.equal(
+        message_edit.stream_and_topic_exist_in_edit_history(message_no_edits, 1, "topic match"),
+        false,
+    );
+
+    // A non-stream message (object has no stream_id or topic)
+    // with content edit history, should return false.
+    const private_message = {
+        edit_history: [{prev_content: "content edit to PM"}],
+    };
+    assert.equal(
+        message_edit.stream_and_topic_exist_in_edit_history(private_message, 1, "topic match"),
+        false,
+    );
+
+    // A stream message with only content edits should return false,
+    // even if the message's current stream_id and topic are a match.
+    const message_content_edit = {
+        stream_id: 1,
+        topic: "topic match",
+        edit_history: [{prev_content: "content edit"}],
+    };
+    assert.equal(
+        message_edit.stream_and_topic_exist_in_edit_history(message_content_edit, 1, "topic match"),
+        false,
+    );
+
+    const message_stream_edit = {
+        stream_id: 6,
+        topic: "topic match",
+        edit_history: [{stream: 6, prev_stream: 1}],
+    };
+    assert.equal(
+        message_edit.stream_and_topic_exist_in_edit_history(message_stream_edit, 2, "topic match"),
+        false,
+    );
+    assert.equal(
+        message_edit.stream_and_topic_exist_in_edit_history(message_stream_edit, 1, "topic match"),
+        true,
+    );
+
+    const message_topic_edit = {
+        stream_id: 1,
+        topic: "final topic",
+        edit_history: [{topic: "final topic", prev_topic: "topic match"}],
+    };
+    assert.equal(
+        message_edit.stream_and_topic_exist_in_edit_history(message_topic_edit, 1, "no match"),
+        false,
+    );
+    assert.equal(
+        message_edit.stream_and_topic_exist_in_edit_history(message_topic_edit, 1, "topic match"),
+        true,
+    );
+
+    const message_many_edits = {
+        stream_id: 6,
+        topic: "final topic",
+        edit_history: [
+            {stream: 6, prev_stream: 5},
+            {prev_content: "content only edit"},
+            {topic: "final topic", prev_topic: "topic match"},
+            {stream: 5, prev_stream: 1},
+        ],
+    };
+    assert.equal(
+        message_edit.stream_and_topic_exist_in_edit_history(message_many_edits, 1, "no match"),
+        false,
+    );
+    assert.equal(
+        message_edit.stream_and_topic_exist_in_edit_history(message_many_edits, 2, "topic match"),
+        false,
+    );
+    assert.equal(
+        message_edit.stream_and_topic_exist_in_edit_history(message_many_edits, 1, "topic match"),
+        true,
+    );
+
+    // When the topic and stream_id exist in the message's edit history
+    // individually, but not together in a historical state, it should return false.
+    const message_no_historical_match = {
+        stream_id: 6,
+        topic: "final topic",
+        edit_history: [
+            {stream: 6, prev_stream: 1}, // stream matches, topic does not
+            {stream: 1, prev_stream: 5}, // neither match
+            {topic: "final topic", prev_topic: "topic match"}, // topic matches, stream does not
+        ],
+    };
+    assert.equal(
+        message_edit.stream_and_topic_exist_in_edit_history(
+            message_no_historical_match,
+            1,
+            "topic match",
+        ),
+        false,
+    );
 });

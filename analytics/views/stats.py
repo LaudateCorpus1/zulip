@@ -1,7 +1,7 @@
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Type, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
 from django.conf import settings
 from django.db.models.query import QuerySet
@@ -55,10 +55,18 @@ def render_stats(
     analytics_ready: bool = True,
 ) -> HttpResponse:
     assert request.user.is_authenticated
+
+    # Same query to get guest user count as in get_seat_count in corporate/lib/stripe.py.
+    guest_users = UserProfile.objects.filter(
+        realm=request.user.realm, is_active=True, is_bot=False, role=UserProfile.ROLE_GUEST
+    ).count()
+
     page_params = dict(
         data_url_suffix=data_url_suffix,
         for_installation=for_installation,
         remote=remote,
+        upload_space_used=request.user.realm.currently_used_upload_space_bytes(),
+        guest_users=guest_users,
     )
 
     request_language = get_and_set_request_language(
@@ -124,20 +132,21 @@ def stats_for_remote_realm(
 @require_server_admin_api
 @has_request_variables
 def get_chart_data_for_realm(
-    request: HttpRequest, user_profile: UserProfile, realm_str: str, **kwargs: Any
+    request: HttpRequest, /, user_profile: UserProfile, realm_str: str, **kwargs: Any
 ) -> HttpResponse:
     try:
         realm = get_realm(realm_str)
     except Realm.DoesNotExist:
         raise JsonableError(_("Invalid organization"))
 
-    return get_chart_data(request=request, user_profile=user_profile, realm=realm, **kwargs)
+    return get_chart_data(request, user_profile, realm=realm, **kwargs)
 
 
 @require_server_admin_api
 @has_request_variables
 def get_chart_data_for_remote_realm(
     request: HttpRequest,
+    /,
     user_profile: UserProfile,
     remote_server_id: int,
     remote_realm_id: int,
@@ -146,8 +155,8 @@ def get_chart_data_for_remote_realm(
     assert settings.ZILENCER_ENABLED
     server = RemoteZulipServer.objects.get(id=remote_server_id)
     return get_chart_data(
-        request=request,
-        user_profile=user_profile,
+        request,
+        user_profile,
         server=server,
         remote=True,
         remote_realm_id=int(remote_realm_id),
@@ -176,17 +185,16 @@ def stats_for_remote_installation(request: HttpRequest, remote_server_id: int) -
 @require_server_admin_api
 @has_request_variables
 def get_chart_data_for_installation(
-    request: HttpRequest, user_profile: UserProfile, chart_name: str = REQ(), **kwargs: Any
+    request: HttpRequest, /, user_profile: UserProfile, chart_name: str = REQ(), **kwargs: Any
 ) -> HttpResponse:
-    return get_chart_data(
-        request=request, user_profile=user_profile, for_installation=True, **kwargs
-    )
+    return get_chart_data(request, user_profile, for_installation=True, **kwargs)
 
 
 @require_server_admin_api
 @has_request_variables
 def get_chart_data_for_remote_installation(
     request: HttpRequest,
+    /,
     user_profile: UserProfile,
     remote_server_id: int,
     chart_name: str = REQ(),
@@ -195,8 +203,8 @@ def get_chart_data_for_remote_installation(
     assert settings.ZILENCER_ENABLED
     server = RemoteZulipServer.objects.get(id=remote_server_id)
     return get_chart_data(
-        request=request,
-        user_profile=user_profile,
+        request,
+        user_profile,
         for_installation=True,
         remote=True,
         server=server,
@@ -410,7 +418,7 @@ def get_chart_data(
         data["display_order"] = labels_sort_function(data)
     else:
         data["display_order"] = None
-    return json_success(data=data)
+    return json_success(request, data=data)
 
 
 def sort_by_totals(value_arrays: Dict[str, List[int]]) -> List[str]:
@@ -436,30 +444,35 @@ def sort_client_labels(data: Dict[str, Dict[str, List[int]]]) -> List[str]:
     return [label for label, sort_value in sorted(label_sort_values.items(), key=lambda x: x[1])]
 
 
-def table_filtered_to_id(table: Type[BaseCount], key_id: int) -> QuerySet:
+CountT = TypeVar("CountT", bound=BaseCount)
+
+
+def table_filtered_to_id(table: Type[CountT], key_id: int) -> QuerySet[CountT]:
     if table == RealmCount:
-        return RealmCount.objects.filter(realm_id=key_id)
+        return table.objects.filter(realm_id=key_id)
     elif table == UserCount:
-        return UserCount.objects.filter(user_id=key_id)
+        return table.objects.filter(user_id=key_id)
     elif table == StreamCount:
-        return StreamCount.objects.filter(stream_id=key_id)
+        return table.objects.filter(stream_id=key_id)
     elif table == InstallationCount:
-        return InstallationCount.objects.all()
+        return table.objects.all()
     elif settings.ZILENCER_ENABLED and table == RemoteInstallationCount:
-        return RemoteInstallationCount.objects.filter(server_id=key_id)
+        return table.objects.filter(server_id=key_id)
     elif settings.ZILENCER_ENABLED and table == RemoteRealmCount:
-        return RemoteRealmCount.objects.filter(realm_id=key_id)
+        return table.objects.filter(realm_id=key_id)
     else:
         raise AssertionError(f"Unknown table: {table}")
 
 
 def client_label_map(name: str) -> str:
     if name == "website":
-        return "Website"
+        return "Web app"
     if name.startswith("desktop app"):
         return "Old desktop app"
     if name == "ZulipElectron":
         return "Desktop app"
+    if name == "ZulipTerminal":
+        return "Terminal app"
     if name == "ZulipAndroid":
         return "Old Android app"
     if name == "ZulipiOS":

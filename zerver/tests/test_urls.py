@@ -1,11 +1,17 @@
 import importlib
 import os
-from typing import List, Optional
+from typing import List
 
 import django.urls.resolvers
 from django.test import Client
 
 from zerver.lib.test_classes import ZulipTestCase
+from zerver.lib.url_redirects import (
+    API_DOCUMENTATION_REDIRECTS,
+    HELP_DOCUMENTATION_REDIRECTS,
+    LANDING_PAGE_REDIRECTS,
+    POLICY_DOCUMENTATION_REDIRECTS,
+)
 from zerver.models import Realm, Stream
 from zproject import urls
 
@@ -43,9 +49,8 @@ class PublicURLTest(ZulipTestCase):
                 "/en/accounts/login/",
                 "/ru/accounts/login/",
                 "/help/",
-            ],
-            302: [
-                # These 302 because they redirect to the spectator experience.
+                # Since web-public streams are enabled in this `zulip`
+                # instance, the public access experience is loaded directly.
                 "/",
                 "/en/",
                 "/ru/",
@@ -129,10 +134,6 @@ class PublicURLTest(ZulipTestCase):
 
 
 class URLResolutionTest(ZulipTestCase):
-    def get_callback_string(self, pattern: django.urls.resolvers.URLPattern) -> Optional[str]:
-        callback_str = "lookup_str" if hasattr(pattern, "lookup_str") else "_callback_str"
-        return getattr(pattern, callback_str, None)
-
     def check_function_exists(self, module_name: str, view: str) -> None:
         module = importlib.import_module(module_name)
         self.assertTrue(hasattr(module, view), f"View {module_name}.{view} does not exist")
@@ -142,9 +143,8 @@ class URLResolutionTest(ZulipTestCase):
     # class-based views.
     def test_non_api_url_resolution(self) -> None:
         for pattern in urls.urlpatterns:
-            callback_str = self.get_callback_string(pattern)
-            if callback_str:
-                (module_name, base_view) = callback_str.rsplit(".", 1)
+            if isinstance(pattern, django.urls.resolvers.URLPattern):
+                (module_name, base_view) = pattern.lookup_str.rsplit(".", 1)
                 self.check_function_exists(module_name, base_view)
 
 
@@ -160,3 +160,29 @@ class ErrorPageTest(ZulipTestCase):
             "/json/users", secure=True, HTTP_REFERER="https://somewhere", HTTP_HOST="$nonsense"
         )
         self.assertEqual(result.status_code, 400)
+
+
+class RedirectURLTest(ZulipTestCase):
+    def test_api_redirects(self) -> None:
+        for redirect in API_DOCUMENTATION_REDIRECTS:
+            result = self.client_get(redirect.old_url, follow=True)
+            self.assert_in_success_response(["Zulip homepage", "API documentation home"], result)
+
+    def test_help_redirects(self) -> None:
+        for redirect in HELP_DOCUMENTATION_REDIRECTS:
+            result = self.client_get(redirect.old_url, follow=True)
+            self.assert_in_success_response(["Zulip homepage", "Help center home"], result)
+
+    def test_policy_redirects(self) -> None:
+        for redirect in POLICY_DOCUMENTATION_REDIRECTS:
+            result = self.client_get(redirect.old_url, follow=True)
+            self.assert_in_success_response(["Policies", "Archive"], result)
+
+    def test_landing_page_redirects(self) -> None:
+        for redirect in LANDING_PAGE_REDIRECTS:
+            result = self.client_get(redirect.old_url, follow=True)
+            self.assert_in_success_response(["Download"], result)
+
+            result = self.client_get(redirect.old_url)
+            self.assertEqual(result.status_code, 301)
+            self.assertIn(redirect.new_url, result["Location"])

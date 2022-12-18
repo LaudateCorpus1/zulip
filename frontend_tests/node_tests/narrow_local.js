@@ -6,19 +6,19 @@ const {mock_esm, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 
 const all_messages_data = mock_esm("../../static/js/all_messages_data");
-const message_edit = mock_esm("../../static/js/message_edit");
 
 const {Filter} = zrequire("../js/filter");
 const {MessageListData} = zrequire("../js/message_list_data");
 const narrow_state = zrequire("narrow_state");
 const narrow = zrequire("narrow");
+const resolved_topic = zrequire("../shared/js/resolved_topic");
 
 function test_with(fixture) {
     const filter = new Filter(fixture.filter_terms);
     narrow_state.set_current_filter(filter);
 
     // Make sure our simulated tests data satisfies the
-    // invarariant that the first unread message we find
+    // invariant that the first unread message we find
     // does indeed satisfy our filter.
     if (fixture.unread_info.flavor === "found") {
         for (const msg of fixture.all_messages) {
@@ -302,7 +302,7 @@ run_test("is:alerted with no unreads and one match", () => {
 });
 
 run_test("is:resolved with one unread", () => {
-    const resolved_topic_name = message_edit.RESOLVED_TOPIC_PREFIX + "foo";
+    const resolved_topic_name = resolved_topic.resolve_name("foo");
     const fixture = {
         filter_terms: [{operator: "is", operand: "resolved"}],
         unread_info: {
@@ -327,7 +327,7 @@ run_test("is:resolved with one unread", () => {
 });
 
 run_test("is:resolved with no unreads", () => {
-    const resolved_topic_name = message_edit.RESOLVED_TOPIC_PREFIX + "foo";
+    const resolved_topic_name = resolved_topic.resolve_name("foo");
     const fixture = {
         filter_terms: [{operator: "is", operand: "resolved"}],
         unread_info: {

@@ -20,8 +20,10 @@ import {$t, $t_html} from "./i18n";
 import {localstorage} from "./localstorage";
 import * as markdown from "./markdown";
 import * as narrow from "./narrow";
+import * as narrow_state from "./narrow_state";
 import * as overlays from "./overlays";
 import * as people from "./people";
+import * as rendered_markdown from "./rendered_markdown";
 import * as stream_data from "./stream_data";
 import * as sub_store from "./sub_store";
 import * as timerender from "./timerender";
@@ -29,8 +31,8 @@ import * as ui_util from "./ui_util";
 import * as util from "./util";
 
 function set_count(count) {
-    const drafts_li = $(".top_left_drafts");
-    ui_util.update_unread_count_in_dom(drafts_li, count);
+    const $drafts_li = $(".top_left_drafts");
+    ui_util.update_unread_count_in_dom($drafts_li, count);
 }
 
 export const draft_model = (function () {
@@ -54,12 +56,14 @@ export const draft_model = (function () {
         return get()[id] || false;
     };
 
-    function save(drafts) {
+    function save(drafts, update_count = true) {
         ls.set(KEY, drafts);
-        set_count(Object.keys(drafts).length);
+        if (update_count) {
+            set_count(Object.keys(drafts).length);
+        }
     }
 
-    exports.addDraft = function (draft) {
+    exports.addDraft = function (draft, update_count = true) {
         const drafts = get();
 
         // use the base16 of the current time + a random string to reduce
@@ -68,12 +72,12 @@ export const draft_model = (function () {
 
         draft.updatedAt = getTimestamp();
         drafts[id] = draft;
-        save(drafts);
+        save(drafts, update_count);
 
         return id;
     };
 
-    exports.editDraft = function (id, draft) {
+    exports.editDraft = function (id, draft, update_timestamp = true) {
         const drafts = get();
         let changed = false;
 
@@ -83,7 +87,9 @@ export const draft_model = (function () {
 
         if (drafts[id]) {
             changed = !check_if_equal(drafts[id], draft);
-            draft.updatedAt = getTimestamp();
+            if (update_timestamp) {
+                draft.updatedAt = getTimestamp();
+            }
             drafts[id] = draft;
             save(drafts);
         }
@@ -100,6 +106,37 @@ export const draft_model = (function () {
     return exports;
 })();
 
+// A one-time fix for buggy drafts that had their topics renamed to
+// `undefined` when the topic was moved to another stream without
+// changing the topic. The bug was introduced in
+// 4c8079c49a81b08b29871f9f1625c6149f48b579 and fixed in
+// aebdf6af8c6675fbd2792888d701d582c4a1110a; but servers running
+// intermediate versions may have generated some bugged drafts with
+// this invalid topic value.
+//
+// TODO/compatibility: This can be deleted once servers can no longer
+// directly upgrade from Zulip 6.0beta1 and earlier development branch where the bug was present,
+// since we expect bugged drafts will have either been run through
+// this code or else been deleted after 30 (DRAFT_LIFETIME) days.
+let fixed_buggy_drafts = false;
+export function fix_drafts_with_undefined_topics() {
+    const data = draft_model.get();
+    for (const draft_id of Object.keys(data)) {
+        const draft = data[draft_id];
+        if (draft.type === "stream" && draft.topic === undefined) {
+            const draft = data[draft_id];
+            draft.topic = "";
+            draft_model.editDraft(draft_id, draft, false);
+        }
+    }
+    fixed_buggy_drafts = true;
+}
+
+export function sync_count() {
+    const drafts = draft_model.get();
+    set_count(Object.keys(drafts).length);
+}
+
 export function delete_all_drafts() {
     const drafts = draft_model.get();
     for (const [id] of Object.entries(drafts)) {
@@ -115,6 +152,32 @@ export function confirm_delete_all_drafts() {
         html_body,
         on_click: delete_all_drafts,
     });
+}
+
+export function rename_stream_recipient(old_stream_id, old_topic, new_stream_id, new_topic) {
+    const current_drafts = draft_model.get();
+    for (const draft_id of Object.keys(current_drafts)) {
+        const draft = current_drafts[draft_id];
+        if (util.same_stream_and_topic(draft, {stream_id: old_stream_id, topic: old_topic})) {
+            // If new_stream_id is undefined, that means the stream wasn't updated.
+            if (new_stream_id !== undefined) {
+                draft.stream_id = new_stream_id;
+                // TODO: For now we need both a stream_id and stream (stream name)
+                // because there can be partial input in the stream field.
+                // Once we complete our UI plan to change the stream input field
+                // to a dropdown_list_widget, there will no longer be the possibility
+                // of invalid partial input in the stream field, and we can have the
+                // drafts system ignore the legacy `stream` field, using only `stream_id`.
+                // After enough drafts are autodeleted, we'd no longer have a `stream` field.
+                draft.stream = sub_store.get(new_stream_id).name;
+            }
+            // If new_topic is undefined, that means the topic wasn't updated.
+            if (new_topic !== undefined) {
+                draft.topic = new_topic;
+            }
+            draft_model.editDraft(draft_id, draft, false);
+        }
+    }
 }
 
 export function snapshot_message() {
@@ -155,7 +218,7 @@ export function restore_message(draft) {
         compose_args = {
             type: "stream",
             stream: draft.stream,
-            topic: util.get_draft_topic(draft),
+            topic: draft.topic,
             content: draft.content,
         };
     } else {
@@ -214,9 +277,9 @@ export function update_draft(opts = {}) {
         return draft_id;
     }
 
-    // We have never saved a draft for this message, so add
-    // one.
-    const new_draft_id = draft_model.addDraft(draft);
+    // We have never saved a draft for this message, so add one.
+    const update_count = opts.update_count === undefined ? true : opts.update_count;
+    const new_draft_id = draft_model.addDraft(draft, update_count);
     $("#compose-textarea").data("draft-id", new_draft_id);
     maybe_notify(no_notify);
 
@@ -291,12 +354,8 @@ export function format_draft(draft) {
                 draft_model.editDraft(id, draft);
             }
         }
-        let draft_topic = util.get_draft_topic(draft);
+        const draft_topic = draft.topic || compose.empty_topic_placeholder();
         const draft_stream_color = stream_data.get_color(stream_name);
-
-        if (draft_topic === "") {
-            draft_topic = compose.empty_topic_placeholder();
-        }
 
         formatted = {
             draft_id: draft.id,
@@ -310,16 +369,7 @@ export function format_draft(draft) {
         };
     } else {
         const emails = util.extract_pm_recipients(draft.private_message_recipient);
-        const recipients = emails
-            .map((email) => {
-                email = email.trim();
-                const person = people.get_by_email(email);
-                if (person !== undefined) {
-                    return person.full_name;
-                }
-                return email;
-            })
-            .join(", ");
+        const recipients = people.emails_to_full_names_string(emails);
 
         formatted = {
             draft_id: draft.id,
@@ -359,25 +409,66 @@ function row_with_focus() {
 }
 
 function row_before_focus() {
-    const focused_row = row_with_focus();
-    return focused_row.prev(".draft-row:visible");
+    const $focused_row = row_with_focus();
+    const $prev_row = $focused_row.prev(".draft-row:visible");
+    // The draft modal can have two sub-sections. This handles the edge case
+    // when the user moves from the second "Other drafts" section to the first
+    // section which contains drafts from a particular narrow.
+    if (
+        $prev_row.length === 0 &&
+        $focused_row.parent().attr("id") === "other-drafts" &&
+        $("#drafts-from-conversation").is(":visible")
+    ) {
+        return $($("#drafts-from-conversation").children(".draft-row:visible").last());
+    }
+
+    return $prev_row;
 }
 
 function row_after_focus() {
-    const focused_row = row_with_focus();
-    return focused_row.next(".draft-row:visible");
+    const $focused_row = row_with_focus();
+    const $next_row = $focused_row.next(".draft-row:visible");
+    // The draft modal can have two sub-sections. This handles the edge case
+    // when the user moves from the first section (drafts from a particular
+    // narrow) to the second section which contains the rest of the drafts.
+    if (
+        $next_row.length === 0 &&
+        $focused_row.parent().attr("id") === "drafts-from-conversation" &&
+        $("#other-drafts").is(":visible")
+    ) {
+        return $("#other-drafts").children(".draft-row:visible").first();
+    }
+    return $next_row;
 }
 
-function remove_draft(draft_row) {
+function remove_draft($draft_row) {
     // Deletes the draft and removes it from the list
-    const draft_id = draft_row.data("draft-id");
+    const draft_id = $draft_row.data("draft-id");
 
     draft_model.deleteDraft(draft_id);
 
-    draft_row.remove();
+    $draft_row.remove();
 
     if ($("#drafts_table .draft-row").length === 0) {
         $("#drafts_table .no-drafts").show();
+    }
+    update_rendered_drafts(
+        $("#drafts-from-conversation .draft-row").length > 0,
+        $("#other-drafts .draft-row").length > 0,
+    );
+}
+
+function update_rendered_drafts(has_drafts_from_conversation, has_other_drafts) {
+    if (has_drafts_from_conversation) {
+        $("#drafts-from-conversation").show();
+    } else {
+        // Since there are no relevant drafts from this conversation left, switch to the "all drafts" view and remove headers.
+        $("#drafts-from-conversation").hide();
+        $("#other-drafts-header").hide();
+    }
+
+    if (!has_other_drafts) {
+        $("#other-drafts").hide();
     }
 }
 
@@ -400,16 +491,44 @@ export function launch() {
         return sorted_formatted_drafts;
     }
 
-    function render_widgets(drafts) {
+    function get_header_for_narrow_drafts() {
+        const {stream_name, topic, private_recipients} = current_recipient_data();
+        if (private_recipients) {
+            return $t(
+                {defaultMessage: "Drafts from conversation with {recipient}"},
+                {
+                    recipient: people.emails_to_full_names_string(private_recipients.split(",")),
+                },
+            );
+        }
+        const recipient = topic ? `#${stream_name} > ${topic}` : `#${stream_name}`;
+        return $t({defaultMessage: "Drafts from {recipient}"}, {recipient});
+    }
+
+    function render_widgets(narrow_drafts, other_drafts) {
         $("#drafts_table").empty();
+
+        const narrow_drafts_header = get_header_for_narrow_drafts();
+
         const rendered = render_draft_table_body({
-            drafts,
+            narrow_drafts_header,
+            narrow_drafts,
+            other_drafts,
             draft_lifetime: DRAFT_LIFETIME,
         });
-        $("#drafts_table").append(rendered);
+        const $drafts_table = $("#drafts_table");
+        $drafts_table.append(rendered);
         if ($("#drafts_table .draft-row").length > 0) {
             $("#drafts_table .no-drafts").hide();
+            // Update possible dynamic elements.
+            const $rendered_drafts = $drafts_table.find(
+                ".message_content.rendered_markdown.restore-draft",
+            );
+            $rendered_drafts.each(function () {
+                rendered_markdown.update_elements($(this));
+            });
         }
+        update_rendered_drafts(narrow_drafts.length > 0, other_drafts.length > 0);
     }
 
     function setup_event_handlers() {
@@ -420,27 +539,112 @@ export function launch() {
 
             e.stopPropagation();
 
-            const draft_row = $(this).closest(".draft-row");
-            const draft_id = draft_row.data("draft-id");
-            restore_draft(draft_id);
+            const $draft_row = $(this).closest(".draft-row");
+            const $draft_id = $draft_row.data("draft-id");
+            restore_draft($draft_id);
         });
 
         $(".draft_controls .delete-draft").on("click", function () {
-            const draft_row = $(this).closest(".draft-row");
+            const $draft_row = $(this).closest(".draft-row");
 
-            remove_draft(draft_row);
+            remove_draft($draft_row);
         });
     }
 
-    const drafts = format_drafts(draft_model.get());
-    render_widgets(drafts);
+    function current_recipient_data() {
+        // Prioritize recipients from the compose box first. If the compose
+        // box isn't open, just return data from the current narrow.
+        if (!compose_state.composing()) {
+            const stream_name = narrow_state.stream();
+            return {
+                stream_name,
+                topic: narrow_state.topic(),
+                private_recipients: narrow_state.pm_emails_string(),
+            };
+        }
+
+        if (compose_state.get_message_type() === "stream") {
+            const stream_name = compose_state.stream_name();
+            return {
+                stream_name,
+                topic: compose_state.topic(),
+                private_recipients: undefined,
+            };
+        } else if (compose_state.get_message_type() === "private") {
+            return {
+                stream_name: undefined,
+                topic: undefined,
+                private_recipients: compose_state.private_message_recipient(),
+            };
+        }
+        return {
+            stream_name: undefined,
+            topic: undefined,
+            private_recipients: undefined,
+        };
+    }
+
+    function filter_drafts_by_compose_box_and_recipient(drafts) {
+        const {stream_name, topic, private_recipients} = current_recipient_data();
+        const stream_id = stream_name ? stream_data.get_stream_id(stream_name) : undefined;
+        const narrow_drafts_ids = [];
+        for (const [id, draft] of Object.entries(drafts)) {
+            // Match by stream and topic.
+            if (
+                stream_id &&
+                topic &&
+                draft.topic &&
+                util.same_recipient(draft, {type: "stream", stream_id, topic})
+            ) {
+                narrow_drafts_ids.push(id);
+            }
+            // Match by only stream.
+            else if (
+                draft.type === "stream" &&
+                stream_id &&
+                !topic &&
+                draft.stream_id === stream_id
+            ) {
+                narrow_drafts_ids.push(id);
+            }
+            // Match by private message recipient.
+            else if (
+                draft.type === "private" &&
+                private_recipients &&
+                _.isEqual(
+                    draft.private_message_recipient
+                        .split(",")
+                        .map((s) => s.trim())
+                        .sort(),
+                    private_recipients
+                        .split(",")
+                        .map((s) => s.trim())
+                        .sort(),
+                )
+            ) {
+                narrow_drafts_ids.push(id);
+            }
+        }
+        return _.pick(drafts, narrow_drafts_ids);
+    }
+
+    const drafts = draft_model.get();
+    const narrow_drafts = filter_drafts_by_compose_box_and_recipient(drafts);
+    const other_drafts = _.pick(
+        drafts,
+        _.difference(Object.keys(drafts), Object.keys(narrow_drafts)),
+    );
+    const formatted_narrow_drafts = format_drafts(narrow_drafts);
+    const formatted_other_drafts = format_drafts(other_drafts);
+
+    render_widgets(formatted_narrow_drafts, formatted_other_drafts);
 
     // We need to force a style calculation on the newly created
     // element in order for the CSS transition to take effect.
     $("#draft_overlay").css("opacity");
 
     open_overlay();
-    set_initial_element(drafts);
+    set_initial_element(formatted_narrow_drafts.concat(formatted_other_drafts));
     setup_event_handlers();
 }
 
@@ -480,35 +684,35 @@ function drafts_initialize_focus(event_name) {
     activate_element(focus_element);
 }
 
-function drafts_scroll(next_focus_draft_row) {
-    if (next_focus_draft_row[0] === undefined) {
+function drafts_scroll($next_focus_draft_row) {
+    if ($next_focus_draft_row[0] === undefined) {
         return;
     }
-    if (next_focus_draft_row[0].children[0] === undefined) {
+    if ($next_focus_draft_row[0].children[0] === undefined) {
         return;
     }
-    activate_element(next_focus_draft_row[0].children[0]);
+    activate_element($next_focus_draft_row[0].children[0]);
 
     // If focused draft is first draft, scroll to the top.
-    if ($(".draft-info-box").first()[0].parentElement === next_focus_draft_row[0]) {
+    if ($(".draft-info-box").first()[0].parentElement === $next_focus_draft_row[0]) {
         $(".drafts-list")[0].scrollTop = 0;
     }
 
     // If focused draft is the last draft, scroll to the bottom.
-    if ($(".draft-info-box").last()[0].parentElement === next_focus_draft_row[0]) {
+    if ($(".draft-info-box").last()[0].parentElement === $next_focus_draft_row[0]) {
         $(".drafts-list")[0].scrollTop =
             $(".drafts-list")[0].scrollHeight - $(".drafts-list").height();
     }
 
     // If focused draft is cut off from the top, scroll up halfway in draft modal.
-    if (next_focus_draft_row.position().top < 55) {
+    if ($next_focus_draft_row.position().top < 55) {
         // 55 is the minimum distance from the top that will require extra scrolling.
         $(".drafts-list")[0].scrollTop -= $(".drafts-list")[0].clientHeight / 2;
     }
 
     // If focused draft is cut off from the bottom, scroll down halfway in draft modal.
-    const dist_from_top = next_focus_draft_row.position().top;
-    const total_dist = dist_from_top + next_focus_draft_row[0].clientHeight;
+    const dist_from_top = $next_focus_draft_row.position().top;
+    const total_dist = dist_from_top + $next_focus_draft_row[0].clientHeight;
     const dist_from_bottom = $(".drafts-container")[0].clientHeight - total_dist;
     if (dist_from_bottom < -4) {
         // -4 is the min dist from the bottom that will require extra scrolling.
@@ -536,17 +740,17 @@ export function drafts_handle_events(e, event_key) {
     const focused_draft_id = row_with_focus().data("draft-id");
     // Allows user to delete drafts with Backspace
     if ((event_key === "backspace" || event_key === "delete") && focused_draft_id !== undefined) {
-        const draft_row = row_with_focus();
-        const next_draft_row = row_after_focus();
-        const prev_draft_row = row_before_focus();
+        const $draft_row = row_with_focus();
+        const $next_draft_row = row_after_focus();
+        const $prev_draft_row = row_before_focus();
         let draft_to_be_focused_id;
 
         // Try to get the next draft in the list and 'focus' it
         // Use previous draft as a fallback
-        if (next_draft_row[0] !== undefined) {
-            draft_to_be_focused_id = next_draft_row.data("draft-id");
-        } else if (prev_draft_row[0] !== undefined) {
-            draft_to_be_focused_id = prev_draft_row.data("draft-id");
+        if ($next_draft_row[0] !== undefined) {
+            draft_to_be_focused_id = $next_draft_row.data("draft-id");
+        } else if ($prev_draft_row[0] !== undefined) {
+            draft_to_be_focused_id = $prev_draft_row.data("draft-id");
         }
 
         const new_focus_element = document.querySelectorAll(
@@ -556,7 +760,7 @@ export function drafts_handle_events(e, event_key) {
             activate_element(new_focus_element[0].children[0]);
         }
 
-        remove_draft(draft_row);
+        remove_draft($draft_row);
     }
 
     // This handles when pressing Enter while looking at drafts.
@@ -574,7 +778,7 @@ export function drafts_handle_events(e, event_key) {
 export function open_overlay() {
     overlays.open_overlay({
         name: "drafts",
-        overlay: $("#draft_overlay"),
+        $overlay: $("#draft_overlay"),
         on_close() {
             browser_history.exit_overlay();
         },
@@ -594,6 +798,10 @@ export function set_initial_element(drafts) {
 
 export function initialize() {
     remove_old_drafts();
+
+    if (!fixed_buggy_drafts) {
+        fix_drafts_with_undefined_topics();
+    }
 
     window.addEventListener("beforeunload", () => {
         update_draft();

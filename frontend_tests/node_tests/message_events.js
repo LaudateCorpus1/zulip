@@ -9,18 +9,17 @@ const {page_params} = require("../zjsunit/zpage_params");
 
 const condense = mock_esm("../../static/js/condense");
 const message_edit = mock_esm("../../static/js/message_edit");
-const message_list = mock_esm("../../static/js/message_list");
 const message_lists = mock_esm("../../static/js/message_lists");
 const notifications = mock_esm("../../static/js/notifications");
 const pm_list = mock_esm("../../static/js/pm_list");
 const stream_list = mock_esm("../../static/js/stream_list");
 const unread_ui = mock_esm("../../static/js/unread_ui");
 message_lists.current = {};
+message_lists.all_rendered_message_lists = () => [message_lists.home, message_lists.current];
 
 const people = zrequire("people");
 const message_events = zrequire("message_events");
 const message_helper = zrequire("message_helper");
-const message_store = zrequire("message_store");
 const stream_data = zrequire("stream_data");
 const stream_topic_history = zrequire("stream_topic_history");
 const unread = zrequire("unread");
@@ -70,7 +69,6 @@ run_test("update_messages", () => {
     };
 
     message_helper.process_new_message(original_message);
-    message_store.set_message_booleans(original_message);
 
     assert.equal(original_message.mentioned, true);
     assert.equal(original_message.unread, true);
@@ -90,10 +88,6 @@ run_test("update_messages", () => {
         },
     ];
 
-    message_lists.current.get_row = (message_id) => {
-        assert.equal(message_id, 111);
-        return ["row-stub"];
-    };
     message_lists.current.view = {};
 
     let rendered_mgs;
@@ -102,10 +96,11 @@ run_test("update_messages", () => {
         rendered_mgs = msgs_to_rerender;
         assert.equal(message_content_edited, true);
     };
+    message_lists.home = message_lists.current;
 
     const side_effects = [
         [condense, "un_cache_message_content_height"],
-        [message_edit, "end_message_row_edit"],
+        [message_edit, "end_message_edit"],
         [notifications, "received_messages"],
         [unread_ui, "update_unread_counts"],
         [stream_list, "update_streams_sidebar"],
@@ -115,11 +110,10 @@ run_test("update_messages", () => {
     const helper = test_helper(side_effects);
 
     page_params.realm_allow_edit_history = false;
-    message_list.narrowed = "stub-to-ignore";
 
-    const message_edit_history_modal = $.create("#message-edit-history");
-    const modal = $.create("micromodal").addClass("modal--open");
-    message_edit_history_modal.set_parents_result(".micromodal", modal);
+    const $message_edit_history_modal = $.create("#message-edit-history");
+    const $modal = $.create("micromodal").addClass("modal--open");
+    $message_edit_history_modal.set_parents_result(".micromodal", $modal);
 
     // TEST THIS:
     message_events.update_messages(events);
@@ -148,6 +142,7 @@ run_test("update_messages", () => {
             sender_id: 32,
             sent_by_me: false,
             starred: false,
+            status_emoji_info: undefined,
             stream: denmark.name,
             stream_id: denmark.stream_id,
             topic: "lunch",

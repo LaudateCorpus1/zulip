@@ -1,19 +1,9 @@
-Review the settings for your organization to set everything up how you
-want it to be.
-
-{start_tabs}
-
-{relative|gear|manage-organization}
-
-1. Click on "Organization settings" and "Organization permissions"
-   tabs, and any others that are of interest.
-
-{end_tabs}
+{!review-organization-settings-instructions.md!}
 
 A few settings to highlight:
 
 * Decide [who can invite new users][who-can-invite], or whether
-  [anyone can join][who-can-join].
+  [anyone can join without an invitation][who-can-join].
 
 * [Set visibility for users' email addresses][email-address-visibility].
 
@@ -36,5 +26,5 @@ you.
 [default-code-block-language]: /help/code-blocks#default-code-block-language
 [code-playgrounds]: /help/code-blocks#code-playgrounds
 [email-address-visibility]: /help/restrict-visibility-of-email-addresses
-[who-can-invite]: /help/invite-new-users#change-who-can-send-invitations
-[who-can-join]: /help/allow-anyone-to-join-without-an-invitation
+[who-can-invite]: /help/restrict-account-creation#change-who-can-send-invitations
+[who-can-join]: /help/restrict-account-creation#set-whether-invitations-are-required-to-join

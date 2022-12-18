@@ -2,32 +2,29 @@
 # high-level documentation on how this system works.
 import copy
 import time
-from typing import Any, Callable, Collection, Dict, Iterable, Optional, Sequence, Set
+from typing import Any, Callable, Collection, Dict, Iterable, Mapping, Optional, Sequence, Set
 
 from django.conf import settings
 from django.utils.translation import gettext as _
 
 from version import API_FEATURE_LEVEL, ZULIP_MERGE_BASE, ZULIP_VERSION
-from zerver.lib.actions import (
+from zerver.actions.default_streams import (
     default_stream_groups_to_dicts_sorted,
-    do_get_streams,
-    gather_subscriptions_helper,
-    get_available_notification_sounds,
     get_default_streams_for_realm,
-    get_owned_bot_dicts,
-    get_web_public_streams,
-    get_web_public_subs,
     streams_to_dicts_sorted,
 )
+from zerver.actions.users import get_owned_bot_dicts
+from zerver.lib import emoji
 from zerver.lib.alert_words import user_alert_words
 from zerver.lib.avatar import avatar_url
 from zerver.lib.bot_config import load_bot_config_template
 from zerver.lib.compatibility import is_outdated_server
 from zerver.lib.exceptions import JsonableError
-from zerver.lib.external_accounts import DEFAULT_EXTERNAL_ACCOUNTS
+from zerver.lib.external_accounts import get_default_external_accounts
 from zerver.lib.hotspots import get_next_hotspots
 from zerver.lib.integrations import EMBEDDED_BOTS, WEBHOOK_INTEGRATIONS
 from zerver.lib.message import (
+    add_message_to_unread_msgs,
     aggregate_unread_data,
     apply_unread_message_event,
     extract_unread_data_from_um_rows,
@@ -43,13 +40,17 @@ from zerver.lib.push_notifications import push_notifications_enabled
 from zerver.lib.realm_icon import realm_icon_url
 from zerver.lib.realm_logo import get_realm_logo_source, get_realm_logo_url
 from zerver.lib.soft_deactivation import reactivate_user_if_soft_deactivated
+from zerver.lib.sounds import get_available_notification_sounds
 from zerver.lib.stream_subscription import handle_stream_notifications_compatibility
+from zerver.lib.streams import do_get_streams, get_web_public_streams
+from zerver.lib.subscription_info import gather_subscriptions_helper, get_web_public_subs
 from zerver.lib.timestamp import datetime_to_timestamp
+from zerver.lib.timezone import canonicalize_timezone
 from zerver.lib.topic import TOPIC_NAME
-from zerver.lib.topic_mutes import get_topic_mutes
 from zerver.lib.user_groups import user_groups_in_realm_serialized
 from zerver.lib.user_mutes import get_user_mutes
-from zerver.lib.user_status import get_user_info_dict
+from zerver.lib.user_status import get_user_status_dict
+from zerver.lib.user_topics import get_topic_mutes, get_user_topics
 from zerver.lib.users import get_cross_realm_dicts, get_raw_user_data, is_administrator_role
 from zerver.models import (
     MAX_TOPIC_NAME_LENGTH,
@@ -63,6 +64,7 @@ from zerver.models import (
     UserMessage,
     UserProfile,
     UserStatus,
+    UserTopic,
     custom_profile_fields_for_realm,
     get_default_stream_groups,
     get_realm_domains,
@@ -111,6 +113,8 @@ def fetch_initial_state_data(
     slim_presence: bool = False,
     include_subscribers: bool = True,
     include_streams: bool = True,
+    spectator_requested_language: Optional[str] = None,
+    pronouns_field_type_supported: bool = True,
 ) -> Dict[str, Any]:
     """When `event_types` is None, fetches the core data powering the
     web app's `page_params` and `/api/v1/register` (for mobile/terminal
@@ -143,15 +147,25 @@ def fetch_initial_state_data(
     if want("alert_words"):
         state["alert_words"] = [] if user_profile is None else user_alert_words(user_profile)
 
-    # Spectators can't access full user profiles or personal settings,
-    # so there's no need to send custom profile field data.
-    if want("custom_profile_fields") and user_profile is not None:
-        fields = custom_profile_fields_for_realm(realm.id)
-        state["custom_profile_fields"] = [f.as_dict() for f in fields]
+    if want("custom_profile_fields"):
+        if user_profile is None:
+            # Spectators can't access full user profiles or
+            # personal settings, so we send an empty list.
+            state["custom_profile_fields"] = []
+        else:
+            fields = custom_profile_fields_for_realm(realm.id)
+            state["custom_profile_fields"] = [f.as_dict() for f in fields]
         state["custom_profile_field_types"] = {
             item[4]: {"id": item[0], "name": str(item[1])}
             for item in CustomProfileField.ALL_FIELD_TYPES
         }
+
+        if not pronouns_field_type_supported:
+            for field in state["custom_profile_fields"]:
+                if field["type"] == CustomProfileField.PRONOUNS:
+                    field["type"] = CustomProfileField.SHORT_TEXT
+
+            del state["custom_profile_field_types"]["PRONOUNS"]
 
     if want("hotspots"):
         # Even if we offered special hotspots for guests without an
@@ -164,7 +178,7 @@ def fetch_initial_state_data(
         # `max_message_id` is primarily used for generating `local_id`
         # values that are higher than this.  We likely can eventually
         # remove this parameter from the API.
-        user_messages = []
+        user_messages = None
         if user_profile is not None:
             user_messages = (
                 UserMessage.objects.filter(user_profile=user_profile)
@@ -191,7 +205,13 @@ def fetch_initial_state_data(
             state["drafts"] = user_draft_dicts
 
     if want("muted_topics"):
-        state["muted_topics"] = [] if user_profile is None else get_topic_mutes(user_profile)
+        # Suppress muted_topics data for clients that explicitly
+        # support user_topic. This allows clients to request both the
+        # user_topic and muted_topics, and receive the duplicate
+        # muted_topics data only from older servers that don't yet
+        # support user_topic.
+        if event_types is None or not want("user_topic"):
+            state["muted_topics"] = [] if user_profile is None else get_topic_mutes(user_profile)
 
     if want("muted_users"):
         state["muted_users"] = [] if user_profile is None else get_user_mutes(user_profile)
@@ -286,6 +306,7 @@ def fetch_initial_state_data(
         state["server_generation"] = settings.SERVER_GENERATION
         state["realm_is_zephyr_mirror_realm"] = realm.is_zephyr_mirror_realm
         state["development_environment"] = settings.DEVELOPMENT
+        state["realm_org_type"] = realm.org_type
         state["realm_plan_type"] = realm.plan_type
         state["zulip_plan_is_not_limited"] = realm.plan_type != Realm.PLAN_TYPE_LIMITED
         state["upgrade_text_for_wide_organization_logo"] = str(Realm.UPGRADE_TEXT_STANDARD)
@@ -299,6 +320,8 @@ def fetch_initial_state_data(
         state["server_web_public_streams_enabled"] = settings.WEB_PUBLIC_STREAMS_ENABLED
         state["giphy_rating_options"] = realm.GIPHY_RATING_OPTIONS
 
+        state["server_emoji_data_url"] = emoji.data_url()
+
         state["server_needs_upgrade"] = is_outdated_server(user_profile)
         state[
             "event_queue_longpoll_timeout_seconds"
@@ -306,7 +329,7 @@ def fetch_initial_state_data(
 
         # TODO: Should these have the realm prefix replaced with server_?
         state["realm_push_notifications_enabled"] = push_notifications_enabled()
-        state["realm_default_external_accounts"] = DEFAULT_EXTERNAL_ACCOUNTS
+        state["realm_default_external_accounts"] = get_default_external_accounts()
 
         if settings.JITSI_SERVER_URL is not None:
             state["jitsi_server_url"] = settings.JITSI_SERVER_URL.rstrip("/")
@@ -371,6 +394,7 @@ def fetch_initial_state_data(
     if user_profile is not None:
         settings_user = user_profile
     else:
+        assert spectator_requested_language is not None
         # When UserProfile=None, we want to serve the values for various
         # settings as the defaults.  Instead of copying the default values
         # from models.py here, we access these default values from a
@@ -391,6 +415,7 @@ def fetch_initial_state_data(
             avatar_source=UserProfile.AVATAR_FROM_GRAVATAR,
             # ID=0 is not used in real Zulip databases, ensuring this is unique.
             id=0,
+            default_language=spectator_requested_language,
         )
     if want("realm_user"):
         state["raw_users"] = get_raw_user_data(
@@ -557,7 +582,7 @@ def fetch_initial_state_data(
         for prop in UserProfile.display_settings_legacy:
             state[prop] = getattr(settings_user, prop)
         state["emojiset_choices"] = UserProfile.emojiset_choices()
-        state["timezone"] = settings_user.timezone
+        state["timezone"] = canonicalize_timezone(settings_user.timezone)
 
     if want("update_global_notifications") and not user_settings_object:
         for notification in UserProfile.notification_settings_legacy:
@@ -571,14 +596,19 @@ def fetch_initial_state_data(
             state["user_settings"][prop] = getattr(settings_user, prop)
 
         state["user_settings"]["emojiset_choices"] = UserProfile.emojiset_choices()
-        state["user_settings"]["timezone"] = settings_user.timezone
+        state["user_settings"]["timezone"] = canonicalize_timezone(settings_user.timezone)
         state["user_settings"][
             "available_notification_sounds"
         ] = get_available_notification_sounds()
 
     if want("user_status"):
         # We require creating an account to access statuses.
-        state["user_status"] = {} if user_profile is None else get_user_info_dict(realm_id=realm.id)
+        state["user_status"] = (
+            {} if user_profile is None else get_user_status_dict(realm_id=realm.id)
+        )
+
+    if want("user_topic"):
+        state["user_topics"] = [] if user_profile is None else get_user_topics(user_profile)
 
     if want("video_calls"):
         state["has_zoom_token"] = settings_user.zoom_token is not None
@@ -919,17 +949,22 @@ def apply_event(
         if event["op"] == "update":
             # For legacy reasons, we call stream data 'subscriptions' in
             # the state var here, for the benefit of the JS code.
-            for obj in state["subscriptions"]:
-                if obj["name"].lower() == event["name"].lower():
-                    obj[event["property"]] = event["value"]
-                    if event["property"] == "description":
-                        obj["rendered_description"] = event["rendered_description"]
-                    if event.get("history_public_to_subscribers") is not None:
-                        obj["history_public_to_subscribers"] = event[
-                            "history_public_to_subscribers"
-                        ]
-                    if event.get("is_web_public") is not None:
-                        obj["is_web_public"] = event["is_web_public"]
+            for sub_list in [
+                state["subscriptions"],
+                state["unsubscribed"],
+                state["never_subscribed"],
+            ]:
+                for obj in sub_list:
+                    if obj["name"].lower() == event["name"].lower():
+                        obj[event["property"]] = event["value"]
+                        if event["property"] == "description":
+                            obj["rendered_description"] = event["rendered_description"]
+                        if event.get("history_public_to_subscribers") is not None:
+                            obj["history_public_to_subscribers"] = event[
+                                "history_public_to_subscribers"
+                            ]
+                        if event.get("is_web_public") is not None:
+                            obj["is_web_public"] = event["is_web_public"]
             # Also update the pure streams data
             if "streams" in state:
                 for stream in state["streams"]:
@@ -1068,7 +1103,7 @@ def apply_event(
                     for sub in sub_dict:
                         if sub["stream_id"] in stream_ids:
                             subscribers = set(sub["subscribers"]) | user_ids
-                            sub["subscribers"] = sorted(list(subscribers))
+                            sub["subscribers"] = sorted(subscribers)
         elif event["op"] == "peer_remove":
             if include_subscribers:
                 stream_ids = set(event["stream_ids"])
@@ -1082,7 +1117,7 @@ def apply_event(
                     for sub in sub_dict:
                         if sub["stream_id"] in stream_ids:
                             subscribers = set(sub["subscribers"]) - user_ids
-                            sub["subscribers"] = sorted(list(subscribers))
+                            sub["subscribers"] = sorted(subscribers)
         else:
             raise AssertionError("Unexpected event type {type}/{op}".format(**event))
     elif event["type"] == "presence":
@@ -1156,6 +1191,14 @@ def apply_event(
         if "raw_unread_msgs" in state and event["flag"] == "read" and event["op"] == "add":
             for remove_id in event["messages"]:
                 remove_message_id_from_unread_mgs(state["raw_unread_msgs"], remove_id)
+        if event["flag"] == "read" and event["op"] == "remove":
+            for message_id_str, message_details in event["message_details"].items():
+                add_message_to_unread_msgs(
+                    user_profile.id,
+                    state["raw_unread_msgs"],
+                    int(message_id_str),
+                    message_details,
+                )
         if event["flag"] == "starred" and "starred_messages" in state:
             if event["op"] == "add":
                 state["starred_messages"] += event["messages"]
@@ -1163,7 +1206,7 @@ def apply_event(
                 state["starred_messages"] = [
                     message
                     for message in state["starred_messages"]
-                    if not (message in event["messages"])
+                    if message not in event["messages"]
                 ]
     elif event["type"] == "realm_domains":
         if event["op"] == "add":
@@ -1206,7 +1249,7 @@ def apply_event(
         assert event["notification_name"] in UserProfile.notification_settings_legacy
         state[event["notification_name"]] = event["setting"]
     elif event["type"] == "user_settings":
-        # timezone setting is not included in property_types dict because
+        # time zone setting is not included in property_types dict because
         # this setting is not a part of UserBaseSettings class.
         if event["property"] != "timezone":
             assert event["property"] in UserProfile.property_types
@@ -1237,6 +1280,19 @@ def apply_event(
                     members = set(user_group["members"])
                     user_group["members"] = list(members - set(event["user_ids"]))
                     user_group["members"].sort()
+        elif event["op"] == "add_subgroups":
+            for user_group in state["realm_user_groups"]:
+                if user_group["id"] == event["group_id"]:
+                    user_group["direct_subgroup_ids"].extend(event["direct_subgroup_ids"])
+                    user_group["direct_subgroup_ids"].sort()
+        elif event["op"] == "remove_subgroups":
+            for user_group in state["realm_user_groups"]:
+                if user_group["id"] == event["group_id"]:
+                    subgroups = set(user_group["direct_subgroup_ids"])
+                    user_group["direct_subgroup_ids"] = list(
+                        subgroups - set(event["direct_subgroup_ids"])
+                    )
+                    user_group["direct_subgroup_ids"].sort()
         elif event["op"] == "remove":
             state["realm_user_groups"] = [
                 ug for ug in state["realm_user_groups"] if ug["id"] != event["group_id"]
@@ -1289,6 +1345,19 @@ def apply_event(
             user_status.pop(user_id_str, None)
 
         state["user_status"] = user_status
+    elif event["type"] == "user_topic":
+        if event["visibility_policy"] == UserTopic.VISIBILITY_POLICY_INHERIT:
+            user_topics_state = state["user_topics"]
+            for i in range(len(user_topics_state)):
+                if (
+                    user_topics_state[i]["stream_id"] == event["stream_id"]
+                    and user_topics_state[i]["topic_name"] == event["topic_name"]
+                ):
+                    del user_topics_state[i]
+                    break
+        else:
+            fields = ["stream_id", "topic_name", "visibility_policy", "last_updated"]
+            state["user_topics"].append({x: event[x] for x in fields})
     elif event["type"] == "has_zoom_token":
         state["has_zoom_token"] = event["value"]
     else:
@@ -1296,7 +1365,8 @@ def apply_event(
 
 
 def do_events_register(
-    user_profile: UserProfile,
+    user_profile: Optional[UserProfile],
+    realm: Realm,
     user_client: Client,
     apply_markdown: bool = True,
     client_gravatar: bool = False,
@@ -1306,9 +1376,11 @@ def do_events_register(
     all_public_streams: bool = False,
     include_subscribers: bool = True,
     include_streams: bool = True,
-    client_capabilities: Dict[str, bool] = {},
+    client_capabilities: Mapping[str, bool] = {},
     narrow: Collection[Sequence[str]] = [],
     fetch_event_types: Optional[Collection[str]] = None,
+    spectator_requested_language: Optional[str] = None,
+    pronouns_field_type_supported: bool = True,
 ) -> Dict[str, Any]:
     # Technically we don't need to check this here because
     # build_narrow_filter will check it, but it's nicer from an error
@@ -1323,7 +1395,7 @@ def do_events_register(
     stream_typing_notifications = client_capabilities.get("stream_typing_notifications", False)
     user_settings_object = client_capabilities.get("user_settings_object", False)
 
-    if user_profile.realm.email_address_visibility != Realm.EMAIL_ADDRESS_VISIBILITY_EVERYONE:
+    if realm.email_address_visibility != Realm.EMAIL_ADDRESS_VISIBILITY_EVERYONE:
         # If real email addresses are not available to the user, their
         # clients cannot compute gravatars, so we force-set it to false.
         client_gravatar = False
@@ -1334,6 +1406,32 @@ def do_events_register(
         event_types_set = set(event_types)
     else:
         event_types_set = None
+
+    if user_profile is None:
+        # TODO: Unify the two fetch_initial_state_data code paths.
+        assert client_gravatar is False
+        assert include_subscribers is False
+        assert include_streams is False
+        ret = fetch_initial_state_data(
+            user_profile,
+            realm=realm,
+            event_types=event_types_set,
+            queue_id=None,
+            # Force client_gravatar=False for security reasons.
+            client_gravatar=client_gravatar,
+            user_avatar_url_field_optional=user_avatar_url_field_optional,
+            user_settings_object=user_settings_object,
+            # slim_presence is a noop, because presence is not included.
+            slim_presence=True,
+            # Force include_subscribers=False for security reasons.
+            include_subscribers=include_subscribers,
+            # Force include_streams=False for security reasons.
+            include_streams=include_streams,
+            spectator_requested_language=spectator_requested_language,
+        )
+
+        post_process_state(user_profile, ret, notification_settings_null=False)
+        return ret
 
     # Fill up the UserMessage rows if a soft-deactivated user has returned
     reactivate_user_if_soft_deactivated(user_profile)
@@ -1354,6 +1452,7 @@ def do_events_register(
             bulk_message_deletion=bulk_message_deletion,
             stream_typing_notifications=stream_typing_notifications,
             user_settings_object=user_settings_object,
+            pronouns_field_type_supported=pronouns_field_type_supported,
         )
 
         if queue_id is None:
@@ -1369,6 +1468,7 @@ def do_events_register(
             slim_presence=slim_presence,
             include_subscribers=include_subscribers,
             include_streams=include_streams,
+            pronouns_field_type_supported=pronouns_field_type_supported,
         )
 
         # Apply events that came in while we were fetching initial data

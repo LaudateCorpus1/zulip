@@ -2,18 +2,18 @@ import calendar
 import datetime
 import urllib
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import orjson
-import pytz
 from django.conf import settings
-from django.http import HttpResponse
 from django.test import override_settings
 from django.utils.timezone import now as timezone_now
 
 from corporate.models import Customer, CustomerPlan
-from zerver.lib.actions import change_user_is_active, do_change_realm_plan_type, do_create_user
+from zerver.actions.create_user import do_create_user
+from zerver.actions.realm_settings import do_change_realm_plan_type, do_set_realm_property
+from zerver.actions.users import change_user_is_active
 from zerver.lib.compatibility import LAST_SERVER_UPGRADE_TIME, is_outdated_server
 from zerver.lib.home import (
     get_billing_info,
@@ -36,6 +36,9 @@ from zerver.models import (
     get_user,
 )
 from zerver.worker.queue_processors import UserActivityWorker
+
+if TYPE_CHECKING:
+    from django.test.client import _MonkeyPatchedWSGIResponse as TestHttpResponse
 
 logger_string = "zulip.soft_deactivation"
 
@@ -136,6 +139,7 @@ class HomeTest(ZulipTestCase):
         "realm_emails_restricted_to_domains",
         "realm_embedded_bots",
         "realm_emoji",
+        "realm_enable_read_receipts",
         "realm_enable_spectator_access",
         "realm_filters",
         "realm_giphy_rating",
@@ -163,6 +167,7 @@ class HomeTest(ZulipTestCase):
         "realm_night_logo_url",
         "realm_non_active_users",
         "realm_notifications_stream_id",
+        "realm_org_type",
         "realm_password_auth_enabled",
         "realm_plan_type",
         "realm_playgrounds",
@@ -179,11 +184,13 @@ class HomeTest(ZulipTestCase):
         "realm_users",
         "realm_video_chat_provider",
         "realm_waiting_period_threshold",
+        "realm_want_advertise_in_communities_directory",
         "realm_wildcard_mention_policy",
         "recent_private_conversations",
         "request_language",
         "search_pills_enabled",
         "server_avatar_changes_disabled",
+        "server_emoji_data_url",
         "server_generation",
         "server_inline_image_preview",
         "server_inline_url_embed_preview",
@@ -208,6 +215,7 @@ class HomeTest(ZulipTestCase):
         "user_id",
         "user_settings",
         "user_status",
+        "user_topics",
         "warn_no_email",
         "webpack_public_path",
         "zulip_feature_level",
@@ -219,7 +227,7 @@ class HomeTest(ZulipTestCase):
     def test_home(self) -> None:
         # Keep this list sorted!!!
         html_bits = [
-            "empty_feed_notice_main",
+            "message_feed_errors_container",
             "Loading...",
             # Verify that the app styles get included
             "app-stubentry.js",
@@ -237,7 +245,7 @@ class HomeTest(ZulipTestCase):
 
         # Verify succeeds once logged-in
         flush_per_request_caches()
-        with queries_captured() as queries:
+        with self.assert_database_query_count(47):
             with patch("zerver.lib.cache.cache_set") as cache_mock:
                 result = self._get_home_page(stream="Denmark")
                 self.check_rendered_logged_in_app(result)
@@ -245,7 +253,6 @@ class HomeTest(ZulipTestCase):
             set(result["Cache-Control"].split(", ")), {"must-revalidate", "no-store", "no-cache"}
         )
 
-        self.assert_length(queries, 44)
         self.assert_length(cache_mock.call_args_list, 5)
 
         html = result.content.decode()
@@ -308,62 +315,54 @@ class HomeTest(ZulipTestCase):
         self.assertEqual(set(actual_keys), set(expected_keys))
 
     def test_logged_out_home(self) -> None:
-        # Redirect to login on first request.
+        realm = get_realm("zulip")
+        do_set_realm_property(realm, "enable_spectator_access", False, acting_user=None)
+
+        # Redirect to login if spectator access is disabled.
         result = self.client_get("/")
         self.assertEqual(result.status_code, 302)
-        self.assertEqual(result.url, "/login/")
+        self.assertEqual(result["Location"], "/login/")
 
-        # Tell server that user wants to login anonymously
-        # Redirects to load webapp.
-        realm = get_realm("zulip")
-        result = self.client_post("/", {"prefers_web_public_view": "true"})
-        self.assertEqual(self.client.session.get("prefers_web_public_view"), True)
-        self.assertEqual(realm.enable_spectator_access, True)
-        self.assertEqual(result.status_code, 302)
-        self.assertEqual(result.url, "http://zulip.testserver")
-
-        # Disable spectator login. Since Realm.enable_spectator_access
-        # is False, the login should fail.
-        realm.enable_spectator_access = False
-        realm.save()
-
-        result = self.client_post("/", {"prefers_web_public_view": "true"})
-        self.assertEqual(self.client.session.get("prefers_web_public_view"), True)
-        self.assertEqual(realm.enable_spectator_access, False)
-        self.assertEqual(result.status_code, 302)
-        self.assertEqual(result.url, "/login/")
-
-        # Enable spectator login.
-        realm.enable_spectator_access = True
-        realm.save()
-
-        result = self.client_post("/", {"prefers_web_public_view": "true"})
-        self.assertEqual(self.client.session.get("prefers_web_public_view"), True)
-        self.assertEqual(realm.enable_spectator_access, True)
-        self.assertEqual(result.status_code, 302)
-        self.assertEqual(result.url, "http://zulip.testserver")
-
-        # Always load the web app from then on directly
+        # Load web app directly if spectator access is enabled.
+        do_set_realm_property(realm, "enable_spectator_access", True, acting_user=None)
         result = self.client_get("/")
         self.assertEqual(result.status_code, 200)
 
+        # Check no unnecessary params are passed to spectators.
         page_params = self._get_page_params(result)
+        self.assertEqual(page_params["is_spectator"], True)
         actual_keys = sorted(str(k) for k in page_params.keys())
-        removed_keys = [
-            "custom_profile_field_types",
-            "custom_profile_fields",
-            "last_event_id",
-            "narrow",
-            "narrow_stream",
+        expected_keys = [
+            "apps_page_url",
+            "bot_types",
+            "corporate_enabled",
+            "development_environment",
+            "first_in_realm",
+            "furthest_read_time",
+            "insecure_desktop_app",
+            "is_spectator",
+            "language_cookie_name",
+            "language_list",
+            "login_page",
+            "needs_tutorial",
+            "no_event_queue",
+            "promote_sponsoring_zulip",
+            "prompt_for_invites",
+            "queue_id",
+            "realm_rendered_description",
+            "request_language",
+            "search_pills_enabled",
+            "show_billing",
+            "show_plans",
+            "show_webathena",
+            "test_suite",
+            "translation_data",
+            "two_fa_enabled",
+            "two_fa_enabled_user",
+            "warn_no_email",
+            "webpack_public_path",
         ]
-        expected_keys = [i for i in self.expected_page_params_keys if i not in removed_keys]
         self.assertEqual(actual_keys, expected_keys)
-        self.assertEqual(self.client.session.get("prefers_web_public_view"), True)
-
-        # Web public session key should clear once user is logged in
-        self.login("hamlet")
-        self.client_get("/")
-        self.assertEqual(self.client.session.get("prefers_web_public_view"), None)
 
     def test_home_under_2fa_without_otp_device(self) -> None:
         with self.settings(TWO_FACTOR_AUTHENTICATION_ENABLED=True):
@@ -392,12 +391,11 @@ class HomeTest(ZulipTestCase):
         # Verify number of queries for Realm admin isn't much higher than for normal users.
         self.login("iago")
         flush_per_request_caches()
-        with queries_captured() as queries:
+        with self.assert_database_query_count(44):
             with patch("zerver.lib.cache.cache_set") as cache_mock:
                 result = self._get_home_page()
                 self.check_rendered_logged_in_app(result)
                 self.assert_length(cache_mock.call_args_list, 6)
-            self.assert_length(queries, 41)
 
     def test_num_queries_with_streams(self) -> None:
         main_user = self.example_user("hamlet")
@@ -425,29 +423,27 @@ class HomeTest(ZulipTestCase):
 
         # Then for the second page load, measure the number of queries.
         flush_per_request_caches()
-        with queries_captured() as queries2:
+        with self.assert_database_query_count(42):
             result = self._get_home_page()
-
-        self.assert_length(queries2, 39)
 
         # Do a sanity check that our new streams were in the payload.
         html = result.content.decode()
         self.assertIn("test_stream_7", html)
 
-    def _get_home_page(self, **kwargs: Any) -> HttpResponse:
+    def _get_home_page(self, **kwargs: Any) -> "TestHttpResponse":
         with patch("zerver.lib.events.request_event_queue", return_value=42), patch(
             "zerver.lib.events.get_user_events", return_value=[]
         ):
             result = self.client_get("/", dict(**kwargs))
         return result
 
-    def _sanity_check(self, result: HttpResponse) -> None:
+    def _sanity_check(self, result: "TestHttpResponse") -> None:
         """
         Use this for tests that are geared toward specific edge cases, but
         which still want the home page to load properly.
         """
         html = result.content.decode()
-        if "empty_feed_notice_main" not in html:
+        if "message_feed_errors_container" not in html:
             raise AssertionError("Home page probably did not load.")
 
     def test_terms_of_service(self) -> None:
@@ -462,7 +458,7 @@ class HomeTest(ZulipTestCase):
                 result = self.client_get("/", dict(stream="Denmark"))
 
             html = result.content.decode()
-            self.assertIn("Accept the new Terms of Service", html)
+            self.assertIn("Accept the Terms of Service", html)
 
     def test_banned_desktop_app_versions(self) -> None:
         user = self.example_user("hamlet")
@@ -494,9 +490,9 @@ class HomeTest(ZulipTestCase):
         user.tos_version = None
         user.save()
 
-        with self.settings(FIRST_TIME_TERMS_OF_SERVICE_TEMPLATE="zerver/hello.html"), self.settings(
-            TERMS_OF_SERVICE_VERSION="99.99"
-        ):
+        with self.settings(
+            FIRST_TIME_TERMS_OF_SERVICE_TEMPLATE="corporate/hello.html"
+        ), self.settings(TERMS_OF_SERVICE_VERSION="99.99"):
             result = self.client_post("/accounts/accept_terms/")
             self.assertEqual(result.status_code, 200)
             self.assert_in_response("I agree to the", result)
@@ -666,6 +662,7 @@ class HomeTest(ZulipTestCase):
                         avatar_version=cross_realm_email_gateway_bot.avatar_version,
                         bot_owner_id=None,
                         bot_type=1,
+                        delivery_email=cross_realm_email_gateway_bot.delivery_email,
                         email=cross_realm_email_gateway_bot.email,
                         user_id=cross_realm_email_gateway_bot.id,
                         full_name=cross_realm_email_gateway_bot.full_name,
@@ -682,6 +679,7 @@ class HomeTest(ZulipTestCase):
                         avatar_version=cross_realm_notification_bot.avatar_version,
                         bot_owner_id=None,
                         bot_type=1,
+                        delivery_email=cross_realm_notification_bot.delivery_email,
                         email=cross_realm_notification_bot.email,
                         user_id=cross_realm_notification_bot.id,
                         full_name=cross_realm_notification_bot.full_name,
@@ -698,6 +696,7 @@ class HomeTest(ZulipTestCase):
                         avatar_version=cross_realm_welcome_bot.avatar_version,
                         bot_owner_id=None,
                         bot_type=1,
+                        delivery_email=cross_realm_welcome_bot.delivery_email,
                         email=cross_realm_welcome_bot.email,
                         user_id=cross_realm_welcome_bot.id,
                         full_name=cross_realm_welcome_bot.full_name,
@@ -877,7 +876,7 @@ class HomeTest(ZulipTestCase):
         # Check when server_upgrade_nag_deadline > last_server_upgrade_time
         hamlet = self.example_user("hamlet")
         iago = self.example_user("iago")
-        now = LAST_SERVER_UPGRADE_TIME.replace(tzinfo=pytz.utc)
+        now = LAST_SERVER_UPGRADE_TIME.replace(tzinfo=datetime.timezone.utc)
         with patch("zerver.lib.compatibility.timezone_now", return_value=now + timedelta(days=10)):
             self.assertEqual(is_outdated_server(iago), False)
             self.assertEqual(is_outdated_server(hamlet), False)
@@ -925,6 +924,7 @@ class HomeTest(ZulipTestCase):
 
         # verify furthest_read_time is last activity time, irrespective of client
         furthest_read_time = get_furthest_read_time(hamlet)
+        assert furthest_read_time is not None
         self.assertGreaterEqual(furthest_read_time, activity_time)
 
         # Check when user has no activity

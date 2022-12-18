@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import zipfile
 from collections import defaultdict
+from email.headerregistry import Address
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Type, TypeVar
 
 import orjson
@@ -28,6 +29,7 @@ from zerver.data_import.import_util import (
     build_usermessages,
     build_zerver_realm,
     create_converted_data_files,
+    long_term_idle_helper,
     make_subscriber_map,
     process_avatars,
     process_emojis,
@@ -38,8 +40,9 @@ from zerver.data_import.slack_message_conversion import (
     convert_to_zulip_markdown,
     get_user_full_name,
 )
-from zerver.lib.emoji import name_to_codepoint
+from zerver.lib.emoji import codepoint_to_name
 from zerver.lib.export import MESSAGE_BATCH_CHUNK_SIZE
+from zerver.lib.storage import static_path
 from zerver.lib.upload import resize_logo, sanitize_name
 from zerver.models import (
     CustomProfileField,
@@ -58,6 +61,34 @@ DMMembersT = Dict[str, Tuple[str, str]]
 SlackToZulipRecipientT = Dict[str, int]
 # Generic type for SlackBotEmail class
 SlackBotEmailT = TypeVar("SlackBotEmailT", bound="SlackBotEmail")
+
+# We can look up unicode codepoints for Slack emoji using iamcal emoji
+# data. https://emojipedia.org/slack/, documents Slack's emoji names
+# are derived from https://github.com/iamcal/emoji-data; this seems
+# likely to remain true since Cal is a Slack's cofounder.
+emoji_data_file_path = static_path("generated/emoji/emoji-datasource-google-emoji.json")
+with open(emoji_data_file_path, "rb") as emoji_data_file:
+    emoji_data = orjson.loads(emoji_data_file.read())
+
+
+def get_emoji_code(emoji_dict: Dict[str, Any]) -> str:
+    # This function is identical with the function with the same name at
+    # tools/setup/emoji/emoji_setup_utils.py.
+    # This function is unlikely to be changed, unless iamcal changes their data
+    # structure.
+    emoji_code = emoji_dict.get("non_qualified") or emoji_dict["unified"]
+    return emoji_code.lower()
+
+
+# Build the translation dict from Slack emoji name to codepoint.
+slack_emoji_name_to_codepoint: Dict[str, str] = {}
+for emoji_dict in emoji_data:
+    short_name = emoji_dict["short_name"]
+    emoji_code = get_emoji_code(emoji_dict)
+    slack_emoji_name_to_codepoint[short_name] = emoji_code
+    for sn in emoji_dict["short_names"]:
+        if sn != short_name:
+            slack_emoji_name_to_codepoint[sn] = emoji_code
 
 
 class SlackBotEmail:
@@ -78,14 +109,16 @@ class SlackBotEmail:
         else:
             raise AssertionError("Could not identify bot type")
 
-        email = slack_bot_name.replace("Bot", "").replace(" ", "") + f"-bot@{domain_name}"
+        email = Address(
+            username=slack_bot_name.replace("Bot", "").replace(" ", "").lower() + "-bot",
+            domain=domain_name,
+        ).addr_spec
 
         if email in cls.duplicate_email_count:
-            email_prefix, email_suffix = email.split("@")
-            email_prefix += cls.duplicate_email_count[email]
-            email = "@".join([email_prefix, email_suffix])
-            # Increment the duplicate email count
             cls.duplicate_email_count[email] += 1
+            address = Address(addr_spec=email)
+            email_username = address.username + "-" + str(cls.duplicate_email_count[email])
+            email = Address(username=email_username, domain=address.domain).addr_spec
         else:
             cls.duplicate_email_count[email] = 1
 
@@ -207,7 +240,7 @@ def users_to_zerver_userprofile(
     """
     Returns:
     1. zerver_userprofile, which is a list of user profile
-    2. avatar_list, which is list to map avatars to Zulip avatard records.json
+    2. avatar_list, which is list to map avatars to Zulip avatar records.json
     3. slack_user_id_to_zulip_user_id, which is a dictionary to map from Slack user ID to Zulip
        user id
     4. zerver_customprofilefield, which is a list of all custom profile fields
@@ -401,11 +434,11 @@ def get_user_email(user: ZerverFieldsT, domain_name: str) -> str:
     if "email" in user["profile"]:
         return user["profile"]["email"]
     if user["is_mirror_dummy"]:
-        return "{}@{}.slack.com".format(user["name"], user["team_domain"])
+        return Address(username=user["name"], domain=f'{user["team_domain"]}.slack.com').addr_spec
     if "bot_id" in user["profile"]:
         return SlackBotEmail.get_email(user["profile"], domain_name)
     if get_user_full_name(user).lower() == "slackbot":
-        return f"imported-slackbot-bot@{domain_name}"
+        return Address(username="imported-slackbot-bot", domain=domain_name).addr_spec
     raise AssertionError(f"Could not find email address for Slack user {user}")
 
 
@@ -641,51 +674,14 @@ def process_long_term_idle_users(
     dm_members: DMMembersT,
     zerver_userprofile: List[ZerverFieldsT],
 ) -> Set[int]:
-    """Algorithmically, we treat users who have sent at least 10 messages
-    or have sent a message within the last 60 days as active.
-    Everyone else is treated as long-term idle, which means they will
-    have a slightly slower first page load when coming back to
-    Zulip.
-    """
-    all_messages = get_messages_iterator(slack_data_dir, added_channels, added_mpims, dm_members)
-
-    sender_counts: Dict[str, int] = defaultdict(int)
-    recent_senders: Set[str] = set()
-    NOW = float(timezone_now().timestamp())
-    for message in all_messages:
-        timestamp = float(message["ts"])
-        slack_user_id = get_message_sending_user(message)
-        if not slack_user_id:
-            continue
-
-        if slack_user_id in recent_senders:
-            continue
-
-        if NOW - timestamp < 60:
-            recent_senders.add(slack_user_id)
-
-        sender_counts[slack_user_id] += 1
-    for (slack_sender_id, count) in sender_counts.items():
-        if count > 10:
-            recent_senders.add(slack_sender_id)
-
-    long_term_idle = set()
-
-    for slack_user in users:
-        if slack_user["id"] in recent_senders:
-            continue
-        zulip_user_id = slack_user_id_to_zulip_user_id[slack_user["id"]]
-        long_term_idle.add(zulip_user_id)
-
-    for user_profile_row in zerver_userprofile:
-        if user_profile_row["id"] in long_term_idle:
-            user_profile_row["long_term_idle"] = True
-            # Setting last_active_message_id to 1 means the user, if
-            # imported, will get the full message history for the
-            # streams they were on.
-            user_profile_row["last_active_message_id"] = 1
-
-    return long_term_idle
+    return long_term_idle_helper(
+        get_messages_iterator(slack_data_dir, added_channels, added_mpims, dm_members),
+        get_message_sending_user,
+        get_timestamp_from_message,
+        lambda id: slack_user_id_to_zulip_user_id[id],
+        iter(user["id"] for user in users),
+        zerver_userprofile,
+    )
 
 
 def convert_slack_workspace_messages(
@@ -798,7 +794,8 @@ def get_messages_iterator(
         dir_path = os.path.join(slack_data_dir, dir_name)
         json_names = os.listdir(dir_path)
         for json_name in json_names:
-            all_json_names[json_name].append(dir_path)
+            if json_name.endswith(".json"):
+                all_json_names[json_name].append(dir_path)
 
     # Sort json_name by date
     for json_name in sorted(all_json_names.keys()):
@@ -827,7 +824,7 @@ def get_messages_iterator(
 
         # we sort the messages according to the timestamp to show messages with
         # the proper date order
-        yield from sorted(messages_for_one_day, key=lambda m: m["ts"])
+        yield from sorted(messages_for_one_day, key=get_timestamp_from_message)
 
 
 def channel_message_to_zerver_message(
@@ -956,16 +953,17 @@ def channel_message_to_zerver_message(
         topic_name = "imported from Slack"
 
         zulip_message = build_message(
-            topic_name,
-            float(message["ts"]),
-            message_id,
-            content,
-            rendered_content,
-            slack_user_id_to_zulip_user_id[slack_user_id],
-            recipient_id,
-            has_image,
-            has_link,
-            has_attachment,
+            topic_name=topic_name,
+            date_sent=get_timestamp_from_message(message),
+            message_id=message_id,
+            content=content,
+            rendered_content=rendered_content,
+            user_id=slack_user_id_to_zulip_user_id[slack_user_id],
+            recipient_id=recipient_id,
+            realm_id=realm_id,
+            has_image=has_image,
+            has_link=has_link,
+            has_attachment=has_attachment,
         )
         zerver_message.append(zulip_message)
 
@@ -1034,6 +1032,11 @@ def process_message_files(
             # real data on the actual file (presumably in cases where
             # the file was deleted). hidden_by_limit mode is for files
             # that are hidden because of 10k cap in free plan.
+            continue
+
+        if fileinfo.get("file_access", "") in ["access_denied", "file_not_found"]:
+            # Slack sometimes includes file stubs for files it declares
+            # inaccessible and does not further reference.
             continue
 
         url = fileinfo["url_private"]
@@ -1117,20 +1120,44 @@ def build_reactions(
     for realm_emoji in zerver_realmemoji:
         realmemoji[realm_emoji["name"]] = realm_emoji["id"]
 
+    # Slack's data exports use encode skin tone variants on emoji
+    # reactions like this: `clap::skin-tone-2`. For now, we only
+    # use the name of the base emoji, since Zulip's emoji
+    # reactions system doesn't yet support skin tone modifiers.
+    # We need to merge and dedup reactions, as someone may have
+    # reacted to `clap::skin-tone-1` and `clap::skin-tone-2`, etc.
+    merged_reactions = defaultdict(set)
+    for slack_reaction in reactions:
+        emoji_name = slack_reaction["name"].split("::", maxsplit=1)[0]
+        merged_reactions[emoji_name].update(slack_reaction["users"])
+    reactions = [{"name": k, "users": v, "count": len(v)} for k, v in merged_reactions.items()]
+
     # For the Unicode emoji codes, we use equivalent of
     # function 'emoji_name_to_emoji_code' in 'zerver/lib/emoji' here
     for slack_reaction in reactions:
         emoji_name = slack_reaction["name"]
-        if emoji_name in name_to_codepoint:
-            emoji_code = name_to_codepoint[emoji_name]
+        if emoji_name in slack_emoji_name_to_codepoint:
+            emoji_code = slack_emoji_name_to_codepoint[emoji_name]
+            try:
+                zulip_emoji_name = codepoint_to_name[emoji_code]
+            except KeyError:
+                print(f"WARN: Emoji found in iamcal but not Zulip: {emoji_name}")
+                continue
+            # Convert Slack emoji name to Zulip emoji name.
+            emoji_name = zulip_emoji_name
             reaction_type = Reaction.UNICODE_EMOJI
         elif emoji_name in realmemoji:
             emoji_code = realmemoji[emoji_name]
             reaction_type = Reaction.REALM_EMOJI
         else:
+            print(f"WARN: Emoji not found in iamcal: {emoji_name}")
             continue
 
         for slack_user_id in slack_reaction["users"]:
+            if slack_user_id not in slack_user_id_to_zulip_user_id:
+                # Deleted users still have reaction references but no profile, so we skip
+                continue
+
             reaction_id = NEXT_ID("reaction")
             reaction = Reaction(
                 id=reaction_id,
@@ -1173,6 +1200,10 @@ def get_message_sending_user(message: ZerverFieldsT) -> Optional[str]:
     if message.get("file"):
         return message["file"].get("user")
     return None
+
+
+def get_timestamp_from_message(message: ZerverFieldsT) -> float:
+    return float(message["ts"])
 
 
 def fetch_shared_channel_users(

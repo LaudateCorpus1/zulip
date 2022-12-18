@@ -7,7 +7,7 @@ from urllib.parse import unquote
 from django.http import HttpRequest
 from django.utils.translation import gettext as _
 
-from zerver.lib.actions import (
+from zerver.actions.message_send import (
     check_send_private_message,
     check_send_stream_message,
     check_send_stream_message_by_id,
@@ -37,9 +37,6 @@ that this integration expects!
 
 SETUP_MESSAGE_TEMPLATE = "{integration} webhook has been successfully configured"
 SETUP_MESSAGE_USER_PART = " by {user_name}"
-
-# Django prefixes all custom HTTP headers with `HTTP_`
-DJANGO_HTTP_PREFIX = "HTTP_"
 
 
 def get_setup_webhook_message(integration: str, user_name: Optional[str] = None) -> str:
@@ -117,7 +114,7 @@ def check_send_webhook_message(
         # double escape their URLs in a manner that escaped space characters
         # (%20) are never properly decoded. We work around that by making sure
         # that the URL parameters are decoded on our end.
-        if stream is not None and unquote_url_parameters:
+        if unquote_url_parameters:
             stream = unquote(stream)
 
         if user_specified_topic is not None:
@@ -166,7 +163,7 @@ def validate_extract_webhook_http_header(
 ) -> Optional[str]:
     assert request.user.is_authenticated
 
-    extracted_header = request.META.get(DJANGO_HTTP_PREFIX + header)
+    extracted_header = request.headers.get(header)
     if extracted_header is None and fatal:
         message_body = MISSING_EVENT_HEADER_MESSAGE.format(
             bot_name=request.user.full_name,
@@ -195,7 +192,7 @@ def get_fixture_http_headers(integration_name: str, fixture_name: str) -> Dict["
         # TODO: We may want to migrate to a more explicit registration
         # strategy for this behavior rather than a try/except import.
         view_module = importlib.import_module(view_module_name)
-        fixture_to_headers = getattr(view_module, "fixture_to_headers")
+        fixture_to_headers = view_module.fixture_to_headers
     except (ImportError, AttributeError):
         return {}
     return fixture_to_headers(fixture_name)

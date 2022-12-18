@@ -2,7 +2,7 @@
 
 const {strict: assert} = require("assert");
 
-const {with_function_call_disallowed_rewire, zrequire} = require("../zjsunit/namespace");
+const {mock_esm, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 const $ = require("../zjsunit/zjquery");
 const {page_params} = require("../zjsunit/zpage_params");
@@ -15,6 +15,12 @@ const people = zrequire("people");
 const stream_data = zrequire("stream_data");
 const {Filter} = zrequire("../js/filter");
 const narrow = zrequire("narrow");
+const settings_config = zrequire("settings_config");
+
+const compose_pm_pill = mock_esm("../../static/js/compose_pm_pill");
+mock_esm("../../static/js/spectators", {
+    login_to_access: () => {},
+});
 
 function empty_narrow_html(title, html, search_data) {
     const opts = {
@@ -49,6 +55,13 @@ const ray = {
     email: "ray@example.com",
     user_id: 22,
     full_name: "Raymond",
+};
+
+const bot = {
+    email: "bot@example.com",
+    user_id: 25,
+    full_name: "Example Bot",
+    is_bot: true,
 };
 
 function hide_all_empty_narrow_messages() {
@@ -171,14 +184,14 @@ run_test("uris", () => {
     people.add_active_user(me);
     people.initialize_current_user(me.user_id);
 
-    let uri = hash_util.pm_with_uri(ray.email);
-    assert.equal(uri, "#narrow/pm-with/22-ray");
+    let url = hash_util.pm_with_url(ray.email);
+    assert.equal(url, "#narrow/pm-with/22-Raymond");
 
-    uri = hash_util.huddle_with_uri("22,23");
-    assert.equal(uri, "#narrow/pm-with/22,23-group");
+    url = hash_util.huddle_with_url("22,23");
+    assert.equal(url, "#narrow/pm-with/22,23-group");
 
-    uri = hash_util.by_sender_uri(ray.email);
-    assert.equal(uri, "#narrow/sender/22-ray");
+    url = hash_util.by_sender_url(ray.email);
+    assert.equal(url, "#narrow/sender/22-Raymond");
 
     let emails = hash_util.decode_operand("pm-with", "22,23-group");
     assert.equal(emails, "alice@example.com,ray@example.com");
@@ -215,7 +228,7 @@ run_test("show_empty_narrow_message", ({mock_template}) => {
         empty_narrow_html("translated: This stream does not exist or is private."),
     );
 
-    // for non sub public stream
+    // for non-subbed public stream
     stream_data.add_sub({name: "ROME", stream_id: 99});
     set_filter([["stream", "Rome"]]);
     hide_all_empty_narrow_messages();
@@ -227,6 +240,47 @@ run_test("show_empty_narrow_message", ({mock_template}) => {
             'translated HTML: <button class="button white rounded stream_sub_unsub_button sea-green" type="button" name="subscription">Subscribe</button>',
         ),
     );
+
+    // for non-web-public stream for spectator
+    page_params.is_spectator = true;
+    set_filter([["stream", "Rome"]]);
+    hide_all_empty_narrow_messages();
+    narrow_banner.show_empty_narrow_message();
+    assert.equal(
+        $(".empty_feed_notice_main").html(),
+        empty_narrow_html(
+            "",
+            'translated HTML: This is not a <a href="/help/public-access-option">publicly accessible</a> conversation.',
+        ),
+    );
+
+    set_filter([
+        ["stream", "Rome"],
+        ["topic", "foo"],
+    ]);
+    hide_all_empty_narrow_messages();
+    narrow_banner.show_empty_narrow_message();
+    assert.equal(
+        $(".empty_feed_notice_main").html(),
+        empty_narrow_html(
+            "",
+            'translated HTML: This is not a <a href="/help/public-access-option">publicly accessible</a> conversation.',
+        ),
+    );
+
+    // for web-public stream for spectator
+    stream_data.add_sub({name: "web-public-stream", stream_id: 1231, is_web_public: true});
+    set_filter([
+        ["stream", "web-public-stream"],
+        ["topic", "foo"],
+    ]);
+    hide_all_empty_narrow_messages();
+    narrow_banner.show_empty_narrow_message();
+    assert.equal(
+        $(".empty_feed_notice_main").html(),
+        empty_narrow_html("translated: Nothing's been sent here yet!", ""),
+    );
+    page_params.is_spectator = false;
 
     set_filter([["is", "starred"]]);
     hide_all_empty_narrow_messages();
@@ -250,6 +304,22 @@ run_test("show_empty_narrow_message", ({mock_template}) => {
         ),
     );
 
+    // organization has disabled sending private messages
+    page_params.realm_private_message_policy =
+        settings_config.private_message_policy_values.disabled.code;
+    set_filter([["is", "private"]]);
+    hide_all_empty_narrow_messages();
+    narrow_banner.show_empty_narrow_message();
+    assert.equal(
+        $(".empty_feed_notice_main").html(),
+        empty_narrow_html(
+            "translated: You are not allowed to send private messages in this organization.",
+        ),
+    );
+
+    // sending private messages enabled
+    page_params.realm_private_message_policy =
+        settings_config.private_message_policy_values.by_anyone.code;
     set_filter([["is", "private"]]);
     hide_all_empty_narrow_messages();
     narrow_banner.show_empty_narrow_message();
@@ -277,6 +347,11 @@ run_test("show_empty_narrow_message", ({mock_template}) => {
         empty_narrow_html("translated: No topics are marked as resolved."),
     );
 
+    // organization has disabled sending private messages
+    page_params.realm_private_message_policy =
+        settings_config.private_message_policy_values.disabled.code;
+
+    // prioritize information about invalid user(s) in narrow/search
     set_filter([["pm-with", ["Yo"]]]);
     hide_all_empty_narrow_messages();
     narrow_banner.show_empty_narrow_message();
@@ -300,7 +375,46 @@ run_test("show_empty_narrow_message", ({mock_template}) => {
     assert.equal(
         $(".empty_feed_notice_main").html(),
         empty_narrow_html(
-            "translated: You have no private messages with this person yet!",
+            "translated: You are not allowed to send private messages in this organization.",
+        ),
+    );
+
+    // private messages with a bot are possible even though
+    // the organization has disabled sending private messages
+    people.add_active_user(bot);
+    set_filter([["pm-with", "bot@example.com"]]);
+    hide_all_empty_narrow_messages();
+    narrow_banner.show_empty_narrow_message();
+    assert.equal(
+        $(".empty_feed_notice_main").html(),
+        empty_narrow_html(
+            "translated HTML: You have no private messages with Example Bot yet.",
+            'translated HTML: Why not <a href="#" class="empty_feed_compose_private">start the conversation</a>?',
+        ),
+    );
+
+    // group private messages with bots are not possible when
+    // sending private messages is disabled
+    set_filter([["pm-with", bot.email + "," + alice.email]]);
+    hide_all_empty_narrow_messages();
+    narrow_banner.show_empty_narrow_message();
+    assert.equal(
+        $(".empty_feed_notice_main").html(),
+        empty_narrow_html(
+            "translated: You are not allowed to send private messages in this organization.",
+        ),
+    );
+
+    // sending private messages enabled
+    page_params.realm_private_message_policy =
+        settings_config.private_message_policy_values.by_anyone.code;
+    set_filter([["pm-with", "alice@example.com"]]);
+    hide_all_empty_narrow_messages();
+    narrow_banner.show_empty_narrow_message();
+    assert.equal(
+        $(".empty_feed_notice_main").html(),
+        empty_narrow_html(
+            "translated HTML: You have no private messages with Alice Smith yet.",
             'translated HTML: Why not <a href="#" class="empty_feed_compose_private">start the conversation</a>?',
         ),
     );
@@ -324,9 +438,22 @@ run_test("show_empty_narrow_message", ({mock_template}) => {
     assert.equal(
         $(".empty_feed_notice_main").html(),
         empty_narrow_html(
-            "translated: You have no private messages with these people yet!",
+            "translated: You have no private messages with these users yet.",
             'translated HTML: Why not <a href="#" class="empty_feed_compose_private">start the conversation</a>?',
         ),
+    );
+
+    // organization has disabled sending private messages
+    page_params.realm_private_message_policy =
+        settings_config.private_message_policy_values.disabled.code;
+
+    // prioritize information about invalid user in narrow/search
+    set_filter([["group-pm-with", ["Yo"]]]);
+    hide_all_empty_narrow_messages();
+    narrow_banner.show_empty_narrow_message();
+    assert.equal(
+        $(".empty_feed_notice_main").html(),
+        empty_narrow_html("translated: This user does not exist!"),
     );
 
     set_filter([["group-pm-with", "alice@example.com"]]);
@@ -335,7 +462,32 @@ run_test("show_empty_narrow_message", ({mock_template}) => {
     assert.equal(
         $(".empty_feed_notice_main").html(),
         empty_narrow_html(
-            "translated: You have no group private messages with this person yet!",
+            "translated: You are not allowed to send group private messages in this organization.",
+        ),
+    );
+
+    // group private messages with bots are not possible when
+    // sending private messages is disabled
+    set_filter([["group-pm-with", "bot@example.com"]]);
+    hide_all_empty_narrow_messages();
+    narrow_banner.show_empty_narrow_message();
+    assert.equal(
+        $(".empty_feed_notice_main").html(),
+        empty_narrow_html(
+            "translated: You are not allowed to send group private messages in this organization.",
+        ),
+    );
+
+    // sending private messages enabled
+    page_params.realm_private_message_policy =
+        settings_config.private_message_policy_values.by_anyone.code;
+    set_filter([["group-pm-with", "alice@example.com"]]);
+    hide_all_empty_narrow_messages();
+    narrow_banner.show_empty_narrow_message();
+    assert.equal(
+        $(".empty_feed_notice_main").html(),
+        empty_narrow_html(
+            "translated HTML: You have no group private messages with Alice Smith yet.",
             'translated HTML: Why not <a href="#" class="empty_feed_compose_private">start the conversation</a>?',
         ),
     );
@@ -345,7 +497,9 @@ run_test("show_empty_narrow_message", ({mock_template}) => {
     narrow_banner.show_empty_narrow_message();
     assert.equal(
         $(".empty_feed_notice_main").html(),
-        empty_narrow_html("translated: You haven't received any messages sent by this user yet!"),
+        empty_narrow_html(
+            "translated HTML: You haven't received any messages sent by Raymond yet.",
+        ),
     );
 
     set_filter([["sender", "sinwar@example.com"]]);
@@ -421,7 +575,6 @@ run_test("show_empty_narrow_message_with_search", ({mock_template}) => {
 });
 
 run_test("hide_empty_narrow_message", () => {
-    $(".empty_feed_notice_main").html("<div class='empty_feed_notice'>Nothing here</div>");
     narrow_banner.hide_empty_narrow_message();
     assert.equal($(".empty_feed_notice").text(), "never-been-set");
 });
@@ -548,21 +701,17 @@ run_test("show_invalid_narrow_message", ({mock_template}) => {
     );
 });
 
-run_test("narrow_to_compose_target errors", () => {
-    function test() {
-        with_function_call_disallowed_rewire(narrow, "activate", () => {
-            narrow.to_compose_target();
-        });
-    }
+run_test("narrow_to_compose_target errors", ({disallow_rewire}) => {
+    disallow_rewire(narrow, "activate");
 
     // No-op when not composing.
     compose_state.set_message_type(false);
-    test();
+    narrow.to_compose_target();
 
     // No-op when empty stream.
     compose_state.set_message_type("stream");
     compose_state.stream_name("");
-    test();
+    narrow.to_compose_target();
 });
 
 run_test("narrow_to_compose_target streams", ({override_rewire}) => {
@@ -613,7 +762,7 @@ run_test("narrow_to_compose_target streams", ({override_rewire}) => {
     assert.deepEqual(args.operators, [{operator: "stream", operand: "ROME"}]);
 });
 
-run_test("narrow_to_compose_target PMs", ({override_rewire}) => {
+run_test("narrow_to_compose_target PMs", ({override, override_rewire}) => {
     const args = {called: false};
     override_rewire(narrow, "activate", (operators, opts) => {
         args.operators = operators;
@@ -622,7 +771,7 @@ run_test("narrow_to_compose_target PMs", ({override_rewire}) => {
     });
 
     let emails;
-    override_rewire(compose_state, "private_message_recipient", () => emails);
+    override(compose_pm_pill, "get_emails", () => emails);
 
     compose_state.set_message_type("private");
     people.add_active_user(ray);

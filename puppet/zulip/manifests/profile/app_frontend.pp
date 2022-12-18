@@ -10,9 +10,9 @@ class zulip::profile::app_frontend {
   } else {
     $nginx_listen_port = zulipconf('application_server', 'nginx_listen_port', 443)
   }
-  $ssl_dir = $::osfamily ? {
-    'debian' => '/etc/ssl',
-    'redhat' => '/etc/pki/tls',
+  $ssl_dir = $::os['family'] ? {
+    'Debian' => '/etc/ssl',
+    'RedHat' => '/etc/pki/tls',
   }
   file { '/etc/nginx/sites-available/zulip-enterprise':
     ensure  => file,
@@ -31,7 +31,7 @@ class zulip::profile::app_frontend {
     source => 'puppet:///modules/zulip/logrotate/zulip',
   }
   file { '/etc/nginx/sites-enabled/zulip-enterprise':
-    ensure  => 'link',
+    ensure  => link,
     require => Package[$zulip::common::nginx],
     target  => '/etc/nginx/sites-available/zulip-enterprise',
     notify  => Service['nginx'],
@@ -60,9 +60,16 @@ class zulip::profile::app_frontend {
     source  => 'puppet:///modules/zulip/letsencrypt/nginx-deploy-hook.sh',
     require => Package[certbot],
   }
-  exec { 'fix-standalone-certbot':
-    onlyif  => 'test -d /etc/letsencrypt/renewal && grep -qx "authenticator = standalone" /etc/letsencrypt/renewal/*.conf',
-    command => "${::zulip_scripts_path}/lib/fix-standalone-certbot",
+  if ! $nginx_http_only {
+      exec { 'fix-standalone-certbot':
+        onlyif  => @(EOT),
+          test -L /etc/ssl/certs/zulip.combined-chain.crt &&
+          readlink /etc/ssl/certs/zulip.combined-chain.crt | grep -q /etc/letsencrypt/live/ &&
+          test -d /etc/letsencrypt/renewal &&
+          grep -qx "authenticator = standalone" /etc/letsencrypt/renewal/*.conf
+          | EOT
+        command => "${::zulip_scripts_path}/lib/fix-standalone-certbot",
+      }
   }
 
   # Restart the server regularly to avoid potential memory leak problems.

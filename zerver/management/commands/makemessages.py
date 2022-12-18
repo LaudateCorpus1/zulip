@@ -151,6 +151,8 @@ class Command(makemessages.Command):
         try:
             ignore_patterns = options.get("ignore_patterns", [])
             ignore_patterns.append("docs/*")
+            ignore_patterns.append("templates/zerver/emails/compiled/*")
+            ignore_patterns.append("templates/zerver/emails/custom/*")
             ignore_patterns.append("var/*")
             options["ignore_patterns"] = ignore_patterns
             super().handle(*args, **options)
@@ -225,7 +227,10 @@ class Command(makemessages.Command):
         exclude = self.frontend_exclude
         process_all = self.frontend_all
 
-        paths = glob.glob(f"{self.default_locale_path}/*")
+        # After calling super().handle(), default_locale_path gets set on self
+        # so that we can reuse it here.
+        default_locale_path = self.default_locale_path  # type: ignore[attr-defined] # not in stubs
+        paths = glob.glob(f"{default_locale_path}/*")
         all_locales = [os.path.basename(path) for path in paths if os.path.isdir(path)]
 
         # Account for excluded locales

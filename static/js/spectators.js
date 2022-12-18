@@ -1,5 +1,5 @@
-// Module for displaying the modal asking spectators to login when
-// attempting to do things that are not possible as a specatator (like
+// Module for displaying the modal asking spectators to log in when
+// attempting to do things that are not possible as a spectator (like
 // add an emoji reaction, star a message, etc.).  While in many cases,
 // we will prefer to hide menu options that don't make sense for
 // spectators, this modal is useful for everything that doesn't make
@@ -14,26 +14,23 @@ import * as hash_util from "./hash_util";
 import * as overlays from "./overlays";
 import {page_params} from "./page_params";
 
-export function login_to_access() {
+export function login_to_access(empty_narrow) {
     // Hide all overlays, popover and go back to the previous hash if the
     // hash has changed.
-    let login_link;
-    if (page_params.development_environment) {
-        login_link = "/devlogin/?" + hash_util.current_hash_as_next();
-    } else {
-        login_link = "/login/?" + hash_util.current_hash_as_next();
-    }
+    const login_link = hash_util.build_login_link();
+    const realm_name = page_params.realm_name;
 
     $("body").append(
         render_login_to_access_modal({
             signup_link: "/register",
             login_link,
+            empty_narrow,
+            realm_name,
         }),
     );
 
     overlays.open_modal("login_to_access_modal", {
         autoremove: true,
-        micromodal: true,
         on_hide: () => {
             browser_history.return_to_web_public_hash();
         },

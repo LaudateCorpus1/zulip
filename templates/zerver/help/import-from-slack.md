@@ -1,146 +1,187 @@
 # Import from Slack
 
-Starting with Zulip 1.8, Zulip supports importing data from Slack,
-including users, channels, messages, attachments, avatars, custom
-emoji, and emoji reactions.
+{!import-workspace-to-zulip.md!}
 
-This tool has been used to import Slack workspaces with 10,000 members
-and millions of messages. If you're planning on doing an import much
-larger than that, or run into performance issues when importing,
-[contact us](/help/contact-support) for help.
+## Import process overview
 
-**Note:** You can only import a Slack workspace as a new Zulip
-organization. In particular, you cannot use this tool to import from Slack
-into an existing Zulip organization.
-
-## Import from Slack
-
-First, export your data from Slack.
-
-!!! warn ""
-
-    **Note:** Only Slack owners and admins can export data from Slack.
-    See Slack's
-    [guide to data exports](https://get.slack.help/hc/en-us/articles/201658943-Export-data-and-message-history)
-    for more information.
-
-#### Get a Slack API token.
-
-It will be a long string starting with `xoxb-`.  It is required to
-fetch data that Slack doesn't include in their data exports, like
-email addresses.
-
+To import your Slack organization into Zulip, you will need to take the
+following steps, which are described in more detail below:
 
 {start_tabs}
 
-1. [Create a new Slack app](https://api.slack.com/apps).
+1. [Export your Slack data](#export-your-slack-data).
 
-2. [Add OAuth scopes](https://api.slack.com/authentication/basics#scopes)
-   to your app. We need the following 'bot token scopes':
+2. [Import your Slack data into Zulip](#import-your-data-into-zulip).
+
+3. [Clean up](#clean-up-after-the-slack-export) after the Slack export.
+
+4. [Get your organization started with Zulip](#get-your-organization-started-with-zulip)!
+
+{end_tabs}
+
+## Import your organization from Slack into Zulip
+
+### Export your Slack data
+
+Slack's [data export
+service](https://slack.com/services/export) allows you to
+export all public channel messages, **including older messages that may no
+longer be searchable** under your Slack plan.
+
+Unfortunately, Slack [only
+allows](https://slack.com/help/articles/201658943-Export-your-workspace-data)
+workspaces that are on the **Business+** or **Enterprise Grid** plans
+to export private channels and direct messages. Slack's support has
+confirmed this policy as of August 2022.
+
+Owners of **Business+** or **Enterprise Grid** workspaces can [request
+special
+access](https://slack.com/help/articles/204897248-Guide-to-Slack-import-and-export-tools#options-by-plan)
+in order to export private message data.
+
+{start_tabs}
+
+1. Make sure that you are an owner or admin of your Slack
+   workspace. If you are one, the Slack web application will display
+   that in your profile, in a banner covering the bottom of your
+   avatar.
+
+2. [Export your Slack message history](https://my.slack.com/services/export).
+   You should be able to download a `zip` file with your data a few minutes
+   after you start the export process.
+
+3. You will also need to export your workspace's user data and custom emoji.
+   To do so, start
+   by [creating a new Slack app](https://api.slack.com/apps). Choose the "From
+   scratch" creation option.
+
+4. [Create a
+   bot user](https://slack.com/help/articles/115005265703-Create-a-bot-for-your-workspace),
+   following the instructions to add the following OAuth scopes to your bot:
     - `emoji:read`
     - `users:read`
     - `users:read.email`
     - `team:read`
 
-3. [Install the app](https://api.slack.com/authentication/basics#installing)
-  to your workspace. You will get an API token that you can now use to fetch
-      data from your Slack workspace.
+5. [Install your new app](https://api.slack.com/authentication/basics#installing)
+   to your Slack workspace.
+
+6. You will immediately see a **Bot User OAuth Token**, which is a long
+   string of numbers and characters starting with `xoxb-`. Copy this token. You
+   will use it to download user and emoji data from your Slack workspace.
+
+!!! warn ""
+
+    You may also come across a token starting with `xoxe-`. This token cannot
+    be used for the Slack export process.
 
 {end_tabs}
 
-### Export your Slack data
+### Import your data into Zulip
 
-Now, [Export your Slack data](https://my.slack.com/services/export). You will
-receive a zip file `slack_data.zip`.
+{!import-your-data-into-zulip.md!}
 
+{start_tabs}
 
-This step will also generate a different token starting with
-`xoxe-`; you don't need it.
+{tab|zulip-cloud}
 
-### Import into Zulip Cloud
+{!import-into-a-zulip-cloud-organization.md!}
 
-Email support@zulip.com with `slack_data.zip`, the Slack API token
-generated above, and your desired subdomain. Your imported organization will
-be hosted at `<subdomain>.zulipchat.com`.
+1. Your Slack **Bot User OAuth Token**, which will be a long
+   string of numbers and characters starting with `xoxb-`.
 
-If you've already created a test organization at
-`<subdomain>.zulipchat.com`, let us know, and we can rename the old
-organization first.
+{!import-zulip-cloud-organization-warning.md!}
 
-### Import into a self-hosted Zulip server
+{tab|self-hosting}
 
-First
-[install a new Zulip server](https://zulip.readthedocs.io/en/stable/production/install.html),
-skipping "Step 3: Create a Zulip organization, and log in" (you'll
-create your Zulip organization via the data import tool instead).
+{!import-into-a-self-hosted-zulip-server.md!}
 
-Log in to a shell on your Zulip server as the `zulip` user. To import with
-the most common configuration, run the following commands, replacing
-`<token>` with the value generated above.
+1. To import into an organization hosted on the root domain
+   (`EXTERNAL_HOST`) of the Zulip installation, run the following
+   commands, replacing `<token>` with your Slack **Bot User OAuth Token**.
 
-```
-cd /home/zulip/deployments/current
-./scripts/stop-server
-./manage.py convert_slack_data slack_data.zip --token <token> --output converted_slack_data
-./manage.py import '' converted_slack_data
-./scripts/start-server
-```
+{!import-self-hosted-server-tips.md!}
 
-This could take several minutes to run, depending on how much data
-you're importing.  The server stop/restart is only necessary when
-importing on a server with minimal RAM, where an OOM kill might
-otherwise occur.
+    ```
+    cd /home/zulip/deployments/current
+    ./scripts/stop-server
+    ./manage.py convert_slack_data /tmp/slack_data.zip --token <token> --output /tmp/converted_slack_data
+    ./manage.py import '' /tmp/converted_slack_data
+    ./scripts/start-server
+    ```
 
-**Import options**
+    Alternatively, to import into a custom subdomain, run:
 
-The commands above create an imported organization on the root domain
-(`EXTERNAL_HOST`) of the Zulip installation. You can also import into a
-custom subdomain, e.g. if you already have an existing organization on the
-root domain. Replace the last line above with the following, after replacing
-`<subdomain>` with the desired subdomain.
+    ```
+    cd /home/zulip/deployments/current
+    ./scripts/stop-server
+    ./manage.py convert_slack_data /tmp/slack_data.zip --token <token> --output /tmp/converted_slack_data
+    ./manage.py import <subdomain> /tmp/converted_slack_data
+    ./scripts/start-server
+    ```
 
-```
-./manage.py import <subdomain> converted_slack_data
-```
+1. Follow [step 4](https://zulip.readthedocs.io/en/stable/production/install.html#step-4-configure-and-use)
+   of the guide for [installing a new Zulip
+   server](https://zulip.readthedocs.io/en/stable/production/install.html).
 
-### Remove the Slack app used for export
+{end_tabs}
 
-Once the import is complete, you should delete [the Slack
-app](https://api.slack.com/apps) (and thus API token) that you created
-in the earlier step.  This will prevent the token from being used to
-access your Slack instance in the future.
+#### Import details
 
-{!import-login.md!}
+Whether you are using Zulip Cloud or self-hosting Zulip, here are few notes to keep
+in mind about the import process:
 
-## Caveats
+- Slack does not export workspace settings, so you will need to [configure
+  the settings for your Zulip organization](/help/customize-organization-settings).
+  This includes settings like [email
+  visibility](/help/restrict-visibility-of-email-addresses),
+  [message editing permissions](/help/configure-message-editing-and-deletion#configure-message-editing-and-deletion_1),
+  and [how users can join your organization](/help/restrict-account-creation).
 
-- Slack doesn't export private channels or direct messages unless you pay
-  for Slack Plus or contact Slack support. See
-  [Slack's documentation](https://get.slack.help/hc/en-us/articles/204897248-Guide-to-Slack-import-and-export-tools)
-  for more details.
+- Slack does not export user settings, so users in your organization may want to
+  [customize their account settings](/help/getting-started-with-zulip).
 
-- (Slack Plus import) Message edit history is currently not imported.
+- Slack's user roles are mapped to Zulip's [user
+  roles](/help/roles-and-permissions) in the following way:
 
-- Slack doesn't export user settings or organization settings, so
-  you'll need to configure these manually.
+| Slack role              | Zulip role    |
+|-------------------------|---------------|
+| Workspace Primary Owner | Owner         |
+| Workspace Owner         | Owner         |
+| Workspace Admin         | Administrator |
+| Member                  | Member        |
+| Single Channel Guest    | Guest         |
+| Multi Channel Guest     | Guest         |
+| Channel creator         | none          |
 
-- Import of [user roles](/help/roles-and-permissions):
-    - Slack's `Workspace Primary Owner` and `Workspace Owner` users
-    are mapped to Zulip `Organization owner` users.
-    - Slack's `Workspace Admin` users are mapped to Zulip's `Organization
-      administrator` users.
-    - Slack's `Member` users is mapped to Zulip `Member` users.
-    - Slack's `Single Channel Guest` and `Multi Channel Guest` users
-    are mapped to Zulip `Guest` users.
-    - Slack's `Channel creators` have no special permissions in Zulip.
+- Messages in threads are imported, but they are not explicitly marked as
+  being in a thread.
 
-- The "joined #channel_name" messages are not imported.
+- Message edit history and `@user joined #channel_name` messages are not imported.
 
-- Messages in threads are still imported, but they are not explicitly marked as
-  to be in a thread.
+## Clean up after the Slack export
 
-[upgrade-zulip-from-git]: https://zulip.readthedocs.io/en/latest/production/upgrade-or-modify.html#upgrading-from-a-git-repository
+Once your organization has been successfully imported in to Zulip, you should
+delete [the Slack app](https://api.slack.com/apps) that you created in order to
+[export your Slack data](#export-your-slack-data).  This will prevent the OAuth
+token from being used to access your Slack workspace in the future.
+
+## Get your organization started with Zulip
+
+{!import-get-your-organization-started.md!}
+
+!!! tip ""
+
+    Zulip's [Slack-compatible incoming webhook](/integrations/doc/slack_incoming)
+    makes it easy to migrate integrations.
+
+## Decide how users will log in
+
+{!import-how-users-will-log-in.md!}
 
 ## Related articles
 
-- [Slack-compatible incoming webhook](/integrations/doc/slack_incoming)
+* [Choosing between Zulip Cloud and self-hosting](/help/zulip-cloud-or-self-hosting)
+* [Setting up your organization](/help/getting-your-organization-started-with-zulip)
+* [Slack-compatible incoming webhook](/integrations/doc/slack_incoming)
+* [Getting started with Zulip](/help/getting-started-with-zulip)

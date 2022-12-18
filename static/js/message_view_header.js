@@ -22,7 +22,7 @@ function make_message_view_header(filter) {
     const message_view_header = {};
     if (recent_topics_util.is_visible()) {
         return {
-            title: $t({defaultMessage: "Recent topics"}),
+            title: $t({defaultMessage: "Recent conversations"}),
             icon: "clock-o",
         };
     }
@@ -34,6 +34,12 @@ function make_message_view_header(filter) {
     }
     message_view_header.title = filter.get_title();
     message_view_header.icon = filter.get_icon();
+    if (message_view_header.icon === "globe") {
+        // This is a bit hacky, but it works as a way to communicate
+        // to the HTML template that we need to use the different HTML
+        // required for the globe icon.
+        message_view_header.web_public_stream = true;
+    }
     if (filter.has_operator("stream") && !filter._sub) {
         message_view_header.sub_count = "0";
         message_view_header.formatted_sub_count = "0";
@@ -67,22 +73,23 @@ export function colorize_message_view_header() {
     if (filter === undefined || !filter._sub) {
         return;
     }
-    $("#message_view_header .stream > .fa").css("color", filter._sub.color);
+    // selecting i instead of .fa because web public streams have custom icon.
+    $("#message_view_header a.stream i").css("color", filter._sub.color);
 }
 
 function append_and_display_title_area(message_view_header_data) {
-    const message_view_header_elem = $("#message_view_header");
-    message_view_header_elem.empty();
+    const $message_view_header_elem = $("#message_view_header");
+    $message_view_header_elem.empty();
     const rendered = render_message_view_header(message_view_header_data);
-    message_view_header_elem.append(rendered);
+    $message_view_header_elem.append(rendered);
     if (message_view_header_data.stream_settings_link) {
         colorize_message_view_header();
     }
-    message_view_header_elem.removeClass("notdisplayed");
-    const content = message_view_header_elem.find("span.rendered_markdown");
-    if (content) {
+    $message_view_header_elem.removeClass("notdisplayed");
+    const $content = $message_view_header_elem.find("span.rendered_markdown");
+    if ($content) {
         // Update syntax like stream names, emojis, mentions, timestamps.
-        rendered_markdown.update_elements(content);
+        rendered_markdown.update_elements($content);
     }
 }
 

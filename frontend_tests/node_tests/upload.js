@@ -2,7 +2,7 @@
 
 const {strict: assert} = require("assert");
 
-const {mock_cjs, mock_esm, set_global, zrequire} = require("../zjsunit/namespace");
+const {mock_esm, set_global, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 const $ = require("../zjsunit/zjquery");
 const {page_params} = require("../zjsunit/zpage_params");
@@ -12,38 +12,36 @@ set_global("navigator", {
 });
 
 let uppy_stub;
-function Uppy(options) {
-    return uppy_stub.call(this, options);
-}
-Uppy.Plugin = {
-    prototype: {
-        constructor: null,
+mock_esm("@uppy/core", {
+    Uppy: function Uppy(options) {
+        return uppy_stub.call(this, options);
     },
-};
-mock_cjs("@uppy/core", Uppy);
+});
+mock_esm("@uppy/xhr-upload", {default: class XHRUpload {}});
+mock_esm("@uppy/progress-bar", {default: class ProgressBar {}});
 
+const compose_actions = mock_esm("../../static/js/compose_actions");
+const compose_ui = mock_esm("../../static/js/compose_ui");
 mock_esm("../../static/js/csrf", {csrf_token: "csrf_token"});
 
-const compose_ui = zrequire("compose_ui");
-const compose_actions = zrequire("compose_actions");
 const upload = zrequire("upload");
 
 function test(label, f) {
-    run_test(label, ({override, override_rewire}) => {
+    run_test(label, (helpers) => {
         page_params.max_file_upload_size_mib = 25;
-        f({override, override_rewire});
+        f(helpers);
     });
 }
 
 test("feature_check", ({override}) => {
-    const upload_button = $.create("upload-button-stub");
-    upload_button.addClass("notdisplayed");
-    upload.feature_check(upload_button);
-    assert.ok(upload_button.hasClass("notdisplayed"));
+    const $upload_button = $.create("upload-button-stub");
+    $upload_button.addClass("notdisplayed");
+    upload.feature_check($upload_button);
+    assert.ok($upload_button.hasClass("notdisplayed"));
 
     override(window, "XMLHttpRequest", () => ({upload: true}));
-    upload.feature_check(upload_button);
-    assert.ok(!upload_button.hasClass("notdisplayed"));
+    upload.feature_check($upload_button);
+    assert.ok(!$upload_button.hasClass("notdisplayed"));
 });
 
 test("get_item", () => {
@@ -187,7 +185,7 @@ test("show_error_message", () => {
     assert.equal($("#compose-error-msg").text(), "translated: An unknown error occurred.");
 });
 
-test("upload_files", ({override_rewire}) => {
+test("upload_files", ({override, override_rewire}) => {
     let uppy_cancel_all_called = false;
     let files = [
         {
@@ -220,17 +218,12 @@ test("upload_files", ({override_rewire}) => {
     assert.ok(!$("#compose-send-button").prop("disabled"));
 
     page_params.max_file_upload_size_mib = 0;
-    let show_error_message_called = false;
-    override_rewire(upload, "show_error_message", (config, message) => {
-        show_error_message_called = true;
-        assert.equal(config.mode, "compose");
-        assert.equal(
-            message,
-            "translated: File and image uploads have been disabled for this organization.",
-        );
-    });
+    $("#compose-error-msg").text("");
     upload.upload_files(uppy, config, files);
-    assert.ok(show_error_message_called);
+    assert.equal(
+        $("#compose-error-msg").text(),
+        "translated: File and image uploads have been disabled for this organization.",
+    );
 
     page_params.max_file_upload_size_mib = 25;
     let on_click_close_button_callback;
@@ -239,13 +232,13 @@ test("upload_files", ({override_rewire}) => {
         on_click_close_button_callback = callback;
     };
     let compose_ui_insert_syntax_and_focus_called = false;
-    override_rewire(compose_ui, "insert_syntax_and_focus", (syntax, textarea) => {
+    override(compose_ui, "insert_syntax_and_focus", (syntax, textarea) => {
         assert.equal(syntax, "[translated: Uploading budapest.png…]()");
         assert.equal(textarea, $("#compose-textarea"));
         compose_ui_insert_syntax_and_focus_called = true;
     });
     let compose_ui_autosize_textarea_called = false;
-    override_rewire(compose_ui, "autosize_textarea", () => {
+    override(compose_ui, "autosize_textarea", () => {
         compose_ui_autosize_textarea_called = true;
     });
     let markdown_preview_hide_button_clicked = false;
@@ -296,7 +289,7 @@ test("upload_files", ({override_rewire}) => {
             type: "image/png",
         },
     ];
-    override_rewire(compose_ui, "replace_syntax", (old_syntax, new_syntax, textarea) => {
+    override(compose_ui, "replace_syntax", (old_syntax, new_syntax, textarea) => {
         compose_ui_replace_syntax_called = true;
         assert.equal(old_syntax, "[translated: Uploading budapest.png…]()");
         assert.equal(new_syntax, "");
@@ -464,7 +457,7 @@ test("copy_paste", ({override_rewire}) => {
     assert.equal(upload_files_called, false);
 });
 
-test("uppy_events", ({override_rewire}) => {
+test("uppy_events", ({override, override_rewire}) => {
     const callbacks = {};
     let uppy_cancel_all_called = false;
     let state = {};
@@ -485,11 +478,13 @@ test("uppy_events", ({override_rewire}) => {
                 files = files.filter((file) => file.id !== file_id);
             },
             getState: () => ({
-                info: {
-                    type: state.type,
-                    details: state.details,
-                    message: state.message,
-                },
+                info: [
+                    {
+                        type: state.type,
+                        details: state.details,
+                        message: state.message,
+                    },
+                ],
             }),
         };
     };
@@ -506,11 +501,11 @@ test("uppy_events", ({override_rewire}) => {
         },
     };
     let compose_actions_start_called = false;
-    override_rewire(compose_actions, "start", () => {
+    override(compose_actions, "start", () => {
         compose_actions_start_called = true;
     });
     let compose_ui_replace_syntax_called = false;
-    override_rewire(compose_ui, "replace_syntax", (old_syntax, new_syntax, textarea) => {
+    override(compose_ui, "replace_syntax", (old_syntax, new_syntax, textarea) => {
         compose_ui_replace_syntax_called = true;
         assert.equal(old_syntax, "[translated: Uploading copenhagen.png…]()");
         assert.equal(
@@ -520,7 +515,7 @@ test("uppy_events", ({override_rewire}) => {
         assert.equal(textarea, $("#compose-textarea"));
     });
     let compose_ui_autosize_textarea_called = false;
-    override_rewire(compose_ui, "autosize_textarea", () => {
+    override(compose_ui, "autosize_textarea", () => {
         compose_ui_autosize_textarea_called = true;
     });
     on_upload_success_callback(file, response);
@@ -599,19 +594,14 @@ test("uppy_events", ({override_rewire}) => {
         message: "Some error message",
     };
     const on_info_visible_callback = callbacks["info-visible"];
-    let show_error_message_called = false;
+    $("#compose-error-msg").text("");
     uppy_cancel_all_called = false;
     compose_ui_replace_syntax_called = false;
     const on_restriction_failed_callback = callbacks["restriction-failed"];
-    override_rewire(upload, "show_error_message", (config, message) => {
-        show_error_message_called = true;
-        assert.equal(config.mode, "compose");
-        assert.equal(message, "Some error message");
-    });
     on_info_visible_callback();
     assert.ok(uppy_cancel_all_called);
-    assert.ok(show_error_message_called);
-    override_rewire(compose_ui, "replace_syntax", (old_syntax, new_syntax, textarea) => {
+    assert.equal($("#compose-error-msg").text(), "Some error message");
+    override(compose_ui, "replace_syntax", (old_syntax, new_syntax, textarea) => {
         compose_ui_replace_syntax_called = true;
         assert.equal(old_syntax, "[translated: Uploading copenhagen.png…]()");
         assert.equal(new_syntax, "");
@@ -640,13 +630,8 @@ test("uppy_events", ({override_rewire}) => {
     on_info_visible_callback();
 
     const on_upload_error_callback = callbacks["upload-error"];
-    show_error_message_called = false;
+    $("#compose-error-msg").text("");
     compose_ui_replace_syntax_called = false;
-    override_rewire(upload, "show_error_message", (config, message) => {
-        show_error_message_called = true;
-        assert.equal(config.mode, "compose");
-        assert.equal(message, "Response message");
-    });
     response = {
         body: {
             msg: "Response message",
@@ -655,26 +640,21 @@ test("uppy_events", ({override_rewire}) => {
     uppy_cancel_all_called = false;
     on_upload_error_callback(file, null, response);
     assert.ok(uppy_cancel_all_called);
-    assert.ok(show_error_message_called);
+    assert.equal($("#compose-error-msg").text(), "Response message");
     assert.ok(compose_ui_replace_syntax_called);
 
     compose_ui_replace_syntax_called = false;
-    override_rewire(upload, "show_error_message", (config, message) => {
-        show_error_message_called = true;
-        assert.equal(config.mode, "compose");
-        assert.equal(message, undefined);
-    });
     uppy_cancel_all_called = false;
     on_upload_error_callback(file, null, null);
     assert.ok(uppy_cancel_all_called);
-    assert.ok(show_error_message_called);
+    assert.equal($("#compose-error-msg").text(), "translated: An unknown error occurred.");
     assert.ok(compose_ui_replace_syntax_called);
-    show_error_message_called = false;
+    $("#compose-error-msg").text("");
     $("#compose-textarea").val("user modified text");
     uppy_cancel_all_called = false;
     on_upload_error_callback(file, null);
     assert.ok(uppy_cancel_all_called);
-    assert.ok(show_error_message_called);
+    assert.equal($("#compose-error-msg").text(), "translated: An unknown error occurred.");
     assert.ok(compose_ui_replace_syntax_called);
     assert.equal($("#compose-textarea").val(), "user modified text");
 });

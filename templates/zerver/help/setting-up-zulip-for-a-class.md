@@ -1,7 +1,7 @@
 # Setting up Zulip for a class
 
 Welcome to Zulip! This page will guide you through setting everything
-up for [teaching with Zulip](/for/education/). If you are using Zulip
+up for [teaching with Zulip](https://zulip.com/for/education/). If you are using Zulip
 for a different purpose, we recommend checking out the [Setting up
 your organization][setting-up] guide instead.
 
@@ -18,7 +18,7 @@ us know!
 
 ## Trying out Zulip
 
-You can start by reading about [Zulip for Education](/for/education/),
+You can start by reading about [Zulip for Education](https://zulip.com/for/education/),
 and how Zulip can become the communication hub for your class. Zulip
 is the only [modern team chat app](/features/) that is
 [ideal](/why-zulip/) for both live and asynchronous
@@ -53,7 +53,7 @@ ensure you can always move from our hosting to yours (and back).
 * Always updated to the latest version of Zulip.
 * Anyone can [start with Zulip Cloud Free](/new/), which works well for a typical class.
 * For large classes and departments, we offer [special Zulip for
-  Education pricing](/for/education/#feature-pricing), with the same
+  Education pricing](https://zulip.com/for/education/#feature-pricing), with the same
   features as Zulip Cloud Standard. You can always get started with
   Zulip Cloud Free, and upgrade down the line if needed.
 
@@ -62,7 +62,7 @@ ensure you can always move from our hosting to yours (and back).
 * Zulip is [100% open-source software](https://github.com/zulip), with
   no "open core" catch.
 * We work hard to make it easy to [set up][install-zulip],
-  [backup][backup-zulip], and [maintain][maintain-zulip] a self-hosted
+  [back up][back-up-zulip], and [maintain][maintain-zulip] a self-hosted
   Zulip installation.
 * Retain full control over your data. If cloud hosting is not an
   option due to stringent data and privacy requirements (e.g. in the
@@ -70,7 +70,7 @@ ensure you can always move from our hosting to yours (and back).
 * Customize Zulip for all your needs.
 
 [install-zulip]: https://zulip.readthedocs.io/en/latest/production/install.html
-[backup-zulip]: https://zulip.readthedocs.io/en/stable/production/export-and-import.html#backups
+[back-up-zulip]: https://zulip.readthedocs.io/en/stable/production/export-and-import.html#backups
 [maintain-zulip]: https://zulip.readthedocs.io/en/stable/production/upgrade-or-modify.html
 
 
@@ -121,17 +121,7 @@ registration and login page for your organization, and in the Zulip app.
 
 ## Customize organization settings
 
-Review the settings for your organization to set everything up how you
-want it to be.
-
-{start_tabs}
-
-{relative|gear|manage-organization}
-
-1. Click on "Organization settings" and "Organization permissions"
-   tabs, and any others that are of interest.
-
-{end_tabs}
+{!review-organization-settings-instructions.md!}
 
 A few settings to highlight:
 
@@ -145,13 +135,8 @@ A few settings to highlight:
 
 * [Add custom emoji](/help/custom-emoji) that your class will enjoy.
 
-
-[topic-editing-permissions]: /help/configure-message-editing-and-deletion
 [default-code-block-language]: /help/code-blocks#default-code-block-language
 [code-playgrounds]: /help/code-blocks#code-playgrounds
-[email-address-visibility]: /help/restrict-visibility-of-email-addresses
-[who-can-invite]: /help/invite-new-users#change-who-can-send-invitations
-[who-can-join]: /help/allow-anyone-to-join-without-an-invitation
 
 ### Roles and permissions
 
@@ -174,7 +159,7 @@ how to assign roles and permissions for a class.
      These are the default permissions for new **Education
      (non-profit)** and **Education (for-profit)** organizations.
 
-- Set [who can invite new users](/help/invite-new-users#change-who-can-send-invitations).
+- Set [who can invite new users](/help/restrict-account-creation#change-who-can-send-invitations).
   (Recommended: Admins)
 - Set [who can access user email addresses](/help/restrict-visibility-of-email-addresses).
   (Recommended: Admins only)
@@ -187,9 +172,10 @@ how to assign roles and permissions for a class.
   Admins and moderators for large classes)
 - Set [who can move messages between streams][move-between-streams].
   (Recommended: Admins and moderators)
-- Set [who can create and manage user groups](/help/restrict-user-group-management).
+- Set [who can create and manage user groups][user-group-permissions].
   (Recommended: Admins and moderators)
 
+[user-group-permissions]: /help/user-groups#configure-who-can-create-and-manage-user-groups
 [move-between-streams]: /help/configure-message-editing-and-deletion#configure-who-can-move-topics-between-streams
 
 #### Recommended roles and permissions for a department
@@ -203,7 +189,7 @@ how to assign roles and permissions for a class.
 
 ##### Settings
 
-- Set [who can invite new users](/help/invite-new-users#change-who-can-send-invitations).
+- Set [who can invite new users](/help/restrict-account-creation#change-who-can-send-invitations).
   (Recommended: Admins and moderators)
 - Set [who can access user email addresses](/help/restrict-visibility-of-email-addresses).
   (Recommended: Admins only)
@@ -216,7 +202,7 @@ how to assign roles and permissions for a class.
   (Recommended: Admins and moderators)
 - Set [who can move messages between streams][move-between-streams].
   (Recommended: Admins and moderators)
-- Set [who can create and manage user groups](/help/restrict-user-group-management).
+- Set [who can create and manage user groups][user-group-permissions].
   (Recommended: Admins and moderators)
 
 ## Create streams
@@ -371,4 +357,4 @@ HTML archive](https://github.com/zulip/zulip-archive) to archive the information
 
 [make-private]: /help/change-the-privacy-of-a-stream
 [add-to-stream]: /help/add-or-remove-users-from-a-stream
-[deactivate-user]: /help/deactivate-or-reactivate-a-user#deactivate-ban-a-user
+[deactivate-user]: /help/deactivate-or-reactivate-a-user#deactivate-a-user

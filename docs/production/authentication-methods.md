@@ -289,11 +289,23 @@ AUTH_LDAP_USER_SEARCH = LDAPSearchUnion(
 
 You can restrict access to your Zulip server to a set of LDAP groups
 using the `AUTH_LDAP_REQUIRE_GROUP` and `AUTH_LDAP_DENY_GROUP`
-settings in `/etc/zulip/settings.py`. See the
-[upstream django-auth-ldap documentation][upstream-ldap-groups] for
-details.
+settings in `/etc/zulip/settings.py`.
 
-[upstream-ldap-groups]: https://django-auth-ldap.readthedocs.io/en/latest/groups.html#limiting-access
+An example configation for Active Directory group restriction can be:
+
+```
+import django_auth_ldap
+AUTH_LDAP_GROUP_TYPE = django_auth_ldap.config.ActiveDirectoryGroupType()
+
+AUTH_LDAP_REQUIRE_GROUP = "cn=enabled,ou=groups,dc=example,dc=com"
+AUTH_LDAP_GROUP_SEARCH = LDAPSearch("ou=groups,dc=example,dc=com", ldap.SCOPE_SUBTREE, "(objectClass=groupOfNames)")
+```
+
+Please note that `AUTH_LDAP_GROUP_TYPE` needs to be set to the correct
+group type for your LDAP server. See the [upstream django-auth-ldap
+documentation][upstream-ldap-groups] for details.
+
+[upstream-ldap-groups]: https://django-auth-ldap.readthedocs.io/en/latest/groups.html
 
 ### Restricting LDAP user access to specific organizations
 
@@ -384,7 +396,7 @@ it as follows:
      the "SAML ACS url" in SAML terminology.
 
      If you're
-     [hosting multiple organizations](../production/multiple-organizations.html#authentication),
+     [hosting multiple organizations](multiple-organizations.md#authentication),
      you need to use `SOCIAL_AUTH_SUBDOMAIN`. For example,
      if `SOCIAL_AUTH_SUBDOMAIN="auth"` and `EXTERNAL_HOST=zulip.example.com`,
      this should be `https://auth.zulip.example.com/complete/saml/`.
@@ -412,7 +424,7 @@ it as follows:
      4. The values needed in the `attr_` fields are often configurable
         in your IdP's interface when setting up SAML authentication
         (referred to as "Attribute Statements" with Okta, or
-        "Attribute Mapping" with GSuite). You'll want to connect
+        "Attribute Mapping" with Google Workspace). You'll want to connect
         these so that Zulip gets the email address (used as a unique
         user ID) and name for the user.
      5. The `display_name` and `display_icon` fields are used to
@@ -478,7 +490,7 @@ it as follows:
    profile fields during login, not during account creation; we
    consider this [a bug](https://github.com/zulip/zulip/issues/18746).
 
-1. [Restart the Zulip server](../production/settings.md) to ensure
+1. [Restart the Zulip server](settings.md) to ensure
    your settings changes take effect. The Zulip login page should now
    have a button for SAML authentication that you can use to log in or
    create an account (including when creating a new organization).
@@ -546,7 +558,7 @@ to the root and `engineering` subdomains:
    should be
    `https://keycloak.example.com/auth/realms/master/protocol/saml`
 3. Your Keycloak public certificate must be saved on the Zulip server
-   as `{idp_name}.crt` in `/etc/zulip/idps/`. You can obtain the
+   as `{idp_name}.crt` in `/etc/zulip/saml/idps/`. You can obtain the
    certificate from the Keycloak UI in the `Keys` tab. Click on the
    button `Certificate` and copy the content.
 
@@ -566,7 +578,7 @@ to the root and `engineering` subdomains:
 
 4. If you want to sign SAML requests, you have to do two things in Keycloak:
 
-   1. In the Keycloak client settings you setup previously, open the
+   1. In the Keycloak client settings you set up previously, open the
       `Settings` tab and **enable** `Client Signature Required`.
    2. Keycloak can generate the Client private key and certificate
       automatically, but Zulip's SAML library does not support the
@@ -636,7 +648,7 @@ another IdP.
    logging out from Zulip, logging back in using SAML, and then using
    the SAML logout feature from KeyCloak. Check
    `/var/log/zulip/errors.log` for error output if it doesn't work.
-1. Once SAML logout is working for you, you can use the `manage.py logout_all_users` management command to logout all users so that
+1. Once SAML logout is working for you, you can use the `manage.py logout_all_users` management command to log out all users so that
    SAML logout works for everyone.
 
    ```bash
@@ -817,7 +829,7 @@ self-hosted servers. To do so, you'll need to do the following:
 [apple-developer]: https://developer.apple.com/account/resources/
 [apple-create-private-key]: https://help.apple.com/developer-account/?lang=en#/dev77c875b7e
 [apple-get-started]: https://developer.apple.com/sign-in-with-apple/get-started/
-[outgoing-email]: ../production/email.md
+[outgoing-email]: email.md
 
 ## OpenID Connect
 
@@ -837,9 +849,9 @@ Note that `SOCIAL_AUTH_OIDC_ENABLED_IDPS` only supports a single IdP currently.
 The Return URL to authorize with the provider is
 `https://yourzulipdomain.example.com/complete/oidc/`.
 
-By default, users who attempt to login with OIDC using an email
+By default, users who attempt to log in with OIDC using an email
 address that does not have a current Zulip account will be prompted
-for whether they intend to create a new account or would like to login
+for whether they intend to create a new account or would like to log in
 using another authentication method. You can configure automatic
 account creation on first login attempt by setting
 `"auto_signup": True` in the IdP configuration dictionary.
@@ -876,4 +888,4 @@ passwordless login as any user in a development environment. It's
 mentioned on this page only for completeness.
 
 [custom-profile-fields]: https://zulip.com/help/add-custom-profile-fields
-[update-inline-comments]: ../production/upgrade-or-modify.html#updating-settings-py-inline-documentation
+[update-inline-comments]: upgrade-or-modify.md#updating-settingspy-inline-documentation

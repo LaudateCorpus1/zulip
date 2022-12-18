@@ -22,12 +22,12 @@ import {user_settings} from "./user_settings";
 
 export let settings_label;
 
-$("body").ready(() => {
+$(() => {
     $("#settings_overlay_container").on("click", (e) => {
         if (!overlays.is_modal_open()) {
             return;
         }
-        if ($(e.target).closest(".modal, .micromodal").length > 0) {
+        if ($(e.target).closest(".micromodal").length > 0) {
             return;
         }
         e.preventDefault();
@@ -45,8 +45,9 @@ function setup_settings_label() {
     settings_label = {
         // settings_notification
         presence_enabled: $t({
-            defaultMessage: "Display my availability to other users when online",
+            defaultMessage: "Display my availability to other users",
         }),
+        presence_enabled_parens_text: $t({defaultMessage: "invisible mode off"}),
         send_stream_typing_notifications: $t({
             defaultMessage: "Let subscribers see when I'm typing messages in streams",
         }),
@@ -54,7 +55,7 @@ function setup_settings_label() {
             defaultMessage: "Let recipients see when I'm typing private messages",
         }),
         send_read_receipts: $t({
-            defaultMessage: "Let participants see when I've read messages",
+            defaultMessage: "Let others see when I've read messages",
         }),
 
         ...settings_config.notification_settings_labels,
@@ -83,6 +84,7 @@ export function build_page() {
         can_create_new_bots: settings_bots.can_create_new_bots(),
         settings_label,
         demote_inactive_streams_values: settings_config.demote_inactive_streams_values,
+        user_list_style_values: settings_config.user_list_style_values,
         color_scheme_values: settings_config.color_scheme_values,
         default_view_values: settings_config.default_view_values,
         twenty_four_hour_time_values: settings_config.twenty_four_hour_time_values,
@@ -98,7 +100,11 @@ export function build_page() {
         user_can_change_avatar: settings_data.user_can_change_avatar(),
         user_role_text: people.get_user_type(page_params.user_id),
         default_language_name: settings_display.user_default_language_name,
+        realm_push_notifications_enabled: page_params.realm_push_notifications_enabled,
         settings_object: user_settings,
+        send_read_receipts_tooltip: $t({
+            defaultMessage: "Read receipts are currently disabled in this organization.",
+        }),
     });
 
     $(".settings-box").html(rendered_settings_tab);

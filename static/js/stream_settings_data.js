@@ -47,7 +47,7 @@ export function add_settings_fields(sub) {
     sub.can_access_subscribers = stream_data.can_view_subscribers(sub);
     sub.can_add_subscribers = stream_data.can_subscribe_others(sub);
 
-    sub.preview_url = hash_util.by_stream_uri(sub.stream_id);
+    sub.preview_url = hash_util.by_stream_url(sub.stream_id);
     sub.is_old_stream = sub.stream_weekly_traffic !== null;
 }
 
@@ -60,9 +60,10 @@ export function get_unmatched_streams_for_notification_settings() {
         const settings_values = {};
         let make_table_row = false;
         for (const notification_name of settings_config.stream_specific_notification_settings) {
-            const prepend =
-                notification_name === "wildcard_mentions_notify" ? "" : "enable_stream_";
-            const default_setting = user_settings[prepend + notification_name];
+            const default_setting =
+                user_settings[
+                    settings_config.generalize_stream_notification_setting[notification_name]
+                ];
             const stream_setting = stream_data.receives_notifications(
                 row.stream_id,
                 notification_name,

@@ -7,13 +7,13 @@ Zulip.
 Additionally, the Zulip UI is translated into more than a dozen major
 languages, including Spanish, German, Hindi, French, Chinese, Russian,
 and Japanese, and we're always excited to add more. If you speak a
-language other than English, your help with translating Zulip is be
+language other than English, your help with translating Zulip would be
 greatly appreciated!
 
 If you are interested in knowing about the technical end-to-end
 tooling and processes for tagging strings for translation and syncing
 translations in Zulip, read about [Internationalization for
-Developers](../translating/internationalization.md).
+Developers](internationalization.md).
 
 ## Translators' workflow
 
@@ -51,11 +51,11 @@ Zulip:
      major release of the Zulip server and web app (which is what we
      run on chat.zulip.org and Zulip Cloud).
    - The variants of `django.po` and `translations.json` with names
-     starting with a version, like, `4-x--`, are strings for Zulip's
+     starting with a version, like `5-x--`, are strings for Zulip's
      current [stable release series](../overview/release-lifecycle.md).
 
    Transifex is smart about only asking you to translate a string once
-   even if it appears in multiple resources. The `4-x--` type variants
+   even if it appears in multiple resources. The `5-x--` type variants
    allow translators to get a language to 100% translated for the
    current release.
 
@@ -115,7 +115,7 @@ can usually just deploy the latest translations there.
 
 - First, download the updated resource files from Transifex using the
   `tools/i18n/sync-translations` command (it will require some [initial
-  setup](../translating/internationalization.html#transifex-cli-setup)). This
+  setup](internationalization.md#transifex-cli-setup)). This
   command will download the resource files from Transifex and replace
   your local resource files with them, and then compile them. You can
   now test your translation work in the Zulip UI.
@@ -165,6 +165,7 @@ translate words like "stream" to), with reasoning, so that future
 translators can understand and preserve those decisions:
 
 - [Chinese](chinese.md)
+- [Finnish](finnish.md)
 - [French](french.md)
 - [German](german.md)
 - [Hindi](hindi.md)
@@ -199,7 +200,7 @@ capitalization in general. This means that:
 
 The Zulip test suite enforces these capitalization guidelines in the
 web app codebase [in our test
-suite](../testing/testing.html#other-test-suites)
+suite](../testing/testing.md#other-test-suites)
 (`./tools/check-capitalization`; `tools/lib/capitalization.py` has
 some exclude lists, e.g. `IGNORED_PHRASES`).
 

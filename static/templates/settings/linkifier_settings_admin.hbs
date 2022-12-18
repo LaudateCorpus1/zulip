@@ -47,13 +47,13 @@
                 <div class="new-linkifier-form wrapper">
                     <div class="settings-section-title new-linkifier-section-title">{{t "Add a new linkifier" }}</div>
                     <div class="alert" id="admin-linkifier-status"></div>
-                    <div class="control-group">
-                        <label for="linkifier_pattern" class="control-label">{{t "Pattern" }}</label>
+                    <div class="input-group">
+                        <label for="linkifier_pattern">{{t "Pattern" }}</label>
                         <input type="text" id="linkifier_pattern" name="pattern" placeholder="#(?P<id>[0-9]+)" />
                         <div class="alert" id="admin-linkifier-pattern-status"></div>
                     </div>
-                    <div class="control-group">
-                        <label for="linkifier_format_string" class="control-label">{{t "URL format string" }}</label>
+                    <div class="input-group">
+                        <label for="linkifier_format_string">{{t "URL format string" }}</label>
                         <input type="text" id="linkifier_format_string" name="url_format_string" placeholder="https://github.com/zulip/zulip/issues/%(id)s" />
                         <div class="alert" id="admin-linkifier-format-status"></div>
                     </div>
@@ -65,8 +65,12 @@
         </form>
         {{/if}}
 
-        <input type="text" class="search" placeholder="{{t 'Filter linkifiers' }}" aria-label="{{t 'Filter linkifiers' }}"/>
-        <div class="alert-notification edit-linkifier-status" id="linkifier-field-status"></div>
+        <div class="settings_panel_list_header">
+            <h3>{{t "Linkifiers"}}</h3>
+            <div class="alert-notification edit-linkifier-status" id="linkifier-field-status"></div>
+            <input type="text" class="search" placeholder="{{t 'Filter linkifiers' }}" aria-label="{{t 'Filter linkifiers' }}"/>
+        </div>
+
         <div class="progressive-table-wrapper" data-simplebar>
             <table class="table table-condensed table-striped wrapped-table admin_linkifiers_table">
                 <thead class="table-sticky-headers">

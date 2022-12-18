@@ -18,6 +18,7 @@ const compose_pm_pill = zrequire("compose_pm_pill");
 const compose_validate = zrequire("compose_validate");
 const peer_data = zrequire("peer_data");
 const people = zrequire("people");
+const resolved_topic = zrequire("../shared/js/resolved_topic");
 const settings_config = zrequire("settings_config");
 const settings_data = mock_esm("../../static/js/settings_data");
 const stream_data = zrequire("stream_data");
@@ -59,9 +60,9 @@ people.add_cross_realm_user(welcome_bot);
 
 function test_ui(label, f) {
     // The sloppy_$ flag lets us re-use setup from prior tests.
-    run_test(label, ({override, override_rewire, mock_template}) => {
+    run_test(label, (helpers) => {
         $("#compose-textarea").val("some message");
-        f({override, override_rewire, mock_template});
+        f(helpers);
     });
 }
 
@@ -130,10 +131,10 @@ test_ui("validate", ({override, mock_template}) => {
         $("#compose-send-button").trigger("focus");
         $("#compose-send-button .loader").hide();
 
-        const pm_pill_container = $.create("fake-pm-pill-container");
+        const $pm_pill_container = $.create("fake-pm-pill-container");
         $("#private_message_recipient")[0] = {};
-        $("#private_message_recipient").set_parent(pm_pill_container);
-        pm_pill_container.set_find_results(".input", $("#private_message_recipient"));
+        $("#private_message_recipient").set_parent($pm_pill_container);
+        $pm_pill_container.set_find_results(".input", $("#private_message_recipient"));
         $("#private_message_recipient").before = () => {};
 
         compose_pm_pill.initialize();
@@ -162,12 +163,10 @@ test_ui("validate", ({override, mock_template}) => {
 
     add_content_to_compose_box();
     let zephyr_checked = false;
-    $("#zephyr-mirror-error").is = () => {
-        if (!zephyr_checked) {
-            zephyr_checked = true;
-            return true;
-        }
-        return false;
+    $("#zephyr-mirror-error").is = (arg) => {
+        assert.equal(arg, ":visible");
+        zephyr_checked = true;
+        return true;
     };
     assert.ok(!compose_validate.validate());
     assert.ok(zephyr_checked);
@@ -244,7 +243,14 @@ test_ui("validate", ({override, mock_template}) => {
     assert.ok(!compose_validate.validate());
     assert.equal(
         $("#compose-error-msg").html(),
-        $t_html({defaultMessage: "Please specify a topic"}),
+        $t_html({defaultMessage: "Topics are required in this organization"}),
+    );
+
+    compose_state.topic("(no topic)");
+    assert.ok(!compose_validate.validate());
+    assert.equal(
+        $("#compose-error-msg").html(),
+        $t_html({defaultMessage: "Topics are required in this organization"}),
     );
 });
 
@@ -300,7 +306,7 @@ test_ui("test_wildcard_mention_allowed", () => {
     assert.ok(compose_validate.wildcard_mention_allowed());
 
     page_params.realm_wildcard_mention_policy =
-        settings_config.wildcard_mention_policy_values.by_stream_admins_only.code;
+        settings_config.wildcard_mention_policy_values.by_admins_only.code;
     page_params.is_admin = false;
     assert.ok(!compose_validate.wildcard_mention_allowed());
 
@@ -382,13 +388,13 @@ test_ui("test_validate_stream_message_post_policy_admin_only", () => {
         stream_post_policy: stream_data.stream_post_policy_values.admins.code,
     };
 
-    compose_state.topic("subject102");
+    compose_state.topic("topic102");
     compose_state.stream_name("stream102");
     stream_data.add_sub(sub);
     assert.ok(!compose_validate.validate());
     assert.equal(
         $("#compose-error-msg").html(),
-        $t_html({defaultMessage: "Only organization admins are allowed to post to this stream."}),
+        $t_html({defaultMessage: "You do not have permission to post in this stream."}),
     );
 
     // Reset error message.
@@ -397,12 +403,12 @@ test_ui("test_validate_stream_message_post_policy_admin_only", () => {
     page_params.is_admin = false;
     page_params.is_guest = true;
 
-    compose_state.topic("subject102");
+    compose_state.topic("topic102");
     compose_state.stream_name("stream102");
     assert.ok(!compose_validate.validate());
     assert.equal(
         $("#compose-error-msg").html(),
-        $t_html({defaultMessage: "Only organization admins are allowed to post to this stream."}),
+        $t_html({defaultMessage: "You do not have permission to post in this stream."}),
     );
 });
 
@@ -418,15 +424,14 @@ test_ui("test_validate_stream_message_post_policy_moderators_only", () => {
         stream_post_policy: stream_data.stream_post_policy_values.moderators.code,
     };
 
-    compose_state.topic("subject104");
+    compose_state.topic("topic104");
     compose_state.stream_name("stream104");
     stream_data.add_sub(sub);
     assert.ok(!compose_validate.validate());
     assert.equal(
         $("#compose-error-msg").html(),
         $t_html({
-            defaultMessage:
-                "Only organization admins and moderators are allowed to post to this stream.",
+            defaultMessage: "You do not have permission to post in this stream.",
         }),
     );
 
@@ -437,8 +442,7 @@ test_ui("test_validate_stream_message_post_policy_moderators_only", () => {
     assert.equal(
         $("#compose-error-msg").html(),
         $t_html({
-            defaultMessage:
-                "Only organization admins and moderators are allowed to post to this stream.",
+            defaultMessage: "You do not have permission to post in this stream.",
         }),
     );
 });
@@ -453,51 +457,51 @@ test_ui("test_validate_stream_message_post_policy_full_members_only", () => {
         stream_post_policy: stream_data.stream_post_policy_values.non_new_members.code,
     };
 
-    compose_state.topic("subject103");
+    compose_state.topic("topic103");
     compose_state.stream_name("stream103");
     stream_data.add_sub(sub);
     assert.ok(!compose_validate.validate());
     assert.equal(
         $("#compose-error-msg").html(),
-        $t_html({defaultMessage: "Guests are not allowed to post to this stream."}),
+        $t_html({defaultMessage: "You do not have permission to post in this stream."}),
     );
 });
 
 test_ui("test_check_overflow_text", () => {
     page_params.max_message_length = 10000;
 
-    const textarea = $("#compose-textarea");
-    const indicator = $("#compose_limit_indicator");
-    const send_button = $("#compose-send-button");
+    const $textarea = $("#compose-textarea");
+    const $indicator = $("#compose_limit_indicator");
+    const $send_button = $("#compose-send-button");
 
     // Indicator should show red colored text
-    textarea.val("a".repeat(10000 + 1));
+    $textarea.val("a".repeat(10000 + 1));
     compose_validate.check_overflow_text();
-    assert.ok(indicator.hasClass("over_limit"));
-    assert.equal(indicator.text(), "10001/10000");
-    assert.ok(textarea.hasClass("over_limit"));
+    assert.ok($indicator.hasClass("over_limit"));
+    assert.equal($indicator.text(), "10001/10000");
+    assert.ok($textarea.hasClass("over_limit"));
     assert.equal(
         $("#compose-error-msg").html(),
         "translated HTML: Message length shouldn't be greater than 10000 characters.",
     );
-    assert.ok(send_button.prop("disabled"));
+    assert.ok($send_button.prop("disabled"));
 
     $("#compose-send-status").stop = () => ({fadeOut: () => {}});
 
     // Indicator should show orange colored text
-    textarea.val("a".repeat(9000 + 1));
+    $textarea.val("a".repeat(9000 + 1));
     compose_validate.check_overflow_text();
-    assert.ok(!indicator.hasClass("over_limit"));
-    assert.equal(indicator.text(), "9001/10000");
-    assert.ok(!textarea.hasClass("over_limit"));
-    assert.ok(!send_button.prop("disabled"));
+    assert.ok(!$indicator.hasClass("over_limit"));
+    assert.equal($indicator.text(), "9001/10000");
+    assert.ok(!$textarea.hasClass("over_limit"));
+    assert.ok(!$send_button.prop("disabled"));
 
     // Indicator must be empty
-    textarea.val("a".repeat(9000));
+    $textarea.val("a".repeat(9000));
     compose_validate.check_overflow_text();
-    assert.ok(!indicator.hasClass("over_limit"));
-    assert.equal(indicator.text(), "");
-    assert.ok(!textarea.hasClass("over_limit"));
+    assert.ok(!$indicator.hasClass("over_limit"));
+    assert.equal($indicator.text(), "");
+    assert.ok(!$textarea.hasClass("over_limit"));
 });
 
 test_ui("test_message_overflow", () => {
@@ -728,23 +732,26 @@ test_ui("warn_if_mentioning_unsubscribed_user", ({override, override_rewire, moc
     }
 
     // Simulate that the row was added to the DOM.
-    const warning_row = $("<warning row>");
+    const $warning_row = $("<warning-row-stub>");
 
     let looked_for_existing;
-    warning_row.data = (field) => {
-        if (field === "user-id") {
-            looked_for_existing = true;
-            return "34";
+    $warning_row.data = (field) => {
+        switch (field) {
+            case "user-id":
+                looked_for_existing = true;
+                return "34";
+            /* istanbul ignore next */
+            case "stream-id":
+                return "111";
+            /* istanbul ignore next */
+            default:
+                throw new Error(`Unknown field ${field}`);
         }
-        if (field === "stream-id") {
-            return "111";
-        }
-        throw new Error(`Unknown field ${field}`);
     };
 
-    const previous_users = $("#compose_invite_users .compose_invite_user");
-    previous_users.length = 1;
-    previous_users[0] = warning_row;
+    const $previous_users = $("#compose_invite_users .compose_invite_user");
+    $previous_users.length = 1;
+    $previous_users[0] = $warning_row;
     $("#compose_invite_users").hide();
 
     // Now try to mention the same person again. The template should
@@ -752,4 +759,67 @@ test_ui("warn_if_mentioning_unsubscribed_user", ({override, override_rewire, moc
     compose_validate.warn_if_mentioning_unsubscribed_user(mentioned);
     assert.equal($("#compose_invite_users").visible(), true);
     assert.ok(looked_for_existing);
+});
+
+test_ui("test clear_topic_resolved_warning", () => {
+    $("#compose_resolved_topic").show();
+    $("#compose-send-status").show();
+
+    compose_validate.clear_topic_resolved_warning();
+
+    assert.ok(!$("#compose_resolved_topic").visible());
+    assert.ok(!$("#compose-send-status").visible());
+});
+
+test_ui("test warn_if_topic_resolved", ({override, mock_template}) => {
+    override(settings_data, "user_can_move_messages_between_streams", () => true);
+
+    mock_template("compose_resolved_topic.hbs", false, (context) => {
+        assert.ok(context.can_move_topic);
+        assert.ok(resolved_topic.is_resolved(context.topic_name));
+        return "fake-compose_resolved_topic";
+    });
+
+    const sub = {
+        stream_id: 111,
+        name: "random",
+    };
+    stream_data.add_sub(sub);
+
+    // The error message area where it is shown
+    const $error_area = $("#compose_resolved_topic");
+    compose_validate.clear_topic_resolved_warning();
+    // Hack to make this empty for zjquery; this is conceptually done
+    // in the previous line.
+    $error_area.empty();
+    assert.ok(!$error_area.visible());
+
+    compose_state.set_message_type("stream");
+    compose_state.stream_name("Do not exist");
+    compose_state.topic(resolved_topic.resolve_name("hello"));
+    compose_state.message_content("content");
+
+    // Do not show a warning if stream name does not exist
+    compose_validate.warn_if_topic_resolved(true);
+    assert.ok(!$error_area.visible());
+
+    compose_state.stream_name("random");
+
+    // Show the warning now as stream also exists
+    compose_validate.warn_if_topic_resolved(true);
+    assert.ok($error_area.visible());
+
+    // Call it again with false; this should be a noop.
+    compose_validate.warn_if_topic_resolved(false);
+    assert.ok($error_area.visible());
+
+    compose_state.topic("hello");
+
+    // The warning will be cleared now
+    compose_validate.warn_if_topic_resolved(true);
+    assert.ok(!$error_area.visible());
+
+    // Calling with false won't do anything.
+    compose_validate.warn_if_topic_resolved(false);
+    assert.ok(!$error_area.visible());
 });

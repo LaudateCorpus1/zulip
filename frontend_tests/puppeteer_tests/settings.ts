@@ -1,9 +1,9 @@
 import {strict as assert} from "assert";
 
-import type {Page} from "puppeteer";
+import type {ElementHandle, Page} from "puppeteer";
 
 import {test_credentials} from "../../var/puppeteer/test_credentials";
-import common from "../puppeteer_lib/common";
+import * as common from "../puppeteer_lib/common";
 
 const OUTGOING_WEBHOOK_BOT_TYPE = "3";
 const GENERIC_BOT_TYPE = "1";
@@ -12,10 +12,8 @@ const zuliprc_regex =
     /^data:application\/octet-stream;charset=utf-8,\[api]\nemail=.+\nkey=.+\nsite=.+\n$/;
 
 async function get_decoded_url_in_selector(page: Page, selector: string): Promise<string> {
-    return await page.evaluate(
-        (selector: string) => decodeURIComponent($(selector).attr("href")!),
-        selector,
-    );
+    const a = (await page.$(selector)) as ElementHandle<HTMLAnchorElement>;
+    return decodeURIComponent(await (await a.getProperty("href")).jsonValue());
 }
 
 async function open_settings(page: Page): Promise<void> {
@@ -42,12 +40,13 @@ async function test_change_full_name(page: Page): Promise<void> {
     await common.clear_and_type(page, full_name_input_selector, "New name");
 
     await page.click("#settings_content .profile-settings-form");
-    await page.waitForSelector(".full-name-change-form .alert-success", {visible: true});
-    await page.waitForFunction(() => $("#full_name").val() === "New name");
+    await page.waitForSelector(".full-name-change-container .alert-success", {visible: true});
+    await page.waitForFunction(
+        () => document.querySelector<HTMLInputElement>("#full_name")?.value === "New name",
+    );
 }
 
 async function test_change_password(page: Page): Promise<void> {
-    await page.click('[data-section="account-and-privacy"]');
     await page.click("#change_password");
 
     const change_password_button_selector = "#change_password_modal .dialog_submit_button";
@@ -64,6 +63,7 @@ async function test_change_password(page: Page): Promise<void> {
 }
 
 async function test_get_api_key(page: Page): Promise<void> {
+    await page.click('[data-section="account-and-privacy"]');
     const show_change_api_key_selector = "#api_key_button";
     await page.click(show_change_api_key_selector);
 
@@ -94,15 +94,26 @@ async function test_get_api_key(page: Page): Promise<void> {
 }
 
 async function test_webhook_bot_creation(page: Page): Promise<void> {
+    await page.click("#bot-settings .add-a-new-bot");
+    await common.wait_for_micromodal_to_open(page);
+    assert.strictEqual(
+        await common.get_text_from_selector(page, ".dialog_heading"),
+        "Add a new bot",
+        "Unexpected title for deactivate user modal",
+    );
+    assert.strictEqual(
+        await common.get_text_from_selector(page, "#dialog_widget_modal .dialog_submit_button"),
+        "Add",
+        "Deactivate button has incorrect text.",
+    );
     await common.fill_form(page, "#create_bot_form", {
         bot_name: "Bot 1",
         bot_short_name: "1",
         bot_type: OUTGOING_WEBHOOK_BOT_TYPE,
         payload_url: "http://hostname.example.com/bots/followup",
     });
-
-    await page.waitForSelector("#create_bot_button", {visible: true});
-    await page.click("#create_bot_button");
+    await page.click("#dialog_widget_modal .dialog_submit_button");
+    await common.wait_for_micromodal_to_close(page);
 
     const bot_email = "1-bot@zulip.testserver";
     const download_zuliprc_selector = `.download_bot_zuliprc[data-email="${CSS.escape(
@@ -118,21 +129,30 @@ async function test_webhook_bot_creation(page: Page): Promise<void> {
     assert.match(
         zuliprc_decoded_url,
         outgoing_webhook_zuliprc_regex,
-        "Incorrect outgoing webhook bot zulirc format",
+        "Incorrect outgoing webhook bot zuliprc format",
     );
 }
 
 async function test_normal_bot_creation(page: Page): Promise<void> {
-    await page.click(".add-a-new-bot-tab");
-    await page.waitForSelector("#create_bot_button", {visible: true});
-
+    await page.click("#bot-settings .add-a-new-bot");
+    await common.wait_for_micromodal_to_open(page);
+    assert.strictEqual(
+        await common.get_text_from_selector(page, ".dialog_heading"),
+        "Add a new bot",
+        "Unexpected title for deactivate user modal",
+    );
+    assert.strictEqual(
+        await common.get_text_from_selector(page, "#dialog_widget_modal .dialog_submit_button"),
+        "Add",
+        "Deactivate button has incorrect text.",
+    );
     await common.fill_form(page, "#create_bot_form", {
         bot_name: "Bot 2",
         bot_short_name: "2",
         bot_type: GENERIC_BOT_TYPE,
     });
-
-    await page.click("#create_bot_button");
+    await page.click("#dialog_widget_modal .dialog_submit_button");
+    await common.wait_for_micromodal_to_close(page);
 
     const bot_email = "2-bot@zulip.testserver";
     const download_zuliprc_selector = `.download_bot_zuliprc[data-email="${CSS.escape(
@@ -162,23 +182,27 @@ async function test_edit_bot_form(page: Page): Promise<void> {
     const bot1_edit_btn = `.open_edit_bot_form[data-email="${CSS.escape(bot1_email)}"]`;
     await page.click(bot1_edit_btn);
 
-    const edit_form_selector = `.edit_bot_form[data-email="${CSS.escape(bot1_email)}"]`;
+    const edit_form_selector = `#bot-edit-form[data-email="${CSS.escape(bot1_email)}"]`;
     await page.waitForSelector(edit_form_selector, {visible: true});
-    const name_field_selector = edit_form_selector + " [name=bot_name]";
+    const name_field_selector = edit_form_selector + " [name=full_name]";
     assert.equal(
         await page.$eval(name_field_selector, (el) => (el as HTMLInputElement).value),
         "Bot 1",
     );
 
-    await common.fill_form(page, edit_form_selector, {bot_name: "Bot one"});
+    await common.fill_form(page, edit_form_selector, {full_name: "Bot one"});
     const save_btn_selector = "#edit_bot_modal .dialog_submit_button";
     await page.click(save_btn_selector);
 
     // The form gets closed on saving. So, assert it's closed by waiting for it to be hidden.
     await page.waitForSelector("#edit_bot_modal", {hidden: true});
 
-    await page.waitForXPath(
-        `//*[@class="btn open_edit_bot_form" and @data-email="${bot1_email}"]/ancestor::*[@class="details"]/*[@class="name" and text()="Bot one"]`,
+    await page.waitForSelector(
+        `xpath///*[${common.has_class_x(
+            "open_edit_bot_form",
+        )} and @data-email="${bot1_email}"]/ancestor::*[${common.has_class_x(
+            "details",
+        )}]/*[${common.has_class_x("name")} and text()="Bot one"]`,
     );
 
     await common.wait_for_micromodal_to_close(page);
@@ -193,34 +217,40 @@ async function test_invalid_edit_bot_form(page: Page): Promise<void> {
     const bot1_edit_btn = `.open_edit_bot_form[data-email="${CSS.escape(bot1_email)}"]`;
     await page.click(bot1_edit_btn);
 
-    const edit_form_selector = `.edit_bot_form[data-email="${CSS.escape(bot1_email)}"]`;
+    const edit_form_selector = `#bot-edit-form[data-email="${CSS.escape(bot1_email)}"]`;
     await page.waitForSelector(edit_form_selector, {visible: true});
-    const name_field_selector = edit_form_selector + " [name=bot_name]";
+    const name_field_selector = edit_form_selector + " [name=full_name]";
     assert.equal(
         await page.$eval(name_field_selector, (el) => (el as HTMLInputElement).value),
         "Bot one",
     );
 
-    await common.fill_form(page, edit_form_selector, {bot_name: "Bot 2"});
+    await common.fill_form(page, edit_form_selector, {full_name: "Bot 2"});
     const save_btn_selector = "#edit_bot_modal .dialog_submit_button";
     await page.click(save_btn_selector);
 
     // The form should not get closed on saving. Errors should be visible on the form.
     await common.wait_for_micromodal_to_open(page);
-    await page.waitForSelector(".bot_edit_errors", {visible: true});
+    await page.waitForSelector("#dialog_error", {visible: true});
     assert.strictEqual(
-        await common.get_text_from_selector(page, "div.bot_edit_errors"),
-        "Name is already in use!",
+        await common.get_text_from_selector(page, "#dialog_error"),
+        "Failed: Name is already in use!",
     );
 
     const cancel_button_selector = "#edit_bot_modal .dialog_cancel_button";
     await page.waitForFunction(
         (cancel_button_selector: string) =>
             !document.querySelector(cancel_button_selector)?.hasAttribute("disabled"),
+        {},
+        cancel_button_selector,
     );
     await page.click(cancel_button_selector);
-    await page.waitForXPath(
-        `//*[@class="btn open_edit_bot_form" and @data-email="${bot1_email}"]/ancestor::*[@class="details"]/*[@class="name" and text()="Bot one"]`,
+    await page.waitForSelector(
+        `xpath///*[${common.has_class_x(
+            "open_edit_bot_form",
+        )} and @data-email="${bot1_email}"]/ancestor::*[${common.has_class_x(
+            "details",
+        )}]/*[${common.has_class_x("name")} and text()="Bot one"]`,
     );
 
     await common.wait_for_micromodal_to_close(page);
@@ -238,8 +268,13 @@ async function test_your_bots_section(page: Page): Promise<void> {
 const alert_word_status_selector = "#alert_word_status";
 
 async function add_alert_word(page: Page, word: string): Promise<void> {
-    await page.type("#create_alert_word_name", word);
-    await page.click("#create_alert_word_button");
+    await page.click("#open-add-alert-word-modal");
+    await common.wait_for_micromodal_to_open(page);
+
+    await page.type("#add-alert-word-name", word);
+    await page.click("#add-alert-word .dialog_submit_button");
+
+    await common.wait_for_micromodal_to_close(page);
 }
 
 async function check_alert_word_added(page: Page, word: string): Promise<void> {
@@ -259,23 +294,23 @@ async function close_alert_words_status(page: Page): Promise<void> {
     await page.waitForSelector(alert_word_status_selector, {hidden: true});
 }
 
-async function test_and_close_alert_word_added_successfully_status(
-    page: Page,
-    word: string,
-): Promise<void> {
-    const status_text = await get_alert_words_status_text(page);
-    assert.strictEqual(status_text, `Alert word "${word}" added successfully!`);
-    await close_alert_words_status(page);
-}
-
 async function test_duplicate_alert_words_cannot_be_added(
     page: Page,
     duplicate_word: string,
 ): Promise<void> {
-    await add_alert_word(page, duplicate_word);
-    const status_text = await get_alert_words_status_text(page);
+    await page.click("#open-add-alert-word-modal");
+    await common.wait_for_micromodal_to_open(page);
+
+    await page.type("#add-alert-word-name", duplicate_word);
+    await page.click("#add-alert-word .dialog_submit_button");
+
+    const alert_word_status_selector = "#dialog_error";
+    await page.waitForSelector(alert_word_status_selector, {visible: true});
+    const status_text = await common.get_text_from_selector(page, alert_word_status_selector);
     assert.strictEqual(status_text, "Alert word already exists!");
-    await close_alert_words_status(page);
+
+    await page.click("#add-alert-word .dialog_cancel_button");
+    await common.wait_for_micromodal_to_close(page);
 }
 
 async function delete_alert_word(page: Page, word: string): Promise<void> {
@@ -295,15 +330,16 @@ async function test_alert_words_section(page: Page): Promise<void> {
     await page.click('[data-section="alert-words"]');
     const word = "puppeteer";
     await add_alert_word(page, word);
-    await test_and_close_alert_word_added_successfully_status(page, word);
     await check_alert_word_added(page, word);
     await test_duplicate_alert_words_cannot_be_added(page, word);
     await test_alert_word_deletion(page, word);
 }
 
 async function change_language(page: Page, language_data_code: string): Promise<void> {
-    await page.waitForSelector("#user-display-settings .setting_default_language", {visible: true});
-    await page.click("#user-display-settings .setting_default_language");
+    await page.waitForSelector("#user-display-settings .language_selection_button", {
+        visible: true,
+    });
+    await page.click("#user-display-settings .language_selection_button");
     await common.wait_for_micromodal_to_open(page);
     const language_selector = `a[data-code="${CSS.escape(language_data_code)}"]`;
     await page.click(language_selector);
@@ -316,10 +352,12 @@ async function check_language_setting_status(page: Page): Promise<void> {
 }
 
 async function assert_language_changed_to_chinese(page: Page): Promise<void> {
-    await page.waitForSelector("#user-display-settings .setting_default_language", {visible: true});
+    await page.waitForSelector("#user-display-settings .language_selection_button", {
+        visible: true,
+    });
     const default_language = await common.get_text_from_selector(
         page,
-        "#user-display-settings .setting_default_language",
+        "#user-display-settings .language_selection_button",
     );
     assert.strictEqual(
         default_language,
@@ -345,7 +383,9 @@ async function test_default_language_setting(page: Page): Promise<void> {
     // Check that the saved indicator appears
     await check_language_setting_status(page);
     await page.click(".reload_link");
-    await page.waitForSelector("#user-display-settings .setting_default_language", {visible: true});
+    await page.waitForSelector("#user-display-settings .language_selection_button", {
+        visible: true,
+    });
     await assert_language_changed_to_chinese(page);
     await test_i18n_language_precedence(page);
     await page.waitForSelector(display_settings_section, {visible: true});
@@ -362,7 +402,9 @@ async function test_default_language_setting(page: Page): Promise<void> {
     await page.waitForSelector("#user-display-settings .lang-time-settings-status", {
         visible: true,
     });
-    await page.waitForSelector("#user-display-settings .setting_default_language", {visible: true});
+    await page.waitForSelector("#user-display-settings .language_selection_button", {
+        visible: true,
+    });
 }
 
 async function test_notifications_section(page: Page): Promise<void> {
@@ -397,12 +439,16 @@ async function settings_tests(page: Page): Promise<void> {
     await common.log_in(page);
     await open_settings(page);
     await test_change_full_name(page);
-    await test_change_password(page);
-    await test_get_api_key(page);
     await test_alert_words_section(page);
     await test_your_bots_section(page);
     await test_default_language_setting(page);
     await test_notifications_section(page);
+    await test_get_api_key(page);
+    await test_change_password(page);
+    // test_change_password should be the very last test, because it
+    // replaces your session, which can lead to some nondeterministic
+    // failures in test code after it, involving `GET /events`
+    // returning a 401. (We reset the test database after each file).
 }
 
 common.run_test(settings_tests);

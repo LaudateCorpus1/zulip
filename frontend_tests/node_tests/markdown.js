@@ -4,9 +4,8 @@ const {strict: assert} = require("assert");
 
 const markdown_test_cases = require("../../zerver/tests/fixtures/markdown_test_cases");
 const markdown_assert = require("../zjsunit/markdown_assert");
-const {set_global, with_field_rewire, zrequire} = require("../zjsunit/namespace");
+const {set_global, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
-const blueslip = require("../zjsunit/zblueslip");
 const {page_params, user_settings} = require("../zjsunit/zpage_params");
 
 const example_realm_linkifiers = [
@@ -28,14 +27,9 @@ const example_realm_linkifiers = [
 ];
 user_settings.translate_emoticons = false;
 
-function Image() {
-    return {};
-}
-set_global("Image", Image);
-
 set_global("document", {compatMode: "CSS1Compat"});
 
-const emoji = zrequire("../shared/js/emoji");
+const emoji = zrequire("emoji");
 const emoji_codes = zrequire("../generated/emoji/emoji_codes.json");
 const linkifiers = zrequire("linkifiers");
 const pygments_data = zrequire("../generated/pygments_data.json");
@@ -187,10 +181,10 @@ markdown.initialize(markdown_config.get_helpers());
 linkifiers.initialize(example_realm_linkifiers);
 
 function test(label, f) {
-    run_test(label, ({override, override_rewire}) => {
+    run_test(label, (helpers) => {
         page_params.realm_users = [];
         linkifiers.update_linkifier_rules(example_realm_linkifiers);
-        f({override, override_rewire});
+        f(helpers);
     });
 }
 
@@ -245,6 +239,7 @@ test("marked_shared", () => {
 
     for (const test of tests) {
         // Ignore tests if specified
+        /* istanbul ignore if */
         if (test.ignore === true) {
             continue;
         }
@@ -268,18 +263,15 @@ test("marked_shared", () => {
 test("message_flags", () => {
     let message = {raw_content: "@**Leo**"};
     markdown.apply_markdown(message);
-    assert.ok(!message.mentioned);
-    assert.ok(!message.mentioned_me_directly);
+    assert.ok(!message.flags.includes("mentioned"));
 
     message = {raw_content: "@**Cordelia, Lear's daughter**"};
     markdown.apply_markdown(message);
-    assert.ok(message.mentioned);
-    assert.ok(message.mentioned_me_directly);
+    assert.ok(message.flags.includes("mentioned"));
 
     message = {raw_content: "@**all**"};
     markdown.apply_markdown(message);
-    assert.ok(message.mentioned);
-    assert.ok(!message.mentioned_me_directly);
+    assert.ok(message.flags.includes("wildcard_mentioned"));
 });
 
 test("marked", () => {
@@ -556,12 +548,12 @@ test("marked", () => {
         {
             input: "#**& &amp; &amp;amp;**",
             expected:
-                '<p><a class="stream" data-stream-id="5" href="/#narrow/stream/5-.26-.26.20.26amp.3B">#&amp; &amp; &amp;amp;</a></p>',
+                '<p><a class="stream" data-stream-id="5" href="/#narrow/stream/5-.26-.26-.26amp.3B">#&amp; &amp; &amp;amp;</a></p>',
         },
         {
             input: "#**& &amp; &amp;amp;>& &amp; &amp;amp;**",
             expected:
-                '<p><a class="stream-topic" data-stream-id="5" href="/#narrow/stream/5-.26-.26.20.26amp.3B/topic/.26.20.26.20.26amp.3B">#&amp; &amp; &amp;amp; &gt; &amp; &amp; &amp;amp;</a></p>',
+                '<p><a class="stream-topic" data-stream-id="5" href="/#narrow/stream/5-.26-.26-.26amp.3B/topic/.26.20.26.20.26amp.3B">#&amp; &amp; &amp;amp; &gt; &amp; &amp; &amp;amp;</a></p>',
         },
     ];
 
@@ -680,77 +672,87 @@ test("message_flags", () => {
     markdown.apply_markdown(message);
 
     assert.equal(message.is_me_message, false);
-    assert.equal(message.mentioned, true);
-    assert.equal(message.mentioned_me_directly, true);
-
+    assert.equal(message.flags.includes("mentioned"), true);
+    assert.equal(message.flags.includes("wildcard_mentioned"), true);
     input = "test @**everyone**";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
     assert.equal(message.is_me_message, false);
-    assert.equal(message.mentioned, true);
-    assert.equal(message.mentioned_me_directly, false);
+    assert.equal(message.flags.includes("wildcard_mentioned"), true);
+    assert.equal(message.flags.includes("mentioned"), false);
 
     input = "test @**stream**";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
     assert.equal(message.is_me_message, false);
-    assert.equal(message.mentioned, true);
-    assert.equal(message.mentioned_me_directly, false);
+    assert.equal(message.flags.includes("wildcard_mentioned"), true);
+    assert.equal(message.flags.includes("mentioned"), false);
 
     input = "test @all";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
-    assert.equal(message.mentioned, false);
+    assert.equal(message.flags.includes("wildcard_mentioned"), false);
+    assert.equal(message.flags.includes("mentioned"), false);
 
     input = "test @everyone";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
-    assert.equal(message.mentioned, false);
+    assert.equal(message.flags.includes("wildcard_mentioned"), false);
+    assert.equal(message.flags.includes("mentioned"), false);
 
     input = "test @any";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
-    assert.equal(message.mentioned, false);
+    assert.equal(message.flags.includes("wildcard_mentioned"), false);
+    assert.equal(message.flags.includes("mentioned"), false);
 
     input = "test @alleycat.com";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
-    assert.equal(message.mentioned, false);
+    assert.equal(message.flags.includes("wildcard_mentioned"), false);
+    assert.equal(message.flags.includes("mentioned"), false);
 
     input = "test @*hamletcharacters*";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
-    assert.equal(message.mentioned, true);
+    assert.equal(message.flags.includes("wildcard_mentioned"), false);
+    assert.equal(message.flags.includes("mentioned"), true);
 
     input = "test @*backend*";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
-    assert.equal(message.mentioned, false);
+    assert.equal(message.flags.includes("wildcard_mentioned"), false);
+    assert.equal(message.flags.includes("mentioned"), false);
 
     input = "test @**invalid_user**";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
-    assert.equal(message.mentioned, false);
+    assert.equal(message.flags.includes("wildcard_mentioned"), false);
+    assert.equal(message.flags.includes("mentioned"), false);
 
     input = "test @_**all**";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
-    assert.equal(message.mentioned, false);
+    assert.equal(message.flags.includes("wildcard_mentioned"), false);
+    assert.equal(message.flags.includes("mentioned"), false);
 
     input = "> test @**all**";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
-    assert.equal(message.mentioned, false);
+    assert.equal(message.flags.includes("wildcard_mentioned"), false);
+    assert.equal(message.flags.includes("mentioned"), false);
 
     input = "test @_*hamletcharacters*";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
-    assert.equal(message.mentioned, false);
+    assert.equal(message.flags.includes("wildcard_mentioned"), false);
+    assert.equal(message.flags.includes("mentioned"), false);
 
     input = "> test @*hamletcharacters*";
     message = {topic: "No links here", raw_content: input};
     markdown.apply_markdown(message);
-    assert.equal(message.mentioned, false);
+    assert.equal(message.flags.includes("wildcard_mentioned"), false);
+    assert.equal(message.flags.includes("mentioned"), false);
 });
 
 test("backend_only_linkifiers", () => {
@@ -764,55 +766,65 @@ test("backend_only_linkifiers", () => {
 });
 
 test("translate_emoticons_to_names", () => {
+    const get_emoticon_translations = emoji.get_emoticon_translations;
+
+    function translate_emoticons_to_names(src) {
+        return markdown.translate_emoticons_to_names({src, get_emoticon_translations});
+    }
+
     // Simple test
     const test_text = "Testing :)";
     const expected = "Testing :smile:";
-    const result = markdown.translate_emoticons_to_names(test_text);
+    const result = translate_emoticons_to_names(test_text);
     assert.equal(result, expected);
 
     // Extensive tests.
     // The following code loops over the test cases and each emoticon conversion
     // to generate multiple test cases.
-    const testcases = [
-        {name: "only emoticon", original: "<original>", expected: "<converted>"},
-        {name: "space at start", original: " <original>", expected: " <converted>"},
-        {name: "space at end", original: "<original> ", expected: "<converted> "},
-        {name: "symbol at end", original: "<original>!", expected: "<converted>!"},
-        {name: "symbol at start", original: "Hello,<original>", expected: "Hello,<converted>"},
-        {name: "after a word", original: "Hello<original>", expected: "Hello<original>"},
-        {name: "between words", original: "Hello<original>World", expected: "Hello<original>World"},
-        {
-            name: "end of sentence",
-            original: "End of sentence. <original>",
-            expected: "End of sentence. <converted>",
-        },
-        {
-            name: "between symbols",
-            original: "Hello.<original>! World.",
-            expected: "Hello.<original>! World.",
-        },
-        {
-            name: "before end of sentence",
-            original: "Hello <original>!",
-            expected: "Hello <converted>!",
-        },
-    ];
     for (const [shortcut, full_name] of Object.entries(emoji_codes.emoticon_conversions)) {
-        for (const t of testcases) {
-            const converted_value = full_name;
-            let original = t.original;
-            let expected = t.expected;
-            original = original.replace(/(<original>)/g, shortcut);
-            expected = expected
-                .replace(/(<original>)/g, shortcut)
-                .replace(/(<converted>)/g, converted_value);
-            const result = markdown.translate_emoticons_to_names(original);
+        for (const {original, expected} of [
+            {name: `only emoticon`, original: shortcut, expected: full_name},
+            {name: `space at start`, original: ` ${shortcut}`, expected: ` ${full_name}`},
+            {name: `space at end`, original: `${shortcut} `, expected: `${full_name} `},
+            {name: `symbol at end`, original: `${shortcut}!`, expected: `${full_name}!`},
+            {
+                name: `symbol at start`,
+                original: `Hello,${shortcut}`,
+                expected: `Hello,${full_name}`,
+            },
+            {name: `after a word`, original: `Hello${shortcut}`, expected: `Hello${shortcut}`},
+            {
+                name: `between words`,
+                original: `Hello${shortcut}World`,
+                expected: `Hello${shortcut}World`,
+            },
+            {
+                name: `end of sentence`,
+                original: `End of sentence. ${shortcut}`,
+                expected: `End of sentence. ${full_name}`,
+            },
+            {
+                name: `between symbols`,
+                original: `Hello.${shortcut}! World.`,
+                expected: `Hello.${shortcut}! World.`,
+            },
+            {
+                name: `before end of sentence`,
+                original: `Hello ${shortcut}!`,
+                expected: `Hello ${full_name}!`,
+            },
+        ]) {
+            const result = translate_emoticons_to_names(original);
             assert.equal(result, expected);
         }
     }
 });
 
-test("missing unicode emojis", ({override_rewire}) => {
+test("parse_non_message", () => {
+    assert.equal(markdown.parse_non_message("type `/day`"), "<p>type <code>/day</code></p>");
+});
+
+test("missing unicode emojis", ({override}) => {
     const message = {raw_content: "\u{1F6B2}"};
 
     markdown.apply_markdown(message);
@@ -821,28 +833,23 @@ test("missing unicode emojis", ({override_rewire}) => {
         '<p><span aria-label="bike" class="emoji emoji-1f6b2" role="img" title="bike">:bike:</span></p>',
     );
 
-    override_rewire(emoji, "get_emoji_name", (codepoint) => {
-        // Now simulate that we don't know any emoji names.
-        assert.equal(codepoint, "1f6b2");
-        // return undefined
-    });
+    // Now simulate that we don't know this emoji name.
+    override(emoji_codes.codepoint_to_name, "1f6b2", undefined);
+
+    markdown.initialize(markdown_config.get_helpers());
     markdown.apply_markdown(message);
     assert.equal(message.content, "<p>\u{1F6B2}</p>");
 });
 
-test("katex_throws_unexpected_exceptions", () => {
-    blueslip.expect("error", "Error: some-exception");
+test("katex_throws_unexpected_exceptions", ({override_rewire}) => {
     const message = {raw_content: "$$a$$"};
-    with_field_rewire(
-        markdown,
-        "katex",
-        {
-            renderToString: () => {
-                throw new Error("some-exception");
-            },
+    override_rewire(markdown, "katex", {
+        renderToString: () => {
+            throw new Error("some-exception");
         },
-        () => {
-            markdown.apply_markdown(message);
-        },
-    );
+    });
+    assert.throws(() => markdown.apply_markdown(message), {
+        name: "Error",
+        message: "some-exception\nPlease report this to https://zulip.com/development-community/",
+    });
 });

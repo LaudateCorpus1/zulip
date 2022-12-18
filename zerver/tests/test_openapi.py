@@ -1,7 +1,19 @@
 import inspect
 import os
 from collections import abc
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+    get_args,
+    get_origin,
+)
 from unittest.mock import MagicMock, patch
 
 import yaml
@@ -95,7 +107,7 @@ class OpenAPIToolsTest(ZulipTestCase):
                 bad_content, TEST_ENDPOINT, TEST_METHOD, TEST_RESPONSE_SUCCESS
             )
 
-        with self.assertRaisesRegex(SchemaError, r"42 is not of type string"):
+        with self.assertRaisesRegex(SchemaError, r"42 is not of type 'string'"):
             bad_content = {
                 "msg": 42,
                 "result": "success",
@@ -162,7 +174,7 @@ class OpenAPIToolsTest(ZulipTestCase):
                 )
             with self.assertRaisesRegex(
                 SchemaError,
-                r"additionalProperties needs to be defined for objects to makesure they have no additional properties left to be documented\.",
+                r"additionalProperties needs to be defined for objects to make sure they have no additional properties left to be documented\.",
             ):
                 # Checks for opaque objects
                 validate_schema(
@@ -193,9 +205,7 @@ class OpenAPIArgumentsTest(ZulipTestCase):
     checked_endpoints: Set[str] = set()
     pending_endpoints = {
         #### TODO: These endpoints are a priority to document:
-        "/realm/presence",
         "/users/me/presence",
-        "/users/me/alert_words",
         # These are a priority to document but don't match our normal URL schemes
         # and thus may be complicated to document with our current tooling.
         # (No /api/v1/ or /json prefix).
@@ -210,7 +220,6 @@ class OpenAPIArgumentsTest(ZulipTestCase):
         # Delete a data export.
         "/export/realm/{export_id}",
         # Manage default streams and default stream groups
-        "/default_streams",
         "/default_stream_groups/create",
         "/default_stream_groups/{group_id}",
         "/default_stream_groups/{group_id}/streams",
@@ -286,7 +295,7 @@ so maybe we shouldn't mark it as intentionally undocumented in the URLs.
         except KeyError:
             return
 
-    def check_for_non_existant_openapi_endpoints(self) -> None:
+    def check_for_non_existent_openapi_endpoints(self) -> None:
         """Here, we check to see if every endpoint documented in the OpenAPI
         documentation actually exists in urls.py and thus in actual code.
         Note: We define this as a helper called at the end of
@@ -326,17 +335,17 @@ so maybe we shouldn't mark it as intentionally undocumented in the URLs.
         E.g. typing.Union[typing.List[typing.Dict[str, typing.Any]], NoneType]
         needs to be mapped to list."""
 
-        origin = getattr(t, "__origin__", None)
+        origin = get_origin(t)
 
-        if not origin:
+        if origin is None:
             # Then it's most likely one of the fundamental data types
             # I.E. Not one of the data types from the "typing" module.
             return t
         elif origin == Union:
-            subtypes = [self.get_standardized_argument_type(st) for st in t.__args__]
+            subtypes = [self.get_standardized_argument_type(st) for st in get_args(t)]
             return self.get_type_by_priority(subtypes)
         elif origin in [list, abc.Sequence]:
-            [st] = t.__args__
+            [st] = get_args(t)
             return (list, self.get_standardized_argument_type(st))
         elif origin in [dict, abc.Mapping]:
             return dict
@@ -413,8 +422,8 @@ do not match the types declared in the implementation of {function.__name__}.\n"
         # Iterate through the decorators to find the original
         # function, wrapped by has_request_variables, so we can parse
         # its arguments.
-        while hasattr(function, "__wrapped__"):
-            function = getattr(function, "__wrapped__")
+        while (wrapped := getattr(function, "__wrapped__", None)) is not None:
+            function = wrapped
 
         # Now, we do inference mapping each REQ parameter's
         # declaration details to the Python/mypy types for the
@@ -600,7 +609,7 @@ so maybe we shouldn't include it in pending_endpoints.
                         self.check_argument_types(function, openapi_parameters)
                         self.checked_endpoints.add(url_pattern)
 
-        self.check_for_non_existant_openapi_endpoints()
+        self.check_for_non_existent_openapi_endpoints()
 
 
 class TestCurlExampleGeneration(ZulipTestCase):
@@ -767,7 +776,7 @@ class TestCurlExampleGeneration(ZulipTestCase):
         ]
         self.assertEqual(generated_curl_example, expected_curl_example)
 
-    def test_generate_and_render_curl_example_with_nonexistant_endpoints(self) -> None:
+    def test_generate_and_render_curl_example_with_nonexistent_endpoints(self) -> None:
         with self.assertRaises(KeyError):
             self.curl_example("/mark_this_stream_as_read", "POST")
         with self.assertRaises(KeyError):
@@ -810,6 +819,7 @@ class TestCurlExampleGeneration(ZulipTestCase):
             "curl -sSX GET -G http://localhost:9991/api/v1/messages \\",
             "    -u BOT_EMAIL_ADDRESS:BOT_API_KEY \\",
             "    --data-urlencode anchor=43 \\",
+            "    --data-urlencode include_anchor=false \\",
             "    --data-urlencode num_before=4 \\",
             "    --data-urlencode num_after=8 \\",
             '    --data-urlencode \'narrow=[{"operand": "Denmark", "operator": "stream"}]\' \\',
@@ -884,6 +894,7 @@ class TestCurlExampleGeneration(ZulipTestCase):
             "curl -sSX GET -G http://localhost:9991/api/v1/messages \\",
             "    -u BOT_EMAIL_ADDRESS:BOT_API_KEY \\",
             "    --data-urlencode anchor=43 \\",
+            "    --data-urlencode include_anchor=false \\",
             "    --data-urlencode num_before=4 \\",
             "    --data-urlencode num_after=8 \\",
             '    --data-urlencode \'narrow=[{"operand": "Denmark", "operator": "stream"}]\' \\',
@@ -925,13 +936,13 @@ class OpenAPIAttributesTest(ZulipTestCase):
                 for status_code, response in operation["responses"].items():
                     schema = response["content"]["application/json"]["schema"]
                     if "oneOf" in schema:
-                        for subschema_index, subschema in enumerate(schema["oneOf"]):
+                        for _, subschema in enumerate(schema["oneOf"]):
                             validate_schema(subschema)
                             assert validate_against_openapi_schema(
                                 subschema["example"],
                                 path,
                                 method,
-                                status_code + "_" + str(subschema_index),
+                                status_code,
                             )
                         continue
                     validate_schema(schema)
@@ -946,7 +957,7 @@ class OpenAPIRegexTest(ZulipTestCase):
         Calls a few documented  and undocumented endpoints and checks whether they
         find a match or not.
         """
-        # Some of the undocumentd endpoints which are very similar to
+        # Some of the undocumented endpoints which are very similar to
         # some of the documented endpoints.
         assert find_openapi_endpoint("/users/me/presence") is None
         assert find_openapi_endpoint("/users/me/subscriptions/23") is None
@@ -971,7 +982,7 @@ class OpenAPIRequestValidatorTest(ZulipTestCase):
         """
         Test to make sure the request validator works properly
         The tests cover both cases such as catching valid requests marked
-        as invalid and making sure invalid requests are markded properly
+        as invalid and making sure invalid requests are marked properly
         """
         # `/users/me/subscriptions` doesn't require any parameters
         validate_request("/users/me/subscriptions", "get", {}, {}, False, "200")

@@ -1,20 +1,25 @@
 import datetime
-import random
+import sys
 from typing import Sequence
 from unittest import mock
 
-import pytz
 from django.conf import settings
 from django.core import mail
 from django.test import override_settings
 
 from corporate.lib.stripe import get_latest_seat_count
-from zerver.lib.actions import do_change_user_setting, notify_new_user
+from zerver.actions.create_user import notify_new_user
+from zerver.actions.user_settings import do_change_user_setting
 from zerver.lib.initial_password import initial_password
 from zerver.lib.streams import create_stream_if_needed
 from zerver.lib.test_classes import ZulipTestCase
 from zerver.models import Message, Realm, Recipient, Stream, UserProfile, get_realm
 from zerver.signals import JUST_CREATED_THRESHOLD, get_device_browser, get_device_os
+
+if sys.version_info < (3, 9):  # nocoverage
+    from backports import zoneinfo
+else:  # nocoverage
+    import zoneinfo
 
 
 class SendLoginEmailTest(ZulipTestCase):
@@ -47,7 +52,7 @@ class SendLoginEmailTest(ZulipTestCase):
             firefox_windows = (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0"
             )
-            user_tz = pytz.timezone(user.timezone)
+            user_tz = zoneinfo.ZoneInfo(user.timezone)
             mock_time = datetime.datetime(year=2018, month=1, day=1, tzinfo=datetime.timezone.utc)
             reference_time = mock_time.astimezone(user_tz).strftime("%A, %B %d, %Y at %I:%M%p %Z")
             with mock.patch("zerver.signals.timezone_now", return_value=mock_time):
@@ -220,7 +225,7 @@ class TestBrowserAndOsUserAgentStrings(ZulipTestCase):
                 "Windows",
             ),
             (
-                "Mozilla/5.0 (X11; CrOS x86_64 10895.56.0) AppleWebKit/537.36"
+                "Mozilla/5.0 (X11; CrOS x86_64 10895.56.0) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/69.0.3497.95 Safari/537.36",
                 "Chrome",
                 "ChromeOS",
@@ -294,10 +299,13 @@ class TestNotifyNewUser(ZulipTestCase):
             realm, user_count + 5, user_count + 5
         )
 
+        user_no = 0
+
         def create_new_user_and_verify_strings_in_notification_message(
             strings_present: Sequence[str] = [], strings_absent: Sequence[str] = []
         ) -> None:
-            user_no = random.randrange(100000)
+            nonlocal user_no
+            user_no += 1
             new_user = UserProfile.objects.create(
                 realm=realm,
                 full_name=f"new user {user_no}",

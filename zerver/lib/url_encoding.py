@@ -1,13 +1,15 @@
 from typing import Any, Dict, List
 from urllib.parse import quote, urlsplit
 
+import re2
+
 from zerver.lib.topic import get_topic_from_message_info
 from zerver.models import Realm, Stream, UserProfile
 
 
 def hash_util_encode(string: str) -> str:
-    # Do the same encoding operation as hash_util.encodeHashComponent on the
-    # frontend.
+    # Do the same encoding operation as shared internal_url.encodeHashComponent
+    # on the frontend.
     # `safe` has a default value of "/", but we want those encoded, too.
     return quote(string, safe=b"").replace(".", "%2E").replace("%", ".")
 
@@ -20,8 +22,8 @@ def encode_stream(stream_id: int, stream_name: str) -> str:
 
 def personal_narrow_url(realm: Realm, sender: UserProfile) -> str:
     base_url = f"{realm.uri}/#narrow/pm-with/"
-    email_user = sender.email.split("@")[0].lower()
-    pm_slug = str(sender.id) + "-" + hash_util_encode(email_user)
+    encoded_user_name = re2.sub(r'[ "%\/<>`\p{C}]+', "-", sender.full_name)
+    pm_slug = str(sender.id) + "-" + encoded_user_name
     return base_url + pm_slug
 
 

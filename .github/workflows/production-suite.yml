@@ -1,7 +1,9 @@
 name: Zulip production suite
 
 on:
-  push: {}
+  push:
+    branches: ["*.x", chat.zulip.org, main]
+    tags: ["*"]
   pull_request:
     paths:
       - .github/workflows/production-suite.yml
@@ -21,22 +23,30 @@ on:
       - zerver/lib/push_notifications.py
       - zerver/decorator.py
       - zproject/**
+  workflow_dispatch:
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.head_ref || github.run_id }}"
+  cancel-in-progress: true
 
 defaults:
   run:
     shell: bash
 
+permissions:
+  contents: read
+
 jobs:
   production_build:
     # This job builds a release tarball from the current commit, which
     # will be used for all of the following install/upgrade tests.
-    name: Debian 10 production build
+    name: Ubuntu 20.04 production build
     runs-on: ubuntu-latest
 
     # Docker images are built from 'tools/ci/Dockerfile'; the comments at
     # the top explain how to build and upload these images.
-    # Debian 10 ships with Python 3.7.3.
-    container: zulip/ci:buster
+    # Ubuntu 20.04 ships with Python 3.8.10.
+    container: zulip/ci:focal
     steps:
       - name: Add required permissions
         run: |
@@ -54,7 +64,7 @@ jobs:
           # cache action to work. It is owned by root currently.
           sudo chmod -R 0777 /__w/_temp/
 
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - name: Create cache directories
         run: |
@@ -63,31 +73,31 @@ jobs:
           sudo chown -R github "${dirs[@]}"
 
       - name: Restore node_modules cache
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: /srv/zulip-npm-cache
-          key: v1-yarn-deps-buster-${{ hashFiles('package.json') }}-${{ hashFiles('yarn.lock') }}
-          restore-keys: v1-yarn-deps-buster
+          key: v1-yarn-deps-focal-${{ hashFiles('package.json') }}-${{ hashFiles('yarn.lock') }}
+          restore-keys: v1-yarn-deps-focal
 
       - name: Restore python cache
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: /srv/zulip-venv-cache
-          key: v1-venv-buster-${{ hashFiles('requirements/dev.txt') }}
-          restore-keys: v1-venv-buster
+          key: v1-venv-focal-${{ hashFiles('requirements/dev.txt') }}
+          restore-keys: v1-venv-focal
 
       - name: Restore emoji cache
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: /srv/zulip-emoji-cache
-          key: v1-emoji-buster-${{ hashFiles('tools/setup/emoji/emoji_map.json') }}-${{ hashFiles('tools/setup/emoji/build_emoji') }}-${{ hashFiles('tools/setup/emoji/emoji_setup_utils.py') }}-${{ hashFiles('tools/setup/emoji/emoji_names.py') }}-${{ hashFiles('package.json') }}
-          restore-keys: v1-emoji-buster
+          key: v1-emoji-focal-${{ hashFiles('tools/setup/emoji/emoji_map.json') }}-${{ hashFiles('tools/setup/emoji/build_emoji') }}-${{ hashFiles('tools/setup/emoji/emoji_setup_utils.py') }}-${{ hashFiles('tools/setup/emoji/emoji_names.py') }}-${{ hashFiles('package.json') }}
+          restore-keys: v1-emoji-focal
 
       - name: Build production tarball
         run: ./tools/ci/production-build
 
       - name: Upload production build artifacts for install jobs
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: production-tarball
           path: /tmp/production-build
@@ -106,23 +116,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        extra-args: [""]
         include:
           # Docker images are built from 'tools/ci/Dockerfile'; the comments at
           # the top explain how to build and upload these images.
           - docker_image: zulip/ci:focal
-            name: Focal production install
+            name: Ubuntu 20.04 production install
             os: focal
-            extra_args: ""
 
-          - docker_image: zulip/ci:buster
-            name: Buster production install with custom db name and user
-            os: buster
-            extra_args: --test-custom-db
+          - docker_image: zulip/ci:jammy
+            name: Ubuntu 22.04 production install
+            os: jammy
 
           - docker_image: zulip/ci:bullseye
-            name: Bullseye production install
+            name: Debian 11 production install with custom db name and user
             os: bullseye
-            extra_args: ""
+            extra-args: --test-custom-db
 
     name: ${{ matrix.name  }}
     container:
@@ -133,7 +142,7 @@ jobs:
 
     steps:
       - name: Download built production tarball
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: production-tarball
           path: /tmp
@@ -160,16 +169,14 @@ jobs:
           sudo chown -R github "${dirs[@]}"
 
       - name: Restore node_modules cache
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: /srv/zulip-npm-cache
           key: v1-yarn-deps-${{ matrix.os }}-${{ hashFiles('/tmp/package.json') }}-${{ hashFiles('/tmp/yarn.lock') }}
           restore-keys: v1-yarn-deps-${{ matrix.os }}
 
       - name: Install production
-        run: |
-          sudo service rabbitmq-server restart
-          sudo /tmp/production-install ${{ matrix.extra-args }}
+        run: sudo /tmp/production-install ${{ matrix.extra-args }}
 
       - name: Verify install
         run: sudo /tmp/production-verify ${{ matrix.extra-args }}
@@ -207,14 +214,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Docker images are built from 'tools/ci/Dockerfile'; the comments at
+          # Docker images are built from 'tools/ci/Dockerfile.prod'; the comments at
           # the top explain how to build and upload these images.
-          - docker_image: zulip/ci:buster-3.4
-            name: 3.4 Version Upgrade
-            os: buster
-
-          - docker_image: zulip/ci:bullseye-4.7
-            name: 4.7 Version Upgrade
+          - docker_image: zulip/ci:focal-3.2
+            name: 3.2 Version Upgrade
+            os: focal
+          - docker_image: zulip/ci:bullseye-4.2
+            name: 4.2 Version Upgrade
+            os: bullseye
+          - docker_image: zulip/ci:bullseye-5.0
+            name: 5.0 Version Upgrade
             os: bullseye
 
     name: ${{ matrix.name  }}
@@ -226,7 +235,7 @@ jobs:
 
     steps:
       - name: Download built production tarball
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: production-tarball
           path: /tmp

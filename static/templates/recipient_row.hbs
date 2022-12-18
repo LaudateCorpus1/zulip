@@ -13,7 +13,7 @@
                 {{/if}}
 
                 {{~#if is_web_public ~}}
-                    <i class="fa fa-globe recipient-row-stream-icon" title="{{t 'This is a web public stream' }}" aria-label="{{t 'This is a web public stream' }}"></i>
+                    <i class="zulip-icon zulip-icon-globe recipient-row-stream-icon" title="{{t 'This is a web-public stream' }}" aria-label="{{t 'This is a web-public stream' }}"></i>
                 {{/if}}
 
                 {{~! Recipient (e.g. stream/topic or topic) ~}}
@@ -51,10 +51,8 @@
                 {{! edit topic pencil icon }}
                 {{#if always_visible_topic_edit}}
                     <i class="fa fa-pencil always_visible_topic_edit recipient_bar_icon hidden-for-spectators" {{#unless realm_allow_message_editing}}style="display: none"{{/unless}} data-tippy-content="{{t 'Edit topic'}}" role="button" tabindex="0" aria-label="{{t 'Edit topic' }}"></i>
-                {{else}}
-                    {{#if on_hover_topic_edit}}
+                {{else if on_hover_topic_edit}}
                     <i class="fa fa-pencil on_hover_topic_edit recipient_bar_icon hidden-for-spectators" {{#unless realm_allow_message_editing}}style="display: none"{{/unless}} data-tippy-content="{{t 'Edit topic'}}" role="button" tabindex="0" aria-label="{{t 'Edit topic' }}"></i>
-                    {{/if}}
                 {{/if}}
 
                 {{#if user_can_resolve_topic}}
@@ -66,9 +64,9 @@
                 {{/if}}
 
                 {{#if topic_muted}}
-                    <i class="fa fa-bell-slash on_hover_topic_unmute recipient_bar_icon" data-stream-id="{{stream_id}}" data-topic-name="{{topic}}" data-tippy-content="{{t 'Unmute topic' }} (M)" role="button" tabindex="0" aria-label="{{t 'Unmute topic' }}"></i>
+                    <i class="zulip-icon zulip-icon-mute on_hover_topic_unmute recipient_bar_icon" data-stream-id="{{stream_id}}" data-topic-name="{{topic}}" data-tippy-content="{{t 'Unmute topic' }} (M)" role="button" tabindex="0" aria-label="{{t 'Unmute topic' }}"></i>
                 {{else}}
-                    <i class="fa fa-bell-slash on_hover_topic_mute recipient_bar_icon hidden-for-spectators" data-stream-id="{{stream_id}}" data-topic-name="{{topic}}" data-tippy-content="{{t 'Mute topic' }} (M)" role="button" tabindex="0" aria-label="{{t 'Mute topic' }}"></i>
+                    <i class="zulip-icon zulip-icon-mute on_hover_topic_mute recipient_bar_icon hidden-for-spectators" data-stream-id="{{stream_id}}" data-topic-name="{{topic}}" data-tippy-content="{{t 'Mute topic' }} (M)" role="button" tabindex="0" aria-label="{{t 'Mute topic' }}"></i>
                 {{/if}}
             </span>
             <span class="recipient_row_date {{#if group_date_divider_html}}{{else}}hide-date{{/if}}">{{{date}}}</span>

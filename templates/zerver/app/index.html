@@ -37,9 +37,20 @@
     #app-loading-middle-content h3 {
     text-align: center;
     }
+    @keyframes showAtEnd {
+    99% {
+    visibility: hidden;
+    }
+    100% {
+    visibility: visible;
+    }
+    }
     #app-loading-bottom-content {
     top: unset;
     bottom: 20px;
+    animation: 7s showAtEnd;
+    animation-fill-mode: forwards;
+    visibility: hidden;
     }
     body.color-scheme-automatic #app-loading{
     color: hsl(0, 0%, 20%);
@@ -63,7 +74,7 @@
         <h3>{{ _('Loading...') }}</h3>
     </div>
     <div id="app-loading-bottom-content">
-        <p>{% trans %}If this message does not go away, please wait a couple seconds and <a id="reload-lnk">reload</a> the page.{% endtrans %}</p>
+        <p>{% trans %}If this message does not go away, try <a id="reload-lnk">reloading</a> the page.{% endtrans %}</p>
         <script nonce="{{ csp_nonce }}">
             document.addEventListener('DOMContentLoaded', function () {
                 function reload() {
@@ -76,6 +87,7 @@
 </div>
 
 <div id="manage_streams_container"></div>
+<div id="manage_groups_container"></div>
 <div id="drafts_table"></div>
 <div id="settings_overlay_container" class="overlay" data-overlay="settings" aria-hidden="true">
 </div>
@@ -109,7 +121,7 @@
             <span id="normal-zephyr-mirror-error-text">
                 We recommend that
                 you <a class="webathena_login">give Zulip the ability to mirror the messages for you via
-                WebAthena</a>.  If you'd prefer, you can instead
+                Webathena</a>.  If you'd prefer, you can instead
                 <a href="/zephyr-mirror" target="_blank" rel="noopener noreferrer">run the
                 Zephyr mirror script yourself</a> in a screen
                 session.
@@ -120,6 +132,20 @@
         </div>
         <div class="alert alert_sidebar alert-error home-error-bar" id="home-error"></div>
         <div class="alert alert_sidebar alert-error home-error-bar" id="reloading-application"></div>
+        <div class="alert alert_sidebar" id="request-progress-status-banner">
+            <div class="alert-zulip-logo">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 773.12 773.12">
+                    <circle cx="386.56" cy="386.56" r="386.56"></circle>
+                    <path d="M566.66 527.25c0 33.03-24.23 60.05-53.84 60.05H260.29c-29.61 0-53.84-27.02-53.84-60.05 0-20.22 9.09-38.2 22.93-49.09l134.37-120c2.5-2.14 5.74 1.31 3.94 4.19l-49.29 98.69c-1.38 2.76.41 6.16 3.25 6.16h191.18c29.61 0 53.83 27.03 53.83 60.05zm0-281.39c0 20.22-9.09 38.2-22.93 49.09l-134.37 120c-2.5 2.14-5.74-1.31-3.94-4.19l49.29-98.69c1.38-2.76-.41-6.16-3.25-6.16H260.29c-29.61 0-53.84-27.02-53.84-60.05s24.23-60.05 53.84-60.05h252.54c29.61 0 53.83 27.02 53.83 60.05z"></path>
+                </svg>
+            </div>
+            <div class="loading-indicator"></div>
+            <div class="success-indicator">
+                <i class="fa fa-check"></i>
+            </div>
+            <div class="alert-content"></div>
+            <div class="exit"></div>
+        </div>
     </div>
     <div class="app-main">
         <div class="column-left" id="left-sidebar-container">
@@ -129,6 +155,15 @@
                 <div id="recent_topics_view">
                     <div class="recent_topics_container">
                         <div id="recent_topics_table"></div>
+                        <div id="recent_topics_bottom_whitespace">
+                            <div class="bottom-messages-logo">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 773.12 773.12">
+                                    <circle cx="386.56" cy="386.56" r="386.56"/>
+                                    <path d="M566.66 527.25c0 33.03-24.23 60.05-53.84 60.05H260.29c-29.61 0-53.84-27.02-53.84-60.05 0-20.22 9.09-38.2 22.93-49.09l134.37-120c2.5-2.14 5.74 1.31 3.94 4.19l-49.29 98.69c-1.38 2.76.41 6.16 3.25 6.16h191.18c29.61 0 53.83 27.03 53.83 60.05zm0-281.39c0 20.22-9.09 38.2-22.93 49.09l-134.37 120c-2.5 2.14-5.74-1.31-3.94-4.19l49.29-98.69c1.38-2.76-.41-6.16-3.25-6.16H260.29c-29.61 0-53.84-27.02-53.84-60.05s24.23-60.05 53.84-60.05h252.54c29.61 0 53.83 27.02 53.83 60.05z"/>
+                                </svg>
+                            </div>
+                            <div id="recent_topics_loading_messages_indicator"></div>
+                        </div>
                     </div>
                 </div>
                 <div class="tab-pane" id="message_feed_container">
@@ -163,21 +198,16 @@
                         </div>
                         <div id="loading_older_messages_indicator"></div>
                         <div id="page_loading_indicator"></div>
-                        {% include "zerver/app/message_feed_errors.html" %}
+                        <div id="message_feed_errors_container"></div>
                         <div class="message_table focused_table" id="zhome" role="list" aria-live="polite" aria-label="{{ _('Messages') }}">
                         </div>
                         <div class="message_table" id="zfilt" role="list" aria-live="polite" aria-label="{{ _('Messages') }}">
                         </div>
                         <div id="typing_notifications">
                         </div>
+                        <div id="mark_as_read_turned_off_banner" class="alert home-error-bar">
+                        </div>
                         <div id="bottom_whitespace">
-                            <div class="bottom-messages-logo">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 773.12 773.12">
-                                    <circle cx="386.56" cy="386.56" r="386.56"/>
-                                    <path d="M566.66 527.25c0 33.03-24.23 60.05-53.84 60.05H260.29c-29.61 0-53.84-27.02-53.84-60.05 0-20.22 9.09-38.2 22.93-49.09l134.37-120c2.5-2.14 5.74 1.31 3.94 4.19l-49.29 98.69c-1.38 2.76.41 6.16 3.25 6.16h191.18c29.61 0 53.83 27.03 53.83 60.05zm0-281.39c0 20.22-9.09 38.2-22.93 49.09l-134.37 120c-2.5 2.14-5.74-1.31-3.94-4.19l49.29-98.69c1.38-2.76-.41-6.16-3.25-6.16H260.29c-29.61 0-53.84-27.02-53.84-60.05s24.23-60.05 53.84-60.05h252.54c29.61 0 53.83 27.02 53.83 60.05z"/>
-                                </svg>
-                            </div>
-                            <div id="loading_newer_messages_indicator"></div>
                         </div>
                     </div>
                 </div>
@@ -203,10 +233,6 @@
         </form>
     </div>
     <div id="user-profile-modal-holder"></div>
-    <div id="delete-topic-modal-holder"></div>
-    <div class="left-sidebar-modal-holder"></div>
-    <div class="mute-user-modal-holder"></div>
-    <div id="move-a-topic-modal-holder"></div>
     <audio id="user-notification-sound-audio">
         <source class="notification-sound-source-ogg" type="audio/ogg" />
         <source class="notification-sound-source-mp3" type="audio/mpeg" />
@@ -215,6 +241,5 @@
         <source class="notification-sound-source-ogg" type="audio/ogg" />
         <source class="notification-sound-source-mp3" type="audio/mpeg" />
     </audio>
-    <div id="login-to-access-modal-holder"></div>
 </div>
 {% endblock %}

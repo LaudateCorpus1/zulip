@@ -2,20 +2,23 @@
 
 Zulip's [topics](/help/streams-and-topics) are very
 helpful for customer support, answering questions, investigating
-issues and production errors, and other workflows.
-
+issues and production errors, as well as other workflows.
 Resolving topics makes it easy to track the status of each question,
-investigation, or notification. Marking a topic as resolved:
+investigation, or notification.
+
+Marking a topic as resolved:
 
 * Puts a ✔ at the beginning of the topic name, e.g. `example topic`
   becomes `✔ example topic`.
-* Triggers an automated message from Notification Bot indicating that
-  you resolved the topic.
+* Triggers an automated notice from the [notification
+  bot](/help/configure-notification-bot) indicating that
+  you resolved the topic. This message will be marked as unread
+  only for users who had participated in the topic.
 * Changes whether the topic appears when using the `is:resolved` and
   `-is:resolved` [search operators](/help/search-for-messages).
 
-Marking a topic as unresolved removes the ✔ and also triggers a
-Notification Bot message.
+Marking a topic as unresolved removes the ✔ and also triggers an
+automated notice from the notification bot.
 
 It's often helpful to define a policy for when to resolve topics that
 fits how topics are used in a given stream. Here are some common
@@ -27,7 +30,7 @@ approaches for deciding when to mark a topic as resolved:
 * **Issues, errors and production incidents**: When investigation or
   incident response is complete, and any follow-up work has been
   transferred to the appropriate tracker.
-* **Workflow management**: What the work described in the topic is
+* **Workflow management**: When the work described in the topic is
   complete and any follow-ups have been transcribed.
 * **Answering questions**: When the question has been fully answered,
   and follow-ups would be best discussed in a new topic.
@@ -41,44 +44,53 @@ on when topic editing is allowed.
 
 ## Mark a topic as resolved
 
-### Via the message recipient bar
-
 {start_tabs}
 
-1. Click on the **✔** icon to mark an unresolved topic as resolved.
-
-{end_tabs}
-
-### Via the left sidebar
-
-{start_tabs}
+{tab|desktop-web}
 
 {!topic-actions.md!}
 
 1. Select **Mark as resolved**.
 
+!!! tip ""
+
+    You can also click on the **✔** icon in the message recipient bar to
+    mark an unresolved topic as resolved.
+
+{tab|mobile}
+
+{!topic-long-press-menu.md!}
+
+1. Tap **Resolve topic**.
+
+{!topic-long-press-menu-tip.md!}
+
 {end_tabs}
 
 ## Mark a topic as unresolved
 
-### Via the message recipient bar
-
 {start_tabs}
 
-1. Click on the **✔** icon to mark a resolved topic as unresolved.
-
-{end_tabs}
-
-### Via the left sidebar
-
-{start_tabs}
+{tab|desktop-web}
 
 {!topic-actions.md!}
 
 1. Select **Mark as unresolved**.
 
-{end_tabs}
+!!! tip ""
 
+    You can also click on the **✔** icon in the message recipient bar to
+    mark a resolved topic as unresolved.
+
+{tab|mobile}
+
+{!topic-long-press-menu.md!}
+
+1. Tap **Unresolve topic**.
+
+{!topic-long-press-menu-tip.md!}
+
+{end_tabs}
 
 ## Details
 

@@ -8,6 +8,7 @@ from sqlalchemy.sql import ColumnElement, column, func, literal
 from sqlalchemy.types import Boolean, Text
 
 from zerver.lib.request import REQ
+from zerver.lib.types import EditHistoryEvent
 from zerver.models import Message, Stream, UserMessage, UserProfile
 
 # Only use these constants for events.
@@ -18,12 +19,6 @@ MATCH_TOPIC = "match_subject"
 
 # Prefix use to mark topic as resolved.
 RESOLVED_TOPIC_PREFIX = "✔ "
-
-# This constant is actually embedded into
-# the JSON data for message edit history,
-# so we'll always need to handle legacy data
-# unless we do a pretty tricky migration.
-LEGACY_PREV_TOPIC = "prev_subject"
 
 # This constant is pretty closely coupled to the
 # database, but it's the JSON field.
@@ -56,7 +51,7 @@ def REQ_topic() -> Optional[str]:
     return REQ(
         whence="topic",
         aliases=["subject"],
-        converter=lambda x: x.strip(),
+        converter=lambda var_name, x: x.strip(),
         default=None,
     )
 
@@ -75,32 +70,34 @@ DB_TOPIC_NAME = "subject"
 MESSAGE__TOPIC = "message__subject"
 
 
-def topic_match_sa(topic_name: str) -> "ColumnElement[Boolean]":
+def topic_match_sa(topic_name: str) -> ColumnElement[Boolean]:
     # _sa is short for SQLAlchemy, which we use mostly for
     # queries that search messages
     topic_cond = func.upper(column("subject", Text)) == func.upper(literal(topic_name))
     return topic_cond
 
 
-def get_resolved_topic_condition_sa() -> "ColumnElement[Boolean]":
+def get_resolved_topic_condition_sa() -> ColumnElement[Boolean]:
     resolved_topic_cond = column("subject", Text).startswith(RESOLVED_TOPIC_PREFIX)
     return resolved_topic_cond
 
 
-def topic_column_sa() -> "ColumnElement[Text]":
+def topic_column_sa() -> ColumnElement[Text]:
     return column("subject", Text)
 
 
-def filter_by_exact_message_topic(query: QuerySet, message: Message) -> QuerySet:
+def filter_by_exact_message_topic(query: QuerySet[Message], message: Message) -> QuerySet[Message]:
     topic_name = message.topic_name()
     return query.filter(subject=topic_name)
 
 
-def filter_by_topic_name_via_message(query: QuerySet, topic_name: str) -> QuerySet:
+def filter_by_topic_name_via_message(
+    query: QuerySet[UserMessage], topic_name: str
+) -> QuerySet[UserMessage]:
     return query.filter(message__subject__iexact=topic_name)
 
 
-def messages_for_topic(stream_recipient_id: int, topic_name: str) -> QuerySet:
+def messages_for_topic(stream_recipient_id: int, topic_name: str) -> QuerySet[Message]:
     return Message.objects.filter(
         recipient_id=stream_recipient_id,
         subject__iexact=topic_name,
@@ -135,11 +132,11 @@ def user_message_exists_for_topic(
 
 
 def update_edit_history(
-    message: Message, last_edit_time: datetime, edit_history_event: Dict[str, Any]
+    message: Message, last_edit_time: datetime, edit_history_event: EditHistoryEvent
 ) -> None:
     message.last_edit_time = last_edit_time
     if message.edit_history is not None:
-        edit_history = orjson.loads(message.edit_history)
+        edit_history: List[EditHistoryEvent] = orjson.loads(message.edit_history)
         edit_history.insert(0, edit_history_event)
     else:
         edit_history = [edit_history_event]
@@ -154,7 +151,7 @@ def update_messages_for_topic_edit(
     topic_name: Optional[str],
     new_stream: Optional[Stream],
     old_stream: Stream,
-    edit_history_event: Dict[str, Any],
+    edit_history_event: EditHistoryEvent,
     last_edit_time: datetime,
 ) -> List[Message]:
     propagate_query = Q(recipient_id=old_stream.recipient_id, subject__iexact=orig_topic_name)
@@ -187,6 +184,7 @@ def update_messages_for_topic_edit(
     if new_stream is not None:
         update_fields.append("recipient")
         for m in messages_list:
+            assert new_stream.recipient is not None
             m.recipient = new_stream.recipient
     if topic_name is not None:
         update_fields.append("subject")

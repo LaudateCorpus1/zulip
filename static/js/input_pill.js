@@ -1,18 +1,18 @@
+// todo: Refactor pills subsystem to use modern javascript classes?
+
 import $ from "jquery";
 
 import render_input_pill from "../templates/input_pill.hbs";
 
 import * as blueslip from "./blueslip";
 import * as compose from "./compose";
+import * as keydown_util from "./keydown_util";
 import * as ui_util from "./ui_util";
 
 // See https://zulip.readthedocs.io/en/latest/subsystems/input-pills.html
-export function random_id() {
-    return Math.random().toString(16);
-}
 
 export function create(opts) {
-    if (!opts.container) {
+    if (!opts.$container) {
         blueslip.error("Pill needs container.");
         return undefined;
     }
@@ -31,8 +31,9 @@ export function create(opts) {
     // all unique instance information is stored in here.
     const store = {
         pills: [],
-        $parent: opts.container,
-        $input: opts.container.find(".input").expectOne(),
+        pill_config: opts.pill_config,
+        $parent: opts.$container,
+        $input: opts.$container.find(".input").expectOne(),
         create_item_from_text: opts.create_item_from_text,
         get_text_from_item: opts.get_text_from_item,
     };
@@ -78,8 +79,6 @@ export function create(opts) {
         // This is generally called by typeahead logic, where we have all
         // the data we need (as opposed to, say, just a user-typed email).
         appendValidatedData(item) {
-            const id = random_id();
-
             if (!item.display_value) {
                 blueslip.error("no display_value returned");
                 return;
@@ -91,7 +90,6 @@ export function create(opts) {
             }
 
             const payload = {
-                id,
                 item,
             };
 
@@ -100,7 +98,6 @@ export function create(opts) {
             const has_image = item.img_src !== undefined;
 
             const opts = {
-                id: payload.id,
                 display_value: item.display_value,
                 has_image,
                 deactivated: item.deactivated,
@@ -108,6 +105,14 @@ export function create(opts) {
 
             if (has_image) {
                 opts.img_src = item.img_src;
+            }
+
+            if (store.pill_config?.show_user_status_emoji === true) {
+                const has_status = item.status_emoji_info !== undefined;
+                if (has_status) {
+                    opts.status_emoji_info = item.status_emoji_info;
+                }
+                opts.has_status = has_status;
             }
 
             if (typeof store.onPillCreate === "function") {
@@ -141,14 +146,14 @@ export function create(opts) {
             return true;
         },
 
-        // this searches given a particlar pill ID for it, removes the node
+        // this searches given the DOM node for a pill, removes the node
         // from the DOM, removes it from the array and returns it.
         // this would generally be used for DOM-provoked actions, such as a user
         // clicking on a pill to remove it.
-        removePill(id) {
+        removePill(element) {
             let idx;
             for (let x = 0; x < store.pills.length; x += 1) {
-                if (store.pills[x].id === id) {
+                if (store.pills[x].$element[0] === element) {
                     idx = x;
                 }
             }
@@ -200,7 +205,7 @@ export function create(opts) {
             // of pills for the user to fix.
             const drafts = pills.filter(
                 (pill) =>
-                    // if this returns `false`, it erroed and we should push it to
+                    // if this returns `false`, it errored and we should push it to
                     // the draft pills.
                     funcs.appendPill(pill) === false,
             );
@@ -217,8 +222,8 @@ export function create(opts) {
             return drafts.length === 0;
         },
 
-        getByID(id) {
-            return store.pills.find((pill) => pill.id === id);
+        getByElement(element) {
+            return store.pills.find((pill) => pill.$element[0] === element);
         },
 
         _get_pills_for_testing() {
@@ -239,7 +244,7 @@ export function create(opts) {
 
     {
         store.$parent.on("keydown", ".input", (e) => {
-            if (e.key === "Enter") {
+            if (keydown_util.is_enter_event(e)) {
                 // regardless of the value of the input, the ENTER keyword
                 // should be ignored in favor of keeping content to one line
                 // always.
@@ -313,8 +318,7 @@ export function create(opts) {
                     break;
                 case "Backspace": {
                     const $next = $pill.next();
-                    const id = $pill.data("id");
-                    funcs.removePill(id);
+                    funcs.removePill($pill[0]);
                     $next.trigger("focus");
                     // the "Backspace" key in Firefox will go back a page if you do
                     // not prevent it.
@@ -352,12 +356,11 @@ export function create(opts) {
             e.stopPropagation();
             const $pill = $(this).closest(".pill");
             const $next = $pill.next();
-            const id = $pill.data("id");
 
-            funcs.removePill(id);
+            funcs.removePill($pill[0]);
             $next.trigger("focus");
 
-            compose.update_fade();
+            compose.update_on_recipient_change();
         });
 
         store.$parent.on("click", function (e) {
@@ -367,8 +370,8 @@ export function create(opts) {
         });
 
         store.$parent.on("copy", ".pill", (e) => {
-            const id = store.$parent.find(":focus").data("id");
-            const data = funcs.getByID(id);
+            const $element = store.$parent.find(":focus");
+            const data = funcs.getByElement($element[0]);
             e.originalEvent.clipboardData.setData(
                 "text/plain",
                 store.get_text_from_item(data.item),
@@ -382,7 +385,7 @@ export function create(opts) {
         appendValue: funcs.appendPill.bind(funcs),
         appendValidatedData: funcs.appendValidatedData.bind(funcs),
 
-        getByID: funcs.getByID,
+        getByElement: funcs.getByElement,
         items: funcs.items,
 
         onPillCreate(callback) {

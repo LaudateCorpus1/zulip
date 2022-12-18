@@ -24,6 +24,11 @@
     input.add-desc {
         margin-left: 2px;
     }
+
+    /* Arrange that a multi-line description line wraps properly. */
+    label.checkbox {
+        display: flex;
+    }
 }
 
 .todo-widget,
@@ -31,6 +36,11 @@
     h4 {
         font-size: 18px;
         font-weight: 600;
+
+        /* for example in help `?` widget */
+        &.reduced-font-size {
+            font-size: 16px;
+        }
     }
 
     li {
@@ -97,11 +107,6 @@ button {
         }
     }
 
-    &.task-completed {
-        border-color: hsl(157, 18%, 77%);
-        padding: 0;
-    }
-
     &.add-task,
     &.add-desc,
     &.poll-option,
@@ -114,10 +119,6 @@ button {
             border-color: hsl(0, 0%, 60%);
         }
     }
-}
-
-img.task-completed {
-    width: 15px;
 }
 
 input,
@@ -160,7 +161,7 @@ button {
 }
 
 .poll-question-header {
-    display: inline-block;
+    display: inline;
 }
 
 .current-user-vote {

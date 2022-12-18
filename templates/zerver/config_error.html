@@ -1,14 +1,18 @@
 {% extends "zerver/portico.html" %}
 
+{% block title %}
+<title>{{ _("Configuration error") }} | Zulip</title>
+{% endblock %}
+
 {% block portico_content %}
 
 <div class="error_page" style="padding-bottom: 60px;">
     <div class="container">
         <div class="row-fluid">
-            <img src="/static/images/500art.svg" alt=""/>
+            <img src="/static/images/errors/500art.svg" alt=""/>
             <div class="errorbox config-error">
                 <div class="errorcontent">
-                    <h1 class="lead">Configuration error</h1>
+                    <h1 class="lead">{{ _("Configuration error") }}</h1>
                     <br />
                     {% if error_name == "ldap_error_realm_is_none" %}
                         {% trans %}

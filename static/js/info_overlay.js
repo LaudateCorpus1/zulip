@@ -80,7 +80,38 @@ const markdown_help_rows = [
     {
         markdown: "/me is busy working",
         output_html: '<p><span class="sender_name-in-status">Iago</span> is busy working</p>',
-        usage_html: "(send a status message as user Iago)",
+    },
+    {
+        markdown: `/poll What did you drink this morning?
+Milk
+Tea
+Coffee`,
+        output_html: `\
+<div class="poll-widget">
+    <h4 class="poll-question-header reduced-font-size">What did you drink this morning?</h4>
+    <i class="fa fa-pencil poll-edit-question"></i>
+    <ul class="poll-widget">
+    <li>
+        <button class="poll-vote">
+            0
+        </button>
+        <span>Milk</span>
+    </li>
+    <li>
+        <button class="poll-vote">
+            0
+        </button>
+        <span>Tea</span>
+    </li>
+    <li>
+        <button class="poll-vote">
+            0
+        </button>
+        <span>Coffee</span>
+    </li>
+    </ul>
+</div>
+`,
     },
     {
         markdown: "Some inline `code`",
@@ -110,7 +141,9 @@ def zulip():
             },
             {
                 "z-link": (content_html) =>
-                    `<a target="_blank" rel="noopener noreferrer" href="https://pygments.org/docs/lexers/">${content_html}</a>`,
+                    `<a target="_blank" rel="noopener noreferrer" href="https://pygments.org/docs/lexers/">${content_html.join(
+                        "",
+                    )}</a>`,
             },
         ),
     },
@@ -146,7 +179,9 @@ This text won't be visible until the user clicks.
             },
             {
                 "z-link": (content_html) =>
-                    `<a target="_blank" rel="noopener noreferrer" href="https://github.com/adam-p/markdown-here/wiki/Markdown-Cheatsheet#wiki-tables">${content_html}</a>`,
+                    `<a target="_blank" rel="noopener noreferrer" href="https://github.com/adam-p/markdown-here/wiki/Markdown-Cheatsheet#wiki-tables">${content_html.join(
+                        "",
+                    )}</a>`,
             },
         ),
     },
@@ -189,19 +224,19 @@ export function set_up_toggler() {
     };
 
     toggler = components.toggle(opts);
-    const elem = toggler.get();
-    elem.addClass("large allow-overflow");
+    const $elem = toggler.get();
+    $elem.addClass("large allow-overflow");
 
     const modals = opts.values.map((item) => {
         const key = item.key; // e.g. message-formatting
-        const modal = $(`#${CSS.escape(key)}`).find(".modal-body");
-        return modal;
+        const $modal = $(`#${CSS.escape(key)}`).find(".modal-body");
+        return $modal;
     });
 
-    for (const modal of modals) {
-        ui.get_scroll_element(modal).prop("tabindex", 0);
+    for (const $modal of modals) {
+        ui.get_scroll_element($modal).prop("tabindex", 0);
         keydown_util.handle({
-            elem: modal,
+            $elem: $modal,
             handlers: {
                 ArrowLeft: toggler.maybe_go_left,
                 ArrowRight: toggler.maybe_go_right,
@@ -209,7 +244,7 @@ export function set_up_toggler() {
         });
     }
 
-    $(".informational-overlays .overlay-tabs").append(elem);
+    $(".informational-overlays .overlay-tabs").append($elem);
 
     $("#go-to-default-view-hotkey-help").toggleClass(
         "notdisplayed",
@@ -224,12 +259,12 @@ export function show(target) {
         set_up_toggler();
     }
 
-    const overlay = $(".informational-overlays");
+    const $overlay = $(".informational-overlays");
 
-    if (!overlay.hasClass("show")) {
+    if (!$overlay.hasClass("show")) {
         overlays.open_overlay({
             name: "informationalOverlays",
-            overlay,
+            $overlay,
             on_close() {
                 browser_history.exit_overlay();
             },

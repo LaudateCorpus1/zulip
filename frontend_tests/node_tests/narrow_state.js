@@ -174,9 +174,9 @@ test("set_compose_defaults", () => {
         ["topic", "Bar"],
     ]);
 
-    const stream_and_subject = narrow_state.set_compose_defaults();
-    assert.equal(stream_and_subject.stream, "Foo");
-    assert.equal(stream_and_subject.topic, "Bar");
+    const stream_and_topic = narrow_state.set_compose_defaults();
+    assert.equal(stream_and_topic.stream, "Foo");
+    assert.equal(stream_and_topic.topic, "Bar");
 
     set_filter([["pm-with", "foo@bar.com"]]);
     let pm_test = narrow_state.set_compose_defaults();
@@ -276,24 +276,24 @@ test("stream_sub", () => {
     assert.equal(narrow_state.stream(), undefined);
 });
 
-test("pm_string", () => {
+test("pm_ids_string", () => {
     // This function will return undefined unless we're clearly
     // narrowed to a specific PM (including huddles) with real
     // users.
     narrow_state.set_current_filter(undefined);
-    assert.equal(narrow_state.pm_string(), undefined);
+    assert.equal(narrow_state.pm_ids_string(), undefined);
 
     set_filter([
         ["stream", "Foo"],
         ["topic", "Bar"],
     ]);
-    assert.equal(narrow_state.pm_string(), undefined);
+    assert.equal(narrow_state.pm_ids_string(), undefined);
 
     set_filter([["pm-with", ""]]);
-    assert.equal(narrow_state.pm_string(), undefined);
+    assert.equal(narrow_state.pm_ids_string(), undefined);
 
     set_filter([["pm-with", "bogus@foo.com"]]);
-    assert.equal(narrow_state.pm_string(), undefined);
+    assert.equal(narrow_state.pm_ids_string(), undefined);
 
     const alice = {
         email: "alice@foo.com",
@@ -311,5 +311,5 @@ test("pm_string", () => {
     people.add_active_user(bob);
 
     set_filter([["pm-with", "bob@foo.com,alice@foo.com"]]);
-    assert.equal(narrow_state.pm_string(), "444,555");
+    assert.equal(narrow_state.pm_ids_string(), "444,555");
 });

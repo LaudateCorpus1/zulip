@@ -8,12 +8,12 @@ export const vim_up = "k";
 export const vim_right = "l";
 
 export function handle(opts: {
-    elem: JQuery;
+    $elem: JQuery;
     handlers: {
         [handler: string]: (() => boolean) | undefined;
     };
 }): void {
-    opts.elem.on("keydown", (e) => {
+    opts.$elem.on("keydown", (e) => {
         if (e.altKey || e.ctrlKey || e.shiftKey) {
             return;
         }
@@ -30,4 +30,15 @@ export function handle(opts: {
             e.stopPropagation();
         }
     });
+}
+
+export function is_enter_event(event: JQuery.KeyDownEvent): boolean {
+    // In addition to checking whether the key pressed was an Enter
+    // key, we need to check whether the keypress was part of an IME
+    // composing session, such as selecting a character using a
+    // phonetic input method like ZhuYin in a character-based
+    // language. See #22062 for details. Further reading:
+    // https://developer.mozilla.org/en-US/docs/Glossary/Input_method_editor
+    const isComposing: boolean = event.originalEvent?.isComposing || false;
+    return !isComposing && event.key === "Enter";
 }

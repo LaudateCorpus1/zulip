@@ -32,8 +32,6 @@ EXCLUDED_URLS = [
     "https://www.transifex.com/zulip/zulip/announcements/",
     "https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh",
     # Requires authentication
-    "https://circleci.com/gh/zulip/zulip/tree/main",
-    "https://circleci.com/gh/zulip/zulip/16617",
     "https://www.linkedin.com/company/zulip-project",
     # Returns 403 errors to HEAD requests
     "https://giphy.com",
@@ -49,6 +47,8 @@ VNU_IGNORE = [
     r"No “p” element in scope but a “p” end tag seen\.",
     r"Element “div” not allowed as child of element “ul” in this context\. "
     + r"\(Suppressing further errors from this subtree\.\)",
+    # Opinionated informational messages.
+    r"Self-closing tag syntax in text/html documents is widely discouraged; it’s unnecessary and interacts badly with other HTML features \(e\.g\., unquoted attribute values\)\. If you’re using a tool that injects self-closing tag syntax into all void elements, without any option to prevent it from doing so, then consider switching to a different tool\.",
 ]
 VNU_IGNORE_REGEX = re.compile(r"|".join(VNU_IGNORE))
 
@@ -93,7 +93,7 @@ class BaseDocumentationSpider(scrapy.Spider):
         if url.startswith(ZULIP_SERVER_GITHUB_FILE_URL_PREFIX) or url.startswith(
             ZULIP_SERVER_GITHUB_DIRECTORY_URL_PREFIX
         ):
-            # We can verify these links directly in the local git repo without making any requests to GitHub servers.
+            # We can verify these links directly in the local Git repo without making any requests to GitHub servers.
             return False
         if "github.com/zulip" in url:
             # We want to check these links but due to rate limiting from GitHub, these checks often
@@ -144,6 +144,11 @@ class BaseDocumentationSpider(scrapy.Spider):
             or url.startswith("http://localhost:9981/#")
             or url.startswith("http://localhost:9981#")
         ):
+            return
+
+        # This page has some invisible to the user anchor links like #all
+        # that are currently invisible, and thus would otherwise fail this test.
+        if url.startswith("http://localhost:9981/communities"):
             return
 
         callback: Callable[[Response], Optional[Iterator[Request]]] = self.parse

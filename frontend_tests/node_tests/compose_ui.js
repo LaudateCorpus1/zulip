@@ -11,11 +11,6 @@ const $ = require("../zjsunit/zjquery");
 
 const noop = () => {};
 
-set_global("document", {
-    execCommand() {
-        return false;
-    },
-});
 set_global("navigator", {});
 
 mock_esm("../../static/js/message_lists", {
@@ -29,6 +24,7 @@ const hash_util = mock_esm("../../static/js/hash_util");
 const channel = mock_esm("../../static/js/channel");
 const compose_actions = zrequire("compose_actions");
 const message_lists = zrequire("message_lists");
+const text_field_edit = mock_esm("text-field-edit");
 
 const alice = {
     email: "alice@zulip.com",
@@ -46,48 +42,42 @@ people.add_active_user(bob);
 
 function make_textbox(s) {
     // Simulate a jQuery textbox for testing purposes.
-    const widget = {};
+    const $widget = {};
 
-    widget.s = s;
-    widget.focused = false;
+    $widget.s = s;
+    $widget[0] = "textarea";
+    $widget.focused = false;
 
-    widget.caret = function (arg) {
+    $widget.caret = function (arg) {
         if (typeof arg === "number") {
-            widget.pos = arg;
+            $widget.pos = arg;
             return this;
         }
 
-        if (arg) {
-            widget.insert_pos = widget.pos;
-            widget.insert_text = arg;
-            const before = widget.s.slice(0, widget.pos);
-            const after = widget.s.slice(widget.pos);
-            widget.s = before + arg + after;
-            widget.pos += arg.length;
-            return this;
-        }
+        // Not used right now, but could be in future.
+        // if (arg) {
+        //     $widget.insert_pos = $widget.pos;
+        //     $widget.insert_text = arg;
+        //     const before = $widget.s.slice(0, $widget.pos);
+        //     const after = $widget.s.slice($widget.pos);
+        //     $widget.s = before + arg + after;
+        //     $widget.pos += arg.length;
+        //     return this;
+        // }
 
-        return widget.pos;
+        return $widget.pos;
     };
 
-    widget.val = function (new_val) {
+    $widget.val = function (new_val) {
+        /* istanbul ignore if */
         if (new_val) {
-            widget.s = new_val;
+            $widget.s = new_val;
             return this;
         }
-        return widget.s;
+        return $widget.s;
     };
 
-    widget.trigger = function (type) {
-        if (type === "focus") {
-            widget.focused = true;
-        } else if (type === "blur") {
-            widget.focused = false;
-        }
-        return this;
-    };
-
-    return widget;
+    return $widget;
 }
 
 run_test("autosize_textarea", ({override}) => {
@@ -105,75 +95,57 @@ run_test("autosize_textarea", ({override}) => {
     assert.ok(textarea_autosized.autosized);
 });
 
-run_test("insert_syntax_and_focus", () => {
+run_test("insert_syntax_and_focus", ({override}) => {
     $("#compose-textarea").val("xyz ");
-    $("#compose-textarea").caret = function (syntax) {
-        if (syntax !== undefined) {
-            $("#compose-textarea").val($("#compose-textarea").val() + syntax);
-            return this;
-        }
-        return 4;
-    };
+    $("#compose-textarea").caret = () => 4;
+    $("#compose-textarea")[0] = "compose-textarea";
+    // Since we are using a third party library, we just
+    // need to ensure it is being called with the right params.
+    override(text_field_edit, "insert", (elt, syntax) => {
+        assert.equal(elt, "compose-textarea");
+        assert.equal(syntax, ":octopus: ");
+    });
     compose_ui.insert_syntax_and_focus(":octopus:");
-    assert.equal($("#compose-textarea").caret(), 4);
-    assert.equal($("#compose-textarea").val(), "xyz :octopus: ");
-    assert.ok($("#compose-textarea").is_focused());
 });
 
-run_test("smart_insert", () => {
-    let textbox = make_textbox("abc");
-    textbox.caret(4);
+run_test("smart_insert", ({override}) => {
+    let $textbox = make_textbox("abc");
+    $textbox.caret(4);
+    function override_with_expected_syntax(expected_syntax) {
+        override(text_field_edit, "insert", (elt, syntax) => {
+            assert.equal(elt, "textarea");
+            assert.equal(syntax, expected_syntax);
+        });
+    }
+    override_with_expected_syntax(" :smile: ");
+    compose_ui.smart_insert($textbox, ":smile:");
 
-    compose_ui.smart_insert(textbox, ":smile:");
-    assert.equal(textbox.insert_pos, 4);
-    assert.equal(textbox.insert_text, " :smile: ");
-    assert.equal(textbox.val(), "abc :smile: ");
-    assert.ok(textbox.focused);
+    override_with_expected_syntax(" :airplane: ");
+    compose_ui.smart_insert($textbox, ":airplane:");
 
-    textbox.trigger("blur");
-    compose_ui.smart_insert(textbox, ":airplane:");
-    assert.equal(textbox.insert_text, ":airplane: ");
-    assert.equal(textbox.val(), "abc :smile: :airplane: ");
-    assert.ok(textbox.focused);
+    $textbox.caret(0);
+    override_with_expected_syntax(":octopus: ");
+    compose_ui.smart_insert($textbox, ":octopus:");
 
-    textbox.caret(0);
-    textbox.trigger("blur");
-    compose_ui.smart_insert(textbox, ":octopus:");
-    assert.equal(textbox.insert_text, ":octopus: ");
-    assert.equal(textbox.val(), ":octopus: abc :smile: :airplane: ");
-    assert.ok(textbox.focused);
-
-    textbox.caret(textbox.val().length);
-    textbox.trigger("blur");
-    compose_ui.smart_insert(textbox, ":heart:");
-    assert.equal(textbox.insert_text, ":heart: ");
-    assert.equal(textbox.val(), ":octopus: abc :smile: :airplane: :heart: ");
-    assert.ok(textbox.focused);
+    $textbox.caret($textbox.val().length);
+    override_with_expected_syntax(" :heart: ");
+    compose_ui.smart_insert($textbox, ":heart:");
 
     // Test handling of spaces for ```quote
-    textbox = make_textbox("");
-    textbox.caret(0);
-    textbox.trigger("blur");
-    compose_ui.smart_insert(textbox, "```quote\nquoted message\n```\n");
-    assert.equal(textbox.insert_text, "```quote\nquoted message\n```\n");
-    assert.equal(textbox.val(), "```quote\nquoted message\n```\n");
-    assert.ok(textbox.focused);
+    $textbox = make_textbox("");
+    $textbox.caret(0);
+    override_with_expected_syntax("```quote\nquoted message\n```\n");
+    compose_ui.smart_insert($textbox, "```quote\nquoted message\n```\n");
 
-    textbox = make_textbox("");
-    textbox.caret(0);
-    textbox.trigger("blur");
-    compose_ui.smart_insert(textbox, "translated: [Quoting…]\n");
-    assert.equal(textbox.insert_text, "translated: [Quoting…]\n");
-    assert.equal(textbox.val(), "translated: [Quoting…]\n");
-    assert.ok(textbox.focused);
+    $textbox = make_textbox("");
+    $textbox.caret(0);
+    override_with_expected_syntax("translated: [Quoting…]\n");
+    compose_ui.smart_insert($textbox, "translated: [Quoting…]\n");
 
-    textbox = make_textbox("abc");
-    textbox.caret(3);
-    textbox.trigger("blur");
-    compose_ui.smart_insert(textbox, " test with space");
-    assert.equal(textbox.insert_text, " test with space ");
-    assert.equal(textbox.val(), "abc test with space ");
-    assert.ok(textbox.focused);
+    $textbox = make_textbox("abc");
+    $textbox.caret(3);
+    override_with_expected_syntax(" test with space ");
+    compose_ui.smart_insert($textbox, " test with space");
 
     // Note that we don't have any special logic for strings that are
     // already surrounded by spaces, since we are usually inserting things
@@ -182,7 +154,6 @@ run_test("smart_insert", () => {
 
 run_test("replace_syntax", () => {
     $("#compose-textarea").val("abcabc");
-
     compose_ui.replace_syntax("a", "A");
     assert.equal($("#compose-textarea").val(), "Abcabc");
 
@@ -265,7 +236,7 @@ run_test("quote_and_reply", ({override, override_rewire}) => {
 
     override(
         hash_util,
-        "by_conversation_and_time_uri",
+        "by_conversation_and_time_url",
         () => "https://chat.zulip.org/#narrow/stream/92-learning/topic/Tornado",
     );
 
@@ -301,6 +272,7 @@ run_test("quote_and_reply", ({override, override_rewire}) => {
             textarea_caret_pos = arg;
             return this;
         }
+        /* istanbul ignore if */
         if (typeof arg !== "string") {
             console.info(arg);
             throw new Error("We expected the actual code to pass in a string.");
@@ -313,6 +285,12 @@ run_test("quote_and_reply", ({override, override_rewire}) => {
         textarea_caret_pos += arg.length;
         return this;
     };
+    $("#compose-textarea")[0] = "compose-textarea";
+    override(text_field_edit, "insert", (elt, syntax) => {
+        assert.equal(elt, "compose-textarea");
+        assert.equal(syntax, "translated: [Quoting…]\n");
+        $("#compose-textarea").caret(syntax);
+    });
 
     function set_compose_content_with_caret(content) {
         const caret_position = content.indexOf("%");
@@ -460,19 +438,17 @@ run_test("test_compose_height_changes", ({override, override_rewire}) => {
     assert.ok(!compose_box_top_set);
 });
 
-run_test("format_text", () => {
+run_test("format_text", ({override}) => {
     let set_text = "";
     let wrap_selection_called = false;
     let wrap_syntax = "";
 
-    mock_esm("text-field-edit", {
-        set: (field, text) => {
-            set_text = text;
-        },
-        wrapSelection: (field, syntax) => {
-            wrap_selection_called = true;
-            wrap_syntax = syntax;
-        },
+    override(text_field_edit, "set", (field, text) => {
+        set_text = text;
+    });
+    override(text_field_edit, "wrapSelection", (field, syntax) => {
+        wrap_selection_called = true;
+        wrap_syntax = syntax;
     });
 
     function reset_state() {
@@ -481,14 +457,14 @@ run_test("format_text", () => {
         wrap_syntax = "";
     }
 
-    const textarea = $("#compose-textarea");
-    textarea.get = () => ({
+    const $textarea = $("#compose-textarea");
+    $textarea.get = () => ({
         setSelectionRange: () => {},
     });
 
     function init_textarea(val, range) {
-        textarea.val = () => val;
-        textarea.range = () => range;
+        $textarea.val = () => val;
+        $textarea.range = () => range;
     }
 
     const italic_syntax = "*";
@@ -502,7 +478,7 @@ run_test("format_text", () => {
         text: "abc",
         length: 3,
     });
-    compose_ui.format_text(textarea, "bold");
+    compose_ui.format_text($textarea, "bold");
     assert.equal(set_text, "");
     assert.equal(wrap_selection_called, true);
     assert.equal(wrap_syntax, bold_syntax);
@@ -515,7 +491,7 @@ run_test("format_text", () => {
         text: "abc",
         length: 7,
     });
-    compose_ui.format_text(textarea, "bold");
+    compose_ui.format_text($textarea, "bold");
     assert.equal(set_text, "abc");
     assert.equal(wrap_selection_called, false);
 
@@ -527,7 +503,7 @@ run_test("format_text", () => {
         text: "**abc**",
         length: 7,
     });
-    compose_ui.format_text(textarea, "bold");
+    compose_ui.format_text($textarea, "bold");
     assert.equal(set_text, "abc");
     assert.equal(wrap_selection_called, false);
 
@@ -539,7 +515,7 @@ run_test("format_text", () => {
         text: "abc",
         length: 3,
     });
-    compose_ui.format_text(textarea, "italic");
+    compose_ui.format_text($textarea, "italic");
     assert.equal(set_text, "");
     assert.equal(wrap_selection_called, true);
     assert.equal(wrap_syntax, italic_syntax);
@@ -552,7 +528,7 @@ run_test("format_text", () => {
         text: "abc",
         length: 3,
     });
-    compose_ui.format_text(textarea, "italic");
+    compose_ui.format_text($textarea, "italic");
     assert.equal(set_text, "abc");
     assert.equal(wrap_selection_called, false);
 
@@ -564,7 +540,7 @@ run_test("format_text", () => {
         text: "*abc*",
         length: 5,
     });
-    compose_ui.format_text(textarea, "italic");
+    compose_ui.format_text($textarea, "italic");
     assert.equal(set_text, "abc");
     assert.equal(wrap_selection_called, false);
 
@@ -576,7 +552,7 @@ run_test("format_text", () => {
         text: "abc",
         length: 3,
     });
-    compose_ui.format_text(textarea, "bold");
+    compose_ui.format_text($textarea, "bold");
     assert.equal(set_text, "*abc*");
     assert.equal(wrap_selection_called, false);
 
@@ -588,7 +564,7 @@ run_test("format_text", () => {
         text: "***abc***",
         length: 9,
     });
-    compose_ui.format_text(textarea, "bold");
+    compose_ui.format_text($textarea, "bold");
     assert.equal(set_text, "*abc*");
     assert.equal(wrap_selection_called, false);
 
@@ -600,7 +576,7 @@ run_test("format_text", () => {
         text: "abc",
         length: 3,
     });
-    compose_ui.format_text(textarea, "italic");
+    compose_ui.format_text($textarea, "italic");
     assert.equal(set_text, "**abc**");
     assert.equal(wrap_selection_called, false);
 
@@ -612,14 +588,14 @@ run_test("format_text", () => {
         text: "***abc***",
         length: 9,
     });
-    compose_ui.format_text(textarea, "italic");
+    compose_ui.format_text($textarea, "italic");
     assert.equal(set_text, "**abc**");
     assert.equal(wrap_selection_called, false);
 });
 
 run_test("markdown_shortcuts", ({override_rewire}) => {
     let format_text_type;
-    override_rewire(compose_ui, "format_text", (textarea, type) => {
+    override_rewire(compose_ui, "format_text", ($textarea, type) => {
         format_text_type = type;
     });
 
@@ -711,21 +687,21 @@ run_test("markdown_shortcuts", ({override_rewire}) => {
 });
 
 run_test("right-to-left", () => {
-    const textarea = $("#compose-textarea");
+    const $textarea = $("#compose-textarea");
 
     const event = {
         key: "A",
     };
 
-    assert.equal(textarea.hasClass("rtl"), false);
+    assert.equal($textarea.hasClass("rtl"), false);
 
-    textarea.val("```quote\nمرحبا");
+    $textarea.val("```quote\nمرحبا");
     compose_ui.handle_keyup(event, $("#compose-textarea"));
 
-    assert.equal(textarea.hasClass("rtl"), true);
+    assert.equal($textarea.hasClass("rtl"), true);
 
-    textarea.val("```quote foo");
-    compose_ui.handle_keyup(event, textarea);
+    $textarea.val("```quote foo");
+    compose_ui.handle_keyup(event, $textarea);
 
-    assert.equal(textarea.hasClass("rtl"), false);
+    assert.equal($textarea.hasClass("rtl"), false);
 });

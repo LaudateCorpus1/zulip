@@ -21,15 +21,15 @@ const copy_and_paste = zrequire("copy_and_paste");
 
 // Super stripped down version of the code in the drag-mock library
 // https://github.com/andywer/drag-mock/blob/6d46c7c0ffd6a4d685e6612a90cd58cda80f30fc/src/DataTransfer.js
-const DataTransfer = function () {
-    this.dataByFormat = {};
-};
-DataTransfer.prototype.getData = function (dataFormat) {
-    return this.dataByFormat[dataFormat];
-};
-DataTransfer.prototype.setData = function (dataFormat, data) {
-    this.dataByFormat[dataFormat] = data;
-};
+class DataTransfer {
+    dataByFormat = {};
+    getData(dataFormat) {
+        return this.dataByFormat[dataFormat];
+    }
+    setData(dataFormat, data) {
+        this.dataByFormat[dataFormat] = data;
+    }
+}
 
 const createPasteEvent = function () {
     const clipboardData = new DataTransfer();
@@ -59,10 +59,10 @@ run_test("paste_handler", () => {
     );
 
     input =
-        '<meta http-equiv="content-type" content="text/html; charset=utf-8"><a class="reference external" href="https://zulip.readthedocs.io/en/latest/overview/contributing.html" style="box-sizing: border-box; color: hsl(283, 39%, 53%); text-decoration: none; cursor: pointer; outline: 0px; font-family: Lato, proxima-nova, &quot;Helvetica Neue&quot;, Arial, sans-serif; font-size: 16px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; white-space: normal; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; background-color: hsl(0, 0%, 99%);">Contributing to Zulip</a>';
+        '<meta http-equiv="content-type" content="text/html; charset=utf-8"><a class="reference external" href="https://zulip.readthedocs.io/en/latest/contributing/contributing.html" style="box-sizing: border-box; color: hsl(283, 39%, 53%); text-decoration: none; cursor: pointer; outline: 0px; font-family: Lato, proxima-nova, &quot;Helvetica Neue&quot;, Arial, sans-serif; font-size: 16px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; white-space: normal; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; background-color: hsl(0, 0%, 99%);">Contributing guide</a>';
     assert.equal(
         copy_and_paste.paste_handler_converter(input),
-        "[Contributing to Zulip](https://zulip.readthedocs.io/en/latest/overview/contributing.html)",
+        "[Contributing guide](https://zulip.readthedocs.io/en/latest/contributing/contributing.html)",
     );
 
     input =

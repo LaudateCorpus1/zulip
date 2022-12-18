@@ -2,20 +2,11 @@
 
 const {strict: assert} = require("assert");
 
-const {
-    set_global,
-    with_function_call_disallowed_rewire,
-    zrequire,
-} = require("../zjsunit/namespace");
+const {zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 const blueslip = require("../zjsunit/zblueslip");
 
-set_global("setTimeout", (f, delay) => {
-    assert.equal(delay, 0);
-    return f();
-});
-
-const muted_topics = zrequire("muted_topics");
+const user_topics = zrequire("user_topics");
 const muted_users = zrequire("muted_users");
 const {MessageListData} = zrequire("../js/message_list_data");
 const {Filter} = zrequire("filter");
@@ -87,8 +78,28 @@ run_test("basics", () => {
     assert.equal(mld.selected_idx(), 7);
 
     assert.equal(mld.first_unread_message_id(), 10);
+    assert.equal(mld.has_unread_messages(), true);
     mld.get(10).unread = false;
     assert.equal(mld.first_unread_message_id(), 15);
+    assert.equal(mld.has_unread_messages(), true);
+
+    mld.clear();
+    assert_contents(mld, []);
+    const msgs_sent_by_6 = [
+        {id: 2, sender_id: 6, type: "stream", stream_id: 1, topic: "whatever"},
+        {id: 4, sender_id: 6, type: "private", to_user_ids: "6,9,10"},
+        {id: 6, sender_id: 6, type: "private", to_user_ids: "6, 11"},
+    ];
+    const msgs_with_sender_ids = [
+        {id: 1, sender_id: 1, type: "stream", stream_id: 1, topic: "random1"},
+        {id: 3, sender_id: 4, type: "stream", stream_id: 1, topic: "random2"},
+        {id: 5, sender_id: 2, type: "private", to_user_ids: "2,10,11"},
+        {id: 8, sender_id: 11, type: "private", to_user_ids: "10"},
+        {id: 9, sender_id: 11, type: "private", to_user_ids: "9"},
+        ...msgs_sent_by_6,
+    ];
+    mld.add_messages(msgs_with_sender_ids);
+    assert.deepEqual(mld.get_messages_sent_by_user(6), msgs_sent_by_6);
 
     mld.clear();
     assert_contents(mld, []);
@@ -109,6 +120,7 @@ run_test("basics", () => {
     }
 
     assert.equal(mld.first_unread_message_id(), 145);
+    assert.equal(mld.has_unread_messages(), false);
 });
 
 run_test("muting", () => {
@@ -131,24 +143,20 @@ run_test("muting", () => {
         {id: 9, type: "private", to_user_ids: "9", sender_id: 11}, // 1:1 PM to non-muted
     ];
 
+    user_topics.add_muted_topic(1, "muted");
+    muted_users.add_muted_user(10);
+
     // `messages_filtered_for_topic_mutes` should skip filtering
     // messages if `excludes_muted_topics` is false.
-    with_function_call_disallowed_rewire(muted_topics, "is_topic_muted", () => {
-        const res = mld.messages_filtered_for_topic_mutes(msgs);
-        assert.deepEqual(res, msgs);
-    });
+    assert.deepEqual(mld.messages_filtered_for_topic_mutes(msgs), msgs);
 
     // If we are in a 1:1 PM narrow, `messages_filtered_for_user_mutes` should skip
     // filtering messages.
-    with_function_call_disallowed_rewire(muted_users, "is_user_muted", () => {
-        const res = mld.messages_filtered_for_user_mutes(msgs);
-        assert.deepEqual(res, msgs);
-    });
+    assert.deepEqual(mld.messages_filtered_for_user_mutes(msgs), msgs);
 
     // Test actual behaviour of `messages_filtered_for_*` methods.
     mld.excludes_muted_topics = true;
     mld.filter = new Filter([{operator: "stream", operand: "general"}]);
-    muted_topics.add_muted_topic(1, "muted");
     const res = mld.messages_filtered_for_topic_mutes(msgs);
     assert.deepEqual(res, [
         {id: 2, type: "stream", stream_id: 1, topic: "whatever"},
@@ -163,7 +171,6 @@ run_test("muting", () => {
         {id: 9, type: "private", to_user_ids: "9", sender_id: 11},
     ]);
 
-    muted_users.add_muted_user(10);
     const res_user = mld.messages_filtered_for_user_mutes(msgs);
     assert.deepEqual(res_user, [
         // `messages_filtered_for_user_mutes` does not affect stream messages

@@ -37,17 +37,17 @@ function highlight_current_article() {
     }
 
     const hash = window.location.hash;
-    let article = $(`.help .sidebar a[href="${CSS.escape(path + hash)}"]`);
-    if (!article.length) {
+    let $article = $(`.help .sidebar a[href="${CSS.escape(path + hash)}"]`);
+    if (!$article.length) {
         // If there isn't an entry in the left sidebar that matches
         // the full URL+hash pair, instead highlight an entry in the
         // left sidebar that just matches the URL part.
-        article = $(`.help .sidebar a[href="${CSS.escape(path)}"]`);
+        $article = $(`.help .sidebar a[href="${CSS.escape(path)}"]`);
     }
     // Highlight current article link and the heading of the same
-    article.closest("ul").css("display", "block");
-    article.addClass("highlighted");
-    article.attr("tabindex", "-1");
+    $article.closest("ul").css("display", "block");
+    $article.addClass("highlighted");
+    $article.attr("tabindex", "-1");
 }
 
 function render_code_sections() {
@@ -58,7 +58,7 @@ function render_code_sections() {
 
     highlight_current_article();
 
-    common.adjust_mac_shortcuts(".markdown .content code", true);
+    common.adjust_mac_shortcuts(".markdown kbd");
 
     $("table").each(function () {
         $(this).addClass("table table-striped");

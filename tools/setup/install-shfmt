@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
 set -eu
 
-version=3.4.2
+version=3.5.1
 arch="$(uname -m)"
 
 case $arch in
     "x86_64")
         binary="shfmt_v${version}_linux_amd64"
-        sha256=9cc743f058ab8896ca6fa94a7f2e570b95294e8a142600f09fe832e406a88f18
+        sha256=56099a689b68534f98e1f8f05d3df6750ab53e3db68f514ee45595bf5b79d158
         ;;
 
     "aarch64")
         binary="shfmt_v${version}_linux_arm64"
-        sha256=93852ee7d64389802a65c9e58840eebcae43c771d7dcd73d2e25b8b0b87e7966
+        sha256=09d7902de04d52ebe0b332d84a9746d195f7e930806bdc2436f84d0de6a2d368
         ;;
 esac
 
 check_version() {
-    out="$(shfmt --version 2>/dev/null)" && [ "$out" = "v$version" ]
+    out="$(shfmt --version)" && [ "$out" = "v$version" ]
 }
 
-if ! check_version; then
+if ! check_version 2>/dev/null; then
     tmpdir="$(mktemp -d)"
     trap 'rm -r "$tmpdir"' EXIT
     cd "$tmpdir"
-    curl -fLO "https://github.com/mvdan/sh/releases/download/v$version/$binary"
+    curl -fLO --retry 3 "https://github.com/mvdan/sh/releases/download/v$version/$binary"
     sha256sum -c <<<"$sha256 $binary"
     chmod +x "$binary"
     mv "$binary" /usr/local/bin/shfmt

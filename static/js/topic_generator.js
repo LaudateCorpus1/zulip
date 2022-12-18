@@ -1,9 +1,9 @@
-import * as muted_topics from "./muted_topics";
 import * as pm_conversations from "./pm_conversations";
 import * as stream_data from "./stream_data";
 import * as stream_sort from "./stream_sort";
 import * as stream_topic_history from "./stream_topic_history";
 import * as unread from "./unread";
+import * as user_topics from "./user_topics";
 
 export function next_topic(streams, get_topics, has_unread_messages, curr_stream, curr_topic) {
     const curr_stream_index = streams.indexOf(curr_stream); // -1 if not found
@@ -67,7 +67,7 @@ export function get_next_topic(curr_stream, curr_topic) {
     function get_unmuted_topics(stream_name) {
         const stream_id = stream_data.get_stream_id(stream_name);
         let topics = stream_topic_history.get_recent_topic_names(stream_id);
-        topics = topics.filter((topic) => !muted_topics.is_topic_muted(stream_id, topic));
+        topics = topics.filter((topic) => !user_topics.is_topic_muted(stream_id, topic));
         return topics;
     }
 
@@ -84,13 +84,13 @@ export function get_next_unread_pm_string(curr_pm) {
     const curr_pm_index = my_pm_strings.indexOf(curr_pm); // -1 if not found
 
     for (let i = curr_pm_index + 1; i < my_pm_strings.length; i += 1) {
-        if (unread.num_unread_for_person(my_pm_strings[i]) > 0) {
+        if (unread.num_unread_for_user_ids_string(my_pm_strings[i]) > 0) {
             return my_pm_strings[i];
         }
     }
 
     for (let i = 0; i < curr_pm_index; i += 1) {
-        if (unread.num_unread_for_person(my_pm_strings[i]) > 0) {
+        if (unread.num_unread_for_user_ids_string(my_pm_strings[i]) > 0) {
             return my_pm_strings[i];
         }
     }

@@ -21,6 +21,11 @@ body {
     -webkit-text-size-adjust: 100%;
 }
 
+pre {
+    font-family: sans-serif;
+    font-size: 14px;
+}
+
 table {
     border-collapse: separate;
     mso-table-lspace: 0;
@@ -323,6 +328,13 @@ a.button:hover {
     color: #15c;
 }
 
+.deactivated-user-text {
+    padding: 0 0 0 15px;
+    margin: 0 0 20px;
+    border-left: 5px solid #eee;
+    white-space: pre-line;
+}
+
 @media only screen and (max-width: 620px) {
     table[class="body"] h1 {
         font-size: 28px !important;
@@ -390,7 +402,7 @@ a.button:hover {
         line-height: 100%;
     }
 
-    /* iOS converts adreses in emails to links automatically */
+    /* iOS converts addresses in emails to links automatically */
     .apple-link a {
         color: inherit !important;
         font-family: inherit !important;

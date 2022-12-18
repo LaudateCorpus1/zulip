@@ -3,16 +3,17 @@ class zulip::camo (String $listen_address = '0.0.0.0') {
   # can be removed once one must have upgraded through Zulip 5.0 or
   # higher to get to the next release.
   package { 'camo':
-    ensure => 'purged',
+    ensure => purged,
   }
 
   $version = $zulip::common::versions['go-camo']['version']
+  $goversion = $zulip::common::versions['go-camo']['goversion']
   $dir = "/srv/zulip-go-camo-${version}"
   $bin = "${dir}/bin/go-camo"
 
   zulip::external_dep { 'go-camo':
     version        => $version,
-    url            => "https://github.com/cactus/go-camo/releases/download/v${version}/go-camo-${version}.go1171.linux-${::architecture}.tar.gz",
+    url            => "https://github.com/cactus/go-camo/releases/download/v${version}/go-camo-${version}.go${goversion}.linux-${zulip::common::goarch}.tar.gz",
     tarball_prefix => "go-camo-${version}",
   }
 

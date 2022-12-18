@@ -10,30 +10,37 @@ import shutil
 import unicodedata
 import urllib
 from datetime import timedelta
-from mimetypes import guess_extension, guess_type
+from mimetypes import guess_type
 from typing import IO, Any, Callable, Optional, Tuple
+from urllib.parse import urljoin
 
 import boto3
 import botocore
 from boto3.session import Session
 from botocore.client import Config
 from django.conf import settings
-from django.core.files import File
+from django.core.files.uploadedfile import UploadedFile
 from django.core.signing import BadSignature, TimestampSigner
-from django.http import HttpRequest
 from django.urls import reverse
 from django.utils.translation import gettext as _
-from markupsafe import Markup as mark_safe
+from markupsafe import Markup
 from mypy_boto3_s3.client import S3Client
 from mypy_boto3_s3.service_resource import Bucket, Object
-from PIL import Image, ImageOps
-from PIL.GifImagePlugin import GifImageFile
+from PIL import GifImagePlugin, Image, ImageOps, PngImagePlugin
 from PIL.Image import DecompressionBombError
 
 from zerver.lib.avatar_hash import user_avatar_path
 from zerver.lib.exceptions import ErrorCode, JsonableError
+from zerver.lib.outgoing_http import OutgoingSession
 from zerver.lib.utils import assert_is_not_none
-from zerver.models import Attachment, Message, Realm, RealmEmoji, UserProfile
+from zerver.models import (
+    Attachment,
+    Message,
+    Realm,
+    RealmEmoji,
+    UserProfile,
+    is_cross_realm_bot_email,
+)
 
 DEFAULT_AVATAR_SIZE = 100
 MEDIUM_AVATAR_SIZE = 500
@@ -77,6 +84,14 @@ INLINE_MIME_TYPES = [
 # through a sanitization function.
 
 
+# https://github.com/boto/botocore/issues/2644 means that the IMDS
+# request _always_ pulls from the environment.  Monkey-patch the
+# `should_bypass_proxies` function if we need to skip them, based
+# on S3_SKIP_PROXY.
+if settings.S3_SKIP_PROXY is True:  # nocoverage
+    botocore.utils.should_bypass_proxies = lambda url: True
+
+
 class RealmUploadQuotaError(JsonableError):
     code = ErrorCode.REALM_UPLOAD_QUOTA
 
@@ -97,7 +112,7 @@ def sanitize_name(value: str) -> str:
     value = re.sub(r"[^\w\s.-]", "", value).strip()
     value = re.sub(r"[-\s]+", "-", value)
     assert value not in {"", ".", ".."}
-    return mark_safe(value)
+    return Markup(value)
 
 
 class BadImageError(JsonableError):
@@ -136,7 +151,8 @@ def resize_logo(image_data: bytes) -> bytes:
     return out.getvalue()
 
 
-def resize_gif(im: GifImageFile, size: int = DEFAULT_EMOJI_SIZE) -> bytes:
+def resize_animated(im: Image.Image, size: int = DEFAULT_EMOJI_SIZE) -> bytes:
+    assert im.n_frames > 1
     frames = []
     duration_info = []
     disposals = []
@@ -148,21 +164,29 @@ def resize_gif(im: GifImageFile, size: int = DEFAULT_EMOJI_SIZE) -> bytes:
         new_frame.paste(im, (0, 0), im.convert("RGBA"))
         new_frame = ImageOps.pad(new_frame, (size, size), Image.ANTIALIAS)
         frames.append(new_frame)
+        if im.info.get("duration") is None:  # nocoverage
+            raise BadImageError(_("Corrupt animated image."))
         duration_info.append(im.info["duration"])
-        disposals.append(
-            im.disposal_method  # type: ignore[attr-defined]  # private member missing from stubs
-        )
+        if isinstance(im, GifImagePlugin.GifImageFile):
+            disposals.append(
+                im.disposal_method  # type: ignore[attr-defined]  # private member missing from stubs
+            )
+        elif isinstance(im, PngImagePlugin.PngImageFile):
+            disposals.append(im.info.get("disposal", PngImagePlugin.APNG_DISPOSE_OP_NONE))
+        else:  # nocoverage
+            raise BadImageError(_("Unknown animated image format."))
     out = io.BytesIO()
     frames[0].save(
         out,
         save_all=True,
         optimize=False,
-        format="GIF",
+        format=im.format,
         append_images=frames[1:],
         duration=duration_info,
         disposal=disposals,
         loop=loop,
     )
+
     return out.getvalue()
 
 
@@ -177,12 +201,11 @@ def resize_emoji(
     try:
         im = Image.open(io.BytesIO(image_data))
         image_format = im.format
-        if image_format == "GIF":
-            assert isinstance(im, GifImageFile)
-            # There are a number of bugs in Pillow.GifImagePlugin which cause
-            # results in resized gifs being broken. To work around this we
-            # only resize under certain conditions to minimize the chance of
-            # creating ugly gifs.
+        if getattr(im, "n_frames", 1) > 1:
+            # There are a number of bugs in Pillow which cause results
+            # in resized images being broken. To work around this we
+            # only resize under certain conditions to minimize the
+            # chance of creating ugly images.
             should_resize = (
                 im.size[0] != im.size[1]  # not square
                 or im.size[0] > MAX_EMOJI_GIF_SIZE  # dimensions too large
@@ -200,7 +223,7 @@ def resize_emoji(
             still_image_data = out.getvalue()
 
             if should_resize:
-                image_data = resize_gif(im, size)
+                image_data = resize_animated(im, size)
 
             return image_data, True, still_image_data
         else:
@@ -307,7 +330,7 @@ class ZulipUploadBackend:
 
 def get_bucket(bucket_name: str, session: Optional[Session] = None) -> Bucket:
     if session is None:
-        session = boto3.Session(settings.S3_KEY, settings.S3_SECRET_KEY)
+        session = Session(settings.S3_KEY, settings.S3_SECRET_KEY)
     bucket = session.resource(
         "s3", region_name=settings.S3_REGION, endpoint_url=settings.S3_ENDPOINT_URL
     ).Bucket(bucket_name)
@@ -350,26 +373,29 @@ def check_upload_within_quota(realm: Realm, uploaded_file_size: int) -> None:
         raise RealmUploadQuotaError(_("Upload would exceed your organization's upload quota."))
 
 
-def get_file_info(request: HttpRequest, user_file: File) -> Tuple[str, int, Optional[str]]:
+def get_file_info(user_file: UploadedFile) -> Tuple[str, str]:
 
     uploaded_file_name = user_file.name
-    content_type = request.GET.get("mimetype")
-    if content_type is None:
+    assert uploaded_file_name is not None
+
+    content_type = user_file.content_type
+    # It appears Django's UploadedFile.content_type defaults to an empty string,
+    # even though the value is documented as `str | None`. So we check for both.
+    if content_type is None or content_type == "":
         guessed_type = guess_type(uploaded_file_name)[0]
         if guessed_type is not None:
             content_type = guessed_type
-    else:
-        extension = guess_extension(content_type)
-        if extension is not None:
-            uploaded_file_name = uploaded_file_name + extension
+        else:
+            # Fallback to application/octet-stream if unable to determine a
+            # different content-type from the filename.
+            content_type = "application/octet-stream"
 
     uploaded_file_name = urllib.parse.unquote(uploaded_file_name)
-    uploaded_file_size = user_file.size
 
-    return uploaded_file_name, uploaded_file_size, content_type
+    return uploaded_file_name, content_type
 
 
-def get_signed_upload_url(path: str) -> str:
+def get_signed_upload_url(path: str, download: bool = False) -> str:
     client = boto3.client(
         "s3",
         aws_access_key_id=settings.S3_KEY,
@@ -377,9 +403,16 @@ def get_signed_upload_url(path: str) -> str:
         region_name=settings.S3_REGION,
         endpoint_url=settings.S3_ENDPOINT_URL,
     )
+    params = {
+        "Bucket": settings.S3_AUTH_UPLOADS_BUCKET,
+        "Key": path,
+    }
+    if download:
+        params["ResponseContentDisposition"] = "attachment"
+
     return client.generate_presigned_url(
         ClientMethod="get_object",
-        Params={"Bucket": settings.S3_AUTH_UPLOADS_BUCKET, "Key": path},
+        Params=params,
         ExpiresIn=SIGNED_UPLOAD_URL_DURATION,
         HttpMethod="GET",
     )
@@ -387,7 +420,7 @@ def get_signed_upload_url(path: str) -> str:
 
 class S3UploadBackend(ZulipUploadBackend):
     def __init__(self) -> None:
-        self.session = boto3.Session(settings.S3_KEY, settings.S3_SECRET_KEY)
+        self.session = Session(settings.S3_KEY, settings.S3_SECRET_KEY)
         self.avatar_bucket = get_bucket(settings.S3_AVATAR_BUCKET, self.session)
         self.uploads_bucket = get_bucket(settings.S3_AUTH_UPLOADS_BUCKET, self.session)
 
@@ -496,7 +529,9 @@ class S3UploadBackend(ZulipUploadBackend):
             file_data,
         )
 
-        create_attachment(uploaded_file_name, s3_file_name, user_profile, uploaded_file_size)
+        create_attachment(
+            uploaded_file_name, s3_file_name, user_profile, target_realm, uploaded_file_size
+        )
         return url
 
     def delete_message_image(self, path_id: str) -> bool:
@@ -675,14 +710,13 @@ class S3UploadBackend(ZulipUploadBackend):
     def upload_emoji_image(
         self, emoji_file: IO[bytes], emoji_file_name: str, user_profile: UserProfile
     ) -> bool:
-        content_type = guess_type(emoji_file.name)[0]
+        content_type = guess_type(emoji_file_name)[0]
         emoji_path = RealmEmoji.PATH_ID_TEMPLATE.format(
             realm_id=user_profile.realm_id,
             emoji_file_name=emoji_file_name,
         )
 
         image_data = emoji_file.read()
-        resized_image_data, is_animated, still_image_data = resize_emoji(image_data)
         upload_image_to_s3(
             self.avatar_bucket,
             ".".join((emoji_path, "original")),
@@ -690,6 +724,8 @@ class S3UploadBackend(ZulipUploadBackend):
             user_profile,
             image_data,
         )
+
+        resized_image_data, is_animated, still_image_data = resize_emoji(image_data)
         upload_image_to_s3(
             self.avatar_bucket,
             emoji_path,
@@ -835,10 +871,13 @@ class LocalUploadBackend(ZulipUploadBackend):
         user_profile: UserProfile,
         target_realm: Optional[Realm] = None,
     ) -> str:
-        path = self.generate_message_upload_path(str(user_profile.realm_id), uploaded_file_name)
+        if target_realm is None:
+            target_realm = user_profile.realm
+
+        path = self.generate_message_upload_path(str(target_realm.id), uploaded_file_name)
 
         write_local_file("files", path, file_data)
-        create_attachment(uploaded_file_name, path, user_profile, uploaded_file_size)
+        create_attachment(uploaded_file_name, path, user_profile, target_realm, uploaded_file_size)
         return "/user_uploads/" + path
 
     def delete_message_image(self, path_id: str) -> bool:
@@ -952,8 +991,8 @@ class LocalUploadBackend(ZulipUploadBackend):
         )
 
         image_data = emoji_file.read()
-        resized_image_data, is_animated, still_image_data = resize_emoji(image_data)
         write_local_file("avatars", ".".join((emoji_path, "original")), image_data)
+        resized_image_data, is_animated, still_image_data = resize_emoji(image_data)
         write_local_file("avatars", emoji_path, resized_image_data)
         if is_animated:
             assert still_image_data is not None
@@ -1094,27 +1133,30 @@ def claim_attachment(
 
 
 def create_attachment(
-    file_name: str, path_id: str, user_profile: UserProfile, file_size: int
+    file_name: str, path_id: str, user_profile: UserProfile, realm: Realm, file_size: int
 ) -> bool:
+    assert (user_profile.realm_id == realm.id) or is_cross_realm_bot_email(
+        user_profile.delivery_email
+    )
     attachment = Attachment.objects.create(
         file_name=file_name,
         path_id=path_id,
         owner=user_profile,
-        realm=user_profile.realm,
+        realm=realm,
         size=file_size,
     )
-    from zerver.lib.actions import notify_attachment_update
+    from zerver.actions.uploads import notify_attachment_update
 
     notify_attachment_update(user_profile, "add", attachment.to_dict())
     return True
 
 
 def upload_message_image_from_request(
-    request: HttpRequest, user_file: File, user_profile: UserProfile
+    user_file: UploadedFile, user_profile: UserProfile, user_file_size: int
 ) -> str:
-    uploaded_file_name, uploaded_file_size, content_type = get_file_info(request, user_file)
+    uploaded_file_name, content_type = get_file_info(user_file)
     return upload_message_file(
-        uploaded_file_name, uploaded_file_size, content_type, user_file.read(), user_profile
+        uploaded_file_name, user_file_size, content_type, user_file.read(), user_profile
     )
 
 
@@ -1128,3 +1170,53 @@ def upload_export_tarball(
 
 def delete_export_tarball(export_path: str) -> Optional[str]:
     return upload_backend.delete_export_tarball(export_path)
+
+
+def get_emoji_file_content(
+    session: OutgoingSession, emoji_url: str, emoji_id: int, logger: logging.Logger
+) -> bytes:  # nocoverage
+    original_emoji_url = emoji_url + ".original"
+
+    logger.info("Downloading %s", original_emoji_url)
+    response = session.get(original_emoji_url)
+    if response.status_code == 200:
+        assert type(response.content) == bytes
+        return response.content
+
+    logger.info("Error fetching emoji from URL %s", original_emoji_url)
+    logger.info("Trying %s instead", emoji_url)
+    response = session.get(emoji_url)
+    if response.status_code == 200:
+        assert type(response.content) == bytes
+        return response.content
+    logger.info("Error fetching emoji from URL %s", emoji_url)
+    logger.error("Could not fetch emoji %s", emoji_id)
+    raise AssertionError(f"Could not fetch emoji {emoji_id}")
+
+
+def handle_reupload_emojis_event(realm: Realm, logger: logging.Logger) -> None:  # nocoverage
+    from zerver.lib.emoji import get_emoji_url
+
+    session = OutgoingSession(role="reupload_emoji", timeout=3, max_retries=3)
+
+    query = RealmEmoji.objects.filter(realm=realm).order_by("id")
+
+    for realm_emoji in query:
+        logger.info("Processing emoji %s", realm_emoji.id)
+        emoji_filename = realm_emoji.file_name
+        assert emoji_filename is not None
+        emoji_url = get_emoji_url(emoji_filename, realm_emoji.realm_id)
+        if emoji_url.startswith("/"):
+            emoji_url = urljoin(realm_emoji.realm.uri, emoji_url)
+
+        emoji_file_content = get_emoji_file_content(session, emoji_url, realm_emoji.id, logger)
+
+        emoji_bytes_io = io.BytesIO(emoji_file_content)
+
+        user_profile = realm_emoji.author
+        # When this runs, emojis have already been migrated to always have .author set.
+        assert user_profile is not None
+
+        logger.info("Reuploading emoji %s", realm_emoji.id)
+        realm_emoji.is_animated = upload_emoji_image(emoji_bytes_io, emoji_filename, user_profile)
+        realm_emoji.save(update_fields=["is_animated"])

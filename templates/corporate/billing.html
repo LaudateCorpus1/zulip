@@ -1,6 +1,10 @@
 {% extends "zerver/portico.html" %}
 {% set entrypoint = "billing" %}
 
+{% block title %}
+<title>{{ _("Billing") }} | Zulip</title>
+{% endblock %}
+
 {% block customhead %}
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 {% endblock %}
@@ -190,7 +194,7 @@
                     {% elif is_sponsored %}
                     <center>
                         <p>
-                            <h3>💚 Your organization is fully sponsored and is on the <b>Zulip Standard</b> plan.</h3>
+                            <h3>💚 Your organization is fully sponsored and is on the <b>Zulip Cloud Standard</b> plan.</h3>
                         </p>
                     </center>
                     {% else %}

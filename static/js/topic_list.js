@@ -1,7 +1,6 @@
 import $ from "jquery";
 import _ from "lodash";
 
-import render_filter_topics from "../templates/filter_topics.hbs";
 import render_more_topics from "../templates/more_topics.hbs";
 import render_more_topics_spinner from "../templates/more_topics_spinner.hbs";
 import render_topic_list_item from "../templates/topic_list_item.hbs";
@@ -67,25 +66,26 @@ export function zoom_out() {
     rebuild(parent_widget, stream_id);
 }
 
-export function keyed_topic_li(convo) {
-    const render = () => render_topic_list_item(convo);
+export function keyed_topic_li(conversation) {
+    const render = () => render_topic_list_item(conversation);
 
-    const eq = (other) => _.isEqual(convo, other.convo);
+    const eq = (other) => _.isEqual(conversation, other.conversation);
 
-    const key = "t:" + convo.topic_name;
+    const key = "t:" + conversation.topic_name;
 
     return {
         key,
         render,
-        convo,
+        conversation,
         eq,
     };
 }
 
-export function more_li(more_topics_unreads) {
+export function more_li(more_topics_unreads, more_topics_have_unread_mention_messages) {
     const render = () =>
         render_more_topics({
             more_topics_unreads,
+            more_topics_have_unread_mention_messages,
         });
 
     const eq = (other) => other.more_items && more_topics_unreads === other.more_topics_unreads;
@@ -116,25 +116,12 @@ export function spinner_li() {
     };
 }
 
-function filter_topics_li() {
-    const eq = (other) => other.filter_topics;
-
-    return {
-        key: "filter",
-        filter_topics: true,
-        render: render_filter_topics,
-        eq,
-    };
-}
-
 export class TopicListWidget {
     prior_dom = undefined;
 
-    constructor(parent_elem, my_stream_id) {
-        this.parent_elem = parent_elem;
+    constructor($parent_elem, my_stream_id) {
+        this.$parent_elem = $parent_elem;
         this.my_stream_id = my_stream_id;
-        this.topic_search_text = "";
-        this.topic_search_focused_before_build = true;
     }
 
     build_list(spinner) {
@@ -142,6 +129,8 @@ export class TopicListWidget {
 
         const num_possible_topics = list_info.num_possible_topics;
         const more_topics_unreads = list_info.more_topics_unreads;
+        const more_topics_have_unread_mention_messages =
+            list_info.more_topics_have_unread_mention_messages;
 
         const is_showing_all_possible_topics =
             list_info.items.length === num_possible_topics &&
@@ -149,16 +138,12 @@ export class TopicListWidget {
 
         const attrs = [["class", "topic-list"]];
 
-        const nodes = list_info.items.map((convo) => keyed_topic_li(convo));
+        const nodes = list_info.items.map((conversation) => keyed_topic_li(conversation));
 
         if (spinner) {
             nodes.push(spinner_li());
         } else if (!is_showing_all_possible_topics) {
-            nodes.push(more_li(more_topics_unreads));
-        } else if (zoomed) {
-            // In the zoomed topic view, we need to add the input
-            // for filtering through list of topics.
-            nodes.unshift(filter_topics_li());
+            nodes.push(more_li(more_topics_unreads, more_topics_have_unread_mention_messages));
         }
 
         const dom = vdom.ul({
@@ -170,58 +155,15 @@ export class TopicListWidget {
     }
 
     get_parent() {
-        return this.parent_elem;
+        return this.$parent_elem;
     }
 
     get_stream_id() {
         return this.my_stream_id;
     }
 
-    update_topic_search_text(text) {
-        this.topic_search_text = text;
-    }
-
-    update_topic_search_input() {
-        const input = this.parent_elem.find("#filter-topic-input");
-        if (input.length) {
-            // Restore topic search text saved in remove()
-            // after the element was rerendered.
-            input.val(this.topic_search_text);
-            if (this.topic_search_focused_before_build) {
-                // Don't focus topic search if it wasn't focused before.
-                // This avoids unwanted change of focus.
-                input.trigger("focus");
-            }
-
-            // setup display of clear(x) button.
-            if (this.topic_search_text.length) {
-                $("#clear_search_topic_button").show();
-            } else {
-                $("#clear_search_topic_button").hide();
-            }
-
-            // setup event handlers.
-            const rebuild_list = () => this.build();
-            input.on("input", rebuild_list);
-        }
-    }
-
     remove() {
-        // If text was present in the topic search filter, we store
-        // the input value lazily before removing old elements.  This
-        // is a workaround for the quirk that the filter input is part
-        // of the region that we rerender.
-        const input = this.parent_elem.find("#filter-topic-input");
-        if (input.length) {
-            this.update_topic_search_text(input.val());
-            // Only set focus on search input if it was focused before the update.
-            this.topic_search_focused_before_build =
-                document.activeElement.id === "filter-topic-input";
-        } else {
-            // Clear the topic search input when zooming out.
-            this.update_topic_search_text("");
-        }
-        this.parent_elem.find(".topic-list").remove();
+        this.$parent_elem.find(".topic-list").remove();
         this.prior_dom = undefined;
     }
 
@@ -230,24 +172,29 @@ export class TopicListWidget {
 
         const replace_content = (html) => {
             this.remove();
-            this.parent_elem.append(html);
-            this.update_topic_search_input();
+            this.$parent_elem.append(html);
         };
 
-        const find = () => this.parent_elem.find(".topic-list");
+        const find = () => this.$parent_elem.find(".topic-list");
 
         vdom.update(replace_content, find, new_dom, this.prior_dom);
 
         this.prior_dom = new_dom;
+
+        if ($("#filter-topic-input").val() !== "") {
+            $("#clear_search_topic_button").show();
+        } else {
+            $("#clear_search_topic_button").hide();
+        }
     }
 }
 
 export function clear_topic_search(e) {
     e.stopPropagation();
-    const input = $("#filter-topic-input");
-    if (input.length) {
-        input.val("");
-        input.trigger("blur");
+    const $input = $("#filter-topic-input");
+    if ($input.length) {
+        $input.val("");
+        $input.trigger("blur");
 
         // Since this changes the contents of the search input, we
         // need to rerender the topic list.
@@ -278,11 +225,11 @@ export function get_stream_li() {
         return undefined;
     }
 
-    const stream_li = widgets[0].get_parent();
-    return stream_li;
+    const $stream_li = widgets[0].get_parent();
+    return $stream_li;
 }
 
-export function rebuild(stream_li, stream_id) {
+export function rebuild($stream_li, stream_id) {
     const active_widget = active_widgets.get(stream_id);
 
     if (active_widget) {
@@ -291,7 +238,7 @@ export function rebuild(stream_li, stream_id) {
     }
 
     clear();
-    const widget = new TopicListWidget(stream_li, stream_id);
+    const widget = new TopicListWidget($stream_li, stream_id);
     widget.build();
 
     active_widgets.set(stream_id, widget);
@@ -328,7 +275,7 @@ export function zoom_in() {
         active_widget.build();
     }
 
-    ui.get_scroll_element($("#stream-filters-container")).scrollTop(0);
+    ui.get_scroll_element($("#left_sidebar_scroll_container")).scrollTop(0);
 
     const spinner = true;
     active_widget.build(spinner);
@@ -337,11 +284,11 @@ export function zoom_in() {
 }
 
 export function get_topic_search_term() {
-    const filter = $("#filter-topic-input");
-    if (filter.val() === undefined) {
+    const $filter = $("#filter-topic-input");
+    if ($filter.val() === undefined) {
         return "";
     }
-    return filter.val().trim();
+    return $filter.val().trim();
 }
 
 export function initialize() {
@@ -356,8 +303,8 @@ export function initialize() {
         // In a more componentized world, we would delegate some
         // of this stuff back up to our parents.
 
-        const stream_row = $(e.target).parents(".narrow-filter");
-        const stream_id = Number.parseInt(stream_row.attr("data-stream-id"), 10);
+        const $stream_row = $(e.target).parents(".narrow-filter");
+        const stream_id = Number.parseInt($stream_row.attr("data-stream-id"), 10);
         const sub = sub_store.get(stream_id);
         const topic = $(e.target).parents("li").attr("data-topic-name");
 
@@ -370,5 +317,9 @@ export function initialize() {
         );
 
         e.preventDefault();
+    });
+
+    $("body").on("input", "#filter-topic-input", () => {
+        active_widgets.get(active_stream_id()).build();
     });
 }

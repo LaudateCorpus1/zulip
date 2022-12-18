@@ -140,10 +140,21 @@ export function topic() {
     return undefined;
 }
 
-export function pm_string() {
+export function pm_ids_string() {
     // If you are narrowed to a PM conversation
     // with users 4, 5, and 99, this will return "4,5,99"
+    const emails_string = pm_emails_string();
 
+    if (!emails_string) {
+        return undefined;
+    }
+
+    const user_ids_string = people.reply_to_to_user_ids_string(emails_string);
+
+    return user_ids_string;
+}
+
+export function pm_emails_string() {
     if (current_filter === undefined) {
         return undefined;
     }
@@ -153,15 +164,7 @@ export function pm_string() {
         return undefined;
     }
 
-    const emails_string = operands[0];
-
-    if (!emails_string) {
-        return undefined;
-    }
-
-    const user_ids_string = people.reply_to_to_user_ids_string(emails_string);
-
-    return user_ids_string;
+    return operands[0];
 }
 
 export function get_first_unread_info() {
@@ -175,7 +178,7 @@ export function get_first_unread_info() {
 
     if (!current_filter.can_apply_locally()) {
         // For things like search queries, where the server has info
-        // that the client isn't privvy to, we need to wait for the
+        // that the client isn't privy to, we need to wait for the
         // server to give us a definitive list of messages before
         // deciding where we'll move the selection.
         return {
@@ -240,11 +243,11 @@ export function _possible_unread_message_ids() {
     }
 
     if (current_filter.can_bucket_by("pm-with")) {
-        current_filter_pm_string = pm_string();
+        current_filter_pm_string = pm_ids_string();
         if (current_filter_pm_string === undefined) {
             return [];
         }
-        return unread.get_msg_ids_for_person(current_filter_pm_string);
+        return unread.get_msg_ids_for_user_ids_string(current_filter_pm_string);
     }
 
     if (current_filter.can_bucket_by("is-private")) {

@@ -36,7 +36,7 @@ from typing import (
 import orjson
 import sentry_sdk
 from django.conf import settings
-from django.core.mail.backends.smtp import EmailBackend
+from django.core.mail.backends.base import BaseEmailBackend
 from django.db import connection, transaction
 from django.db.models import F
 from django.db.utils import IntegrityError
@@ -46,25 +46,24 @@ from django.utils.translation import override as override_language
 from sentry_sdk import add_breadcrumb, configure_scope
 from zulip_bots.lib import extract_query_without_mention
 
+from zerver.actions.invites import do_send_confirmation_email
+from zerver.actions.message_edit import do_update_embedded_data
+from zerver.actions.message_flags import do_mark_stream_messages_as_read
+from zerver.actions.message_send import internal_send_private_message, render_incoming_message
+from zerver.actions.presence import do_update_user_presence
+from zerver.actions.realm_export import notify_realm_export
+from zerver.actions.user_activity import do_update_user_activity, do_update_user_activity_interval
 from zerver.context_processors import common_context
-from zerver.lib.actions import (
-    do_mark_stream_messages_as_read,
-    do_send_confirmation_email,
-    do_update_embedded_data,
-    do_update_user_activity,
-    do_update_user_activity_interval,
-    do_update_user_presence,
-    internal_send_private_message,
-    notify_realm_export,
-    render_incoming_message,
-)
 from zerver.lib.bot_lib import EmbeddedBotHandler, EmbeddedBotQuitException, get_bot_handler
 from zerver.lib.context_managers import lockfile
 from zerver.lib.db import reset_queries
 from zerver.lib.digest import bulk_handle_digest_email
-from zerver.lib.email_mirror import decode_stream_email_address, is_missed_message_address
+from zerver.lib.email_mirror import (
+    decode_stream_email_address,
+    is_missed_message_address,
+    rate_limit_mirror_by_realm,
+)
 from zerver.lib.email_mirror import process_message as mirror_email
-from zerver.lib.email_mirror import rate_limit_mirror_by_realm
 from zerver.lib.email_notifications import handle_missedmessage_emails
 from zerver.lib.error_notify import do_report_error
 from zerver.lib.exceptions import RateLimited
@@ -87,8 +86,11 @@ from zerver.lib.send_email import (
     send_email,
     send_future_email,
 )
+from zerver.lib.soft_deactivation import reactivate_user_if_soft_deactivated
 from zerver.lib.timestamp import timestamp_to_datetime
+from zerver.lib.upload import handle_reupload_emojis_event
 from zerver.lib.url_preview import preview as url_preview
+from zerver.lib.url_preview.types import UrlEmbedData
 from zerver.models import (
     Message,
     PreregistrationUser,
@@ -198,7 +200,7 @@ def retry_send_email_failures(
             socket.timeout,
             EmailNotDeliveredException,
         ) as e:
-            error_class_name = e.__class__.__name__
+            error_class_name = type(e).__name__
 
             def on_failure(event: Dict[str, Any]) -> None:
                 logging.exception(
@@ -340,16 +342,16 @@ class QueueProcessingWorker(ABC):
                 # especially since the queue might go idle until new events come in.
                 self.update_statistics()
                 self.idle = True
-                return
-
-            self.consume_iteration_counter += 1
-            if (
-                self.consume_iteration_counter >= self.CONSUME_ITERATIONS_BEFORE_UPDATE_STATS_NUM
-                or time.time() - self.last_statistics_update_time
-                >= self.MAX_SECONDS_BEFORE_UPDATE_STATS
-            ):
-                self.consume_iteration_counter = 0
-                self.update_statistics()
+            else:
+                self.consume_iteration_counter += 1
+                if (
+                    self.consume_iteration_counter
+                    >= self.CONSUME_ITERATIONS_BEFORE_UPDATE_STATS_NUM
+                    or time.time() - self.last_statistics_update_time
+                    >= self.MAX_SECONDS_BEFORE_UPDATE_STATS
+                ):
+                    self.consume_iteration_counter = 0
+                    self.update_statistics()
 
     def consume_single_event(self, event: Dict[str, Any]) -> None:
         consume_func = lambda events: self.consume(events[0])
@@ -440,9 +442,12 @@ class LoopQueueProcessingWorker(QueueProcessingWorker):
 @assign_queue("invites")
 class ConfirmationEmailWorker(QueueProcessingWorker):
     def consume(self, data: Mapping[str, Any]) -> None:
-        invite_expires_in_days = data["invite_expires_in_days"]
+        if "invite_expires_in_days" in data:
+            invite_expires_in_minutes = data["invite_expires_in_days"] * 24 * 60
+        elif "invite_expires_in_minutes" in data:
+            invite_expires_in_minutes = data["invite_expires_in_minutes"]
         invitee = filter_to_valid_prereg_users(
-            PreregistrationUser.objects.filter(id=data["prereg_id"]), invite_expires_in_days
+            PreregistrationUser.objects.filter(id=data["prereg_id"]), invite_expires_in_minutes
         ).first()
         if invitee is None:
             # The invitation could have been revoked
@@ -458,11 +463,17 @@ class ConfirmationEmailWorker(QueueProcessingWorker):
             email_language = referrer.realm.default_language
 
         activate_url = do_send_confirmation_email(
-            invitee, referrer, email_language, invite_expires_in_days
+            invitee, referrer, email_language, invite_expires_in_minutes
         )
+        if invite_expires_in_minutes is None:
+            # We do not queue reminder email for never expiring
+            # invitations. This is probably a low importance bug; it
+            # would likely be more natural to send a reminder after 7
+            # days.
+            return
 
         # queue invitation reminder
-        if invite_expires_in_days >= 4:
+        if invite_expires_in_minutes >= 4 * 24 * 60:
             context = common_context(referrer)
             context.update(
                 activate_url=activate_url,
@@ -477,7 +488,7 @@ class ConfirmationEmailWorker(QueueProcessingWorker):
                 from_address=FromAddress.tokenized_no_reply_placeholder,
                 language=email_language,
                 context=context,
-                delay=datetime.timedelta(days=invite_expires_in_days - 2),
+                delay=datetime.timedelta(minutes=invite_expires_in_minutes - (2 * 24 * 60)),
             )
 
 
@@ -515,20 +526,7 @@ class UserActivityWorker(LoopQueueProcessingWorker):
         # deduplicate them for insertion into the database.
         for event in user_activity_events:
             user_profile_id = event["user_profile_id"]
-
-            if "client_id" not in event:
-                # This is for compatibility with older events still stuck in the queue,
-                # that used the client name in event["client"] instead of having
-                # event["client_id"] directly.
-                #
-                # TODO/compatibility: We can delete this once it is no
-                # longer possible to directly upgrade from 2.1 to main.
-                if event["client"] not in self.client_id_map:
-                    client = get_client(event["client"])
-                    self.client_id_map[event["client"]] = client.id
-                client_id = self.client_id_map[event["client"]]
-            else:
-                client_id = event["client_id"]
+            client_id = event["client_id"]
 
             key_tuple = (user_profile_id, client_id, event["query"])
             if key_tuple not in uncommitted_events:
@@ -729,7 +727,7 @@ class MissedMessageWorker(QueueProcessingWorker):
 class EmailSendingWorker(LoopQueueProcessingWorker):
     def __init__(self) -> None:
         super().__init__()
-        self.connection: EmailBackend = initialize_connection(None)
+        self.connection: BaseEmailBackend = initialize_connection(None)
 
     @retry_send_email_failures
     def send_email(self, event: Dict[str, Any]) -> None:
@@ -771,15 +769,7 @@ class PushNotificationsWorker(QueueProcessingWorker):
     def consume(self, event: Dict[str, Any]) -> None:
         try:
             if event.get("type", "add") == "remove":
-                message_ids = event.get("message_ids")
-                if message_ids is None:
-                    # TODO/compatibility: Previously, we sent only one `message_id` in
-                    # a payload for notification remove events. This was later changed
-                    # to send a list of `message_ids` (with that field name), but we need
-                    # compatibility code for events present in the queue during upgrade.
-                    # Remove this when one can no longer upgrade from 1.9.2 (or earlier)
-                    # to any version after 2.0.0
-                    message_ids = [event["message_id"]]
+                message_ids = event["message_ids"]
                 handle_remove_push_notification(event["user_profile_id"], message_ids)
             else:
                 handle_push_notification(event["user_profile_id"], event)
@@ -797,6 +787,9 @@ class PushNotificationsWorker(QueueProcessingWorker):
 @assign_queue("error_reports")
 class ErrorReporter(QueueProcessingWorker):
     def consume(self, event: Mapping[str, Any]) -> None:
+        error_types = ["browser", "server"]
+        assert event["type"] in error_types
+
         logging.info(
             "Processing traceback with type %s for %s", event["type"], event.get("user_email")
         )
@@ -850,30 +843,35 @@ class FetchLinksEmbedData(QueueProcessingWorker):
     CONSUME_ITERATIONS_BEFORE_UPDATE_STATS_NUM = 1
 
     def consume(self, event: Mapping[str, Any]) -> None:
+        url_embed_data: Dict[str, Optional[UrlEmbedData]] = {}
         for url in event["urls"]:
             start_time = time.time()
-            url_preview.get_link_embed_data(url)
+            url_embed_data[url] = url_preview.get_link_embed_data(url)
             logging.info(
                 "Time spent on get_link_embed_data for %s: %s", url, time.time() - start_time
             )
 
-        message = Message.objects.get(id=event["message_id"])
-        # If the message changed, we will run this task after updating the message
-        # in zerver.lib.actions.check_update_message
-        if message.content != event["message_content"]:
-            return
-        if message.content is not None:
-            query = UserMessage.objects.filter(
-                message=message.id,
-            )
-            message_user_ids = set(query.values_list("user_profile_id", flat=True))
+        with transaction.atomic():
+            try:
+                message = Message.objects.select_for_update().get(id=event["message_id"])
+            except Message.DoesNotExist:
+                # Message may have been deleted
+                return
+
+            # If the message changed, we will run this task after updating the message
+            # in zerver.actions.message_edit.check_update_message
+            if message.content != event["message_content"]:
+                return
 
             # Fetch the realm whose settings we're using for rendering
             realm = Realm.objects.get(id=event["message_realm_id"])
 
             # If rendering fails, the called code will raise a JsonableError.
             rendering_result = render_incoming_message(
-                message, message.content, message_user_ids, realm
+                message,
+                message.content,
+                realm,
+                url_embed_data=url_embed_data,
             )
             do_update_embedded_data(message.sender, message, message.content, rendering_result)
 
@@ -942,7 +940,7 @@ class EmbeddedBotWorker(QueueProcessingWorker):
                     bot_handler=self.get_bot_api_client(user_profile),
                 )
             except EmbeddedBotQuitException as e:
-                logging.warning(str(e))
+                logging.warning("%s", e)
 
 
 @assign_queue("deferred_work")
@@ -979,9 +977,11 @@ class DeferredWorker(QueueProcessingWorker):
                 messages = Message.objects.filter(
                     recipient_id=event["stream_recipient_id"]
                 ).order_by("id")[offset : offset + batch_size]
-                UserMessage.objects.filter(message__in=messages).extra(
-                    where=[UserMessage.where_unread()]
-                ).update(flags=F("flags").bitor(UserMessage.flags.read))
+
+                with transaction.atomic(savepoint=False):
+                    UserMessage.select_for_update_query().filter(message__in=messages).extra(
+                        where=[UserMessage.where_unread()]
+                    ).update(flags=F("flags").bitor(UserMessage.flags.read))
                 offset += len(messages)
                 if len(messages) < batch_size:
                     break
@@ -1023,10 +1023,11 @@ class DeferredWorker(QueueProcessingWorker):
                     )
                 ).decode()
                 export_event.save(update_fields=["extra_data"])
-                logging.error(
+                logging.exception(
                     "Data export for %s failed after %s",
                     user_profile.realm.string_id,
                     time.time() - start,
+                    stack_info=True,
                 )
                 notify_realm_export(user_profile)
                 return
@@ -1061,6 +1062,16 @@ class DeferredWorker(QueueProcessingWorker):
                 user_profile.realm.string_id,
                 time.time() - start,
             )
+        elif event["type"] == "reupload_realm_emoji":
+            # This is a special event queued by the migration for reuploading emojis.
+            # We don't want to run the necessary code in the actual migration, so it simply
+            # queues the necessary event, and the actual work is done here in the queue worker.
+            realm = Realm.objects.get(id=event["realm_id"])
+            logger.info("Processing reupload_realm_emoji event for realm %s", realm.id)
+            handle_reupload_emojis_event(realm, logger)
+        elif event["type"] == "soft_reactivate":
+            user_profile = get_user_profile_by_id(event["user_profile_id"])
+            reactivate_user_if_soft_deactivated(user_profile)
 
         end = time.time()
         logger.info("deferred_work processed %s event (%dms)", event["type"], (end - start) * 1000)

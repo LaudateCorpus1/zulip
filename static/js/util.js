@@ -1,3 +1,6 @@
+import _ from "lodash";
+
+import * as blueslip from "./blueslip";
 import {$t} from "./i18n";
 
 // From MDN: https://developer.mozilla.org/en-US/docs/JavaScript/Reference/Global_Objects/Math/random
@@ -36,9 +39,13 @@ export function lower_bound(array, value, less) {
     return first;
 }
 
-function lower_same(a, b) {
+export const lower_same = function lower_same(a, b) {
+    if (a === undefined || b === undefined) {
+        blueslip.error(`Cannot compare strings; at least one value is undefined: ${a}, ${b}`);
+        return false;
+    }
     return a.toLowerCase() === b.toLowerCase();
-}
+};
 
 export const same_stream_and_topic = function util_same_stream_and_topic(a, b) {
     // Streams and topics are case-insensitive.
@@ -215,18 +222,6 @@ export function get_match_topic(obj) {
     return obj.match_subject;
 }
 
-export function get_draft_topic(obj) {
-    // We will need to support subject for old drafts.
-    return obj.topic || obj.subject || "";
-}
-
-export function get_reload_topic(obj) {
-    // When we first upgrade to releases that have
-    // topic=foo in the code, the user's reload URL
-    // may still have subject=foo from the prior version.
-    return obj.topic || obj.subject || "";
-}
-
 export function get_edit_event_topic(obj) {
     if (obj.topic === undefined) {
         return obj.subject;
@@ -239,10 +234,6 @@ export function get_edit_event_topic(obj) {
 
 export function get_edit_event_orig_topic(obj) {
     return obj.orig_subject;
-}
-
-export function get_edit_event_prev_topic(obj) {
-    return obj.prev_subject;
 }
 
 export function is_topic_synonym(operator) {
@@ -294,31 +285,51 @@ export function clean_user_content_links(html) {
             elt.removeAttribute("target");
         }
 
-        // Ensure that the title displays the real URL.
-        let title;
-        let legacy_title;
-        if (url.origin === window.location.origin && url.pathname.startsWith("/user_uploads/")) {
-            // We add the word "download" to make clear what will
-            // happen when clicking the file.  This is particularly
-            // important in the desktop app, where hovering a URL does
-            // not display the URL like it does in the web app.
-            title = legacy_title = $t(
-                {defaultMessage: "Download {filename}"},
-                {filename: url.pathname.slice(url.pathname.lastIndexOf("/") + 1)},
-            );
+        const is_inline_image =
+            elt.parentElement && elt.parentElement.classList.contains("message_inline_image");
+        if (is_inline_image) {
+            // For inline images we want to handle the tooltips explicitly, and disable
+            // the browser's built in handling of the title attribute.
+            if (elt.getAttribute("title")) {
+                elt.setAttribute("aria-label", elt.getAttribute("title"));
+                elt.removeAttribute("title");
+            }
         } else {
-            title = url;
-            legacy_title = href;
+            // For non-image user uploads, the following block ensures that the title
+            // attribute always displays the filename as a security measure.
+            let title;
+            let legacy_title;
+            if (
+                url.origin === window.location.origin &&
+                url.pathname.startsWith("/user_uploads/")
+            ) {
+                // We add the word "download" to make clear what will
+                // happen when clicking the file.  This is particularly
+                // important in the desktop app, where hovering a URL does
+                // not display the URL like it does in the web app.
+                title = legacy_title = $t(
+                    {defaultMessage: "Download {filename}"},
+                    {filename: url.pathname.slice(url.pathname.lastIndexOf("/") + 1)},
+                );
+            } else {
+                title = url;
+                legacy_title = href;
+            }
+            elt.setAttribute(
+                "title",
+                ["", legacy_title].includes(elt.title) ? title : `${title}\n${elt.title}`,
+            );
         }
-        elt.setAttribute(
-            "title",
-            ["", legacy_title].includes(elt.title) ? title : `${title}\n${elt.title}`,
-        );
     }
     return content.innerHTML;
 }
 
-export function filter_by_word_prefix_match(items, search_term, item_to_text) {
+export function filter_by_word_prefix_match(
+    items,
+    search_term,
+    item_to_text,
+    word_separator_regex = /\s/,
+) {
     if (search_term === "") {
         return items;
     }
@@ -329,9 +340,14 @@ export function filter_by_word_prefix_match(items, search_term, item_to_text) {
     const filtered_items = items.filter((item) =>
         search_terms.some((search_term) => {
             const lower_name = item_to_text(item).toLowerCase();
-            const cands = lower_name.split(" ");
-            cands.push(lower_name);
-            return cands.some((name) => name.startsWith(search_term));
+            // returns true if the item starts with the search term or if the
+            // search term with a word separator right before it appears in the item
+            return (
+                lower_name.startsWith(search_term) ||
+                new RegExp(word_separator_regex.source + _.escapeRegExp(search_term)).test(
+                    lower_name,
+                )
+            );
         }),
     );
 
@@ -343,4 +359,25 @@ export function get_time_from_date_muted(date_muted) {
         return Date.now();
     }
     return date_muted * 1000;
+}
+
+export function call_function_periodically(callback, delay) {
+    // We previously used setInterval for this purpose, but
+    // empirically observed that after unsuspend, Chrome can end
+    // up trying to "catch up" by doing dozens of these requests
+    // at once, wasting resources as well as hitting rate limits
+    // on the server. We have not been able to reproduce this
+    // reliably enough to be certain whether the setInterval
+    // requests are those that would have happened while the
+    // laptop was suspended or during a window after unsuspend
+    // before the user focuses the browser tab.
+
+    // But using setTimeout this instead ensures that we're only
+    // scheduling a next call if the browser will actually be
+    // calling "callback".
+    setTimeout(() => {
+        call_function_periodically(callback, delay);
+    }, delay);
+
+    callback();
 }

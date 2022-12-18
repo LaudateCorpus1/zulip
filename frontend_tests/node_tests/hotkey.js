@@ -2,13 +2,7 @@
 
 const {strict: assert} = require("assert");
 
-const {
-    mock_esm,
-    set_global,
-    with_field,
-    with_overrides,
-    zrequire,
-} = require("../zjsunit/namespace");
+const {mock_esm, set_global, with_overrides, zrequire} = require("../zjsunit/namespace");
 const {make_stub} = require("../zjsunit/stub");
 const {run_test} = require("../zjsunit/test");
 
@@ -62,9 +56,11 @@ const overlays = mock_esm("../../static/js/overlays", {
     drafts_open: () => false,
     info_overlay_open: () => false,
     is_modal_open: () => false,
+    is_overlay_or_modal_open: () => overlays.is_modal_open() || overlays.is_active(),
 });
 const popovers = mock_esm("../../static/js/popovers", {
     actions_popped: () => false,
+    user_info_manage_menu_popped: () => false,
     message_info_popped: () => false,
     user_sidebar_popped: () => false,
     user_info_popped: () => false,
@@ -84,7 +80,7 @@ mock_esm("../../static/js/recent_topics_util", {
     is_in_focus: () => false,
 });
 
-mock_esm("../../static/js/stream_popover", {
+const stream_popover = mock_esm("../../static/js/stream_popover", {
     stream_popped: () => false,
     topic_popped: () => false,
     all_messages_popped: () => false,
@@ -104,15 +100,14 @@ message_lists.current = {
             flags: ["read", "starred"],
         };
     },
-    selected_row() {},
     get_row() {
         return 101;
     },
 };
 
-const emoji_codes = zrequire("../generated/emoji/emoji_codes.json");
-const emoji = zrequire("../shared/js/emoji");
 const activity = zrequire("activity");
+const emoji = zrequire("emoji");
+const emoji_codes = zrequire("../generated/emoji/emoji_codes.json");
 const hotkey = zrequire("hotkey");
 
 emoji.initialize({
@@ -137,7 +132,6 @@ function stubbing_rewire(module, func_name_to_stub, test_function) {
 }
 
 // Set up defaults for most tests.
-hotkey.__Rewire__("in_content_editable_widget", () => false);
 hotkey.__Rewire__("processing_text", () => false);
 
 run_test("mappings", () => {
@@ -227,7 +221,7 @@ function process(s) {
     };
     try {
         return hotkey.process_keypress(e);
-    } catch (error) {
+    } catch (error) /* istanbul ignore next */ {
         // An exception will be thrown here if a different
         // function is called than the one declared.  Try to
         // provide a useful error message.
@@ -265,25 +259,26 @@ function test_normal_typing() {
     assert_unmapped('~!@#$%^*()_+{}:"<>');
 }
 
-run_test("allow normal typing when processing text", ({override_rewire}) => {
+run_test("allow normal typing when processing text", ({override, override_rewire}) => {
     // Unmapped keys should immediately return false, without
     // calling any functions outside of hotkey.js.
-    assert_unmapped("bfmoyz");
-    assert_unmapped("BEFHILNOQTUWXYZ");
+    assert_unmapped("bfoyz");
+    assert_unmapped("BEFHILNOQTWXYZ");
 
     // All letters should return false if we are composing text.
     override_rewire(hotkey, "processing_text", () => true);
 
-    for (const settings_open of [() => true, () => false]) {
-        for (const is_active of [() => true, () => false]) {
-            for (const info_overlay_open of [() => true, () => false]) {
-                with_field(overlays, "is_active", is_active, () => {
-                    with_field(overlays, "settings_open", settings_open, () => {
-                        with_field(overlays, "info_overlay_open", info_overlay_open, () => {
-                            test_normal_typing();
-                        });
-                    });
-                });
+    let settings_open;
+    let is_active;
+    let info_overlay_open;
+    override(overlays, "is_active", () => is_active);
+    override(overlays, "settings_open", () => settings_open);
+    override(overlays, "info_overlay_open", () => info_overlay_open);
+
+    for (settings_open of [true, false]) {
+        for (is_active of [true, false]) {
+            for (info_overlay_open of [true, false]) {
+                test_normal_typing();
             }
         }
     }
@@ -291,8 +286,8 @@ run_test("allow normal typing when processing text", ({override_rewire}) => {
 
 run_test("streams", ({override}) => {
     settings_data.user_can_create_private_streams = () => true;
-    settings_data.user_can_create_public_streams = () => true;
-    settings_data.user_can_create_web_public_streams = () => true;
+    delete settings_data.user_can_create_public_streams;
+    delete settings_data.user_can_create_web_public_streams;
     override(overlays, "streams_open", () => true);
     override(overlays, "is_active", () => true);
     assert_mapping("S", stream_settings_ui, "keyboard_sub");
@@ -341,7 +336,7 @@ run_test("modal open", ({override}) => {
     test_normal_typing();
 });
 
-run_test("misc", () => {
+run_test("misc", ({override}) => {
     // Next, test keys that only work on a selected message.
     const message_view_only_keys = "@+>RjJkKsSuvi:GM";
 
@@ -375,6 +370,12 @@ run_test("misc", () => {
     assert_mapping(":", reactions, "open_reactions_popover", true);
     assert_mapping(">", compose_actions, "quote_and_reply");
     assert_mapping("e", message_edit, "start");
+
+    override(message_edit, "can_move_message", () => true);
+    assert_mapping("m", stream_popover, "build_move_topic_to_stream_popover");
+
+    override(message_edit, "can_move_message", () => false);
+    assert_unmapped("m");
 });
 
 run_test("lightbox overlay open", ({override}) => {
@@ -434,7 +435,7 @@ run_test("motion_keys", () => {
 
         try {
             return hotkey.process_keydown(e);
-        } catch (error) {
+        } catch (error) /* istanbul ignore next */ {
             // An exception will be thrown here if a different
             // function is called than the one declared.  Try to
             // provide a useful error message.
@@ -492,12 +493,12 @@ run_test("motion_keys", () => {
     overlays.streams_open = () => true;
     assert_mapping("up_arrow", stream_settings_ui, "switch_rows");
     assert_mapping("down_arrow", stream_settings_ui, "switch_rows");
-    overlays.streams_open = () => false;
+    delete overlays.streams_open;
 
     overlays.lightbox_open = () => true;
     assert_mapping("left_arrow", lightbox, "prev");
     assert_mapping("right_arrow", lightbox, "next");
-    overlays.lightbox_open = () => false;
+    delete overlays.lightbox_open;
 
     overlays.settings_open = () => true;
     assert_unmapped("end");
@@ -506,12 +507,12 @@ run_test("motion_keys", () => {
     assert_unmapped("page_up");
     assert_unmapped("page_down");
     assert_unmapped("spacebar");
-    overlays.settings_open = () => false;
+    delete overlays.settings_open;
 
-    overlays.is_active = () => true;
+    delete overlays.is_active;
     overlays.drafts_open = () => true;
     assert_mapping("up_arrow", drafts, "drafts_handle_events");
     assert_mapping("down_arrow", drafts, "drafts_handle_events");
-    overlays.is_active = () => false;
-    overlays.drafts_open = () => false;
+    delete overlays.is_active;
+    delete overlays.drafts_open;
 });

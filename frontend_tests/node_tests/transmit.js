@@ -60,8 +60,13 @@ run_test("transmit_message_ajax", () => {
 });
 
 run_test("transmit_message_ajax_reload_pending", () => {
+    /* istanbul ignore next */
     const success = () => {
         throw new Error("unexpected success");
+    };
+    /* istanbul ignore next */
+    const error = () => {
+        throw new Error("unexpected error");
     };
 
     reload_state.is_pending = () => true;
@@ -80,13 +85,6 @@ run_test("transmit_message_ajax_reload_pending", () => {
 
     const request = {foo: "bar"};
 
-    let error_func_called;
-    const error = (response) => {
-        assert.equal(response, "Error sending message");
-        error_func_called = true;
-    };
-
-    error_func_called = false;
     channel.post = (opts) => {
         assert.equal(opts.url, "/json/messages");
         assert.equal(opts.data.foo, "bar");
@@ -94,11 +92,10 @@ run_test("transmit_message_ajax_reload_pending", () => {
         opts.error(xhr, "bad request");
     };
     transmit.send_message(request, success, error);
-    assert.ok(!error_func_called);
     assert.ok(reload_initiated);
 });
 
-run_test("reply_message_stream", ({override_rewire}) => {
+run_test("reply_message_stream", ({override}) => {
     const stream_message = {
         type: "stream",
         stream: "social",
@@ -111,8 +108,8 @@ run_test("reply_message_stream", ({override_rewire}) => {
 
     let send_message_args;
 
-    override_rewire(transmit, "send_message", (args) => {
-        send_message_args = args;
+    override(channel, "post", ({data}) => {
+        send_message_args = data;
     });
 
     page_params.user_id = 44;
@@ -135,15 +132,13 @@ run_test("reply_message_stream", ({override_rewire}) => {
     });
 });
 
-run_test("reply_message_private", ({override_rewire}) => {
+run_test("reply_message_private", ({override}) => {
     const fred = {
         user_id: 3,
         email: "fred@example.com",
         full_name: "Fred Frost",
     };
     people.add_active_user(fred);
-
-    people.is_my_user_id = () => false;
 
     const pm_message = {
         type: "private",
@@ -154,8 +149,8 @@ run_test("reply_message_private", ({override_rewire}) => {
 
     let send_message_args;
 
-    override_rewire(transmit, "send_message", (args) => {
-        send_message_args = args;
+    override(channel, "post", ({data}) => {
+        send_message_args = data;
     });
 
     page_params.user_id = 155;

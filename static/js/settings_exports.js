@@ -1,8 +1,11 @@
 import $ from "jquery";
 
+import render_confirm_delete_data_export from "../templates/confirm_dialog/confirm_delete_data_export.hbs";
 import render_admin_export_list from "../templates/settings/admin_export_list.hbs";
 
 import * as channel from "./channel";
+import * as confirm_dialog from "./confirm_dialog";
+import * as dialog_widget from "./dialog_widget";
 import {$t_html} from "./i18n";
 import * as ListWidget from "./list_widget";
 import * as loading from "./loading";
@@ -35,8 +38,8 @@ export function populate_exports_table(exports) {
         return;
     }
 
-    const exports_table = $("#admin_exports_table").expectOne();
-    ListWidget.create(exports_table, Object.values(exports), {
+    const $exports_table = $("#admin_exports_table").expectOne();
+    ListWidget.create($exports_table, Object.values(exports), {
         name: "admin_exports_list",
         modifier(data) {
             let failed_timestamp = data.failed_timestamp;
@@ -70,27 +73,27 @@ export function populate_exports_table(exports) {
             });
         },
         filter: {
-            element: exports_table.closest(".settings-section").find(".search"),
+            $element: $exports_table.closest(".settings-section").find(".search"),
             predicate(item, value) {
                 return people.get_full_name(item.acting_user_id).toLowerCase().includes(value);
             },
             onupdate() {
-                ui.reset_scrollbar(exports_table);
+                ui.reset_scrollbar($exports_table);
             },
         },
-        parent_container: $("#data-exports").expectOne(),
+        $parent_container: $("#data-exports").expectOne(),
         init_sort: [sort_user],
         sort_fields: {
             user: sort_user,
         },
-        simplebar_container: $("#data-exports .progressive-table-wrapper"),
+        $simplebar_container: $("#data-exports .progressive-table-wrapper"),
     });
 
-    const spinner = $(".export_row .export_url_spinner");
-    if (spinner.length) {
-        loading.make_indicator(spinner);
+    const $spinner = $(".export_row .export_url_spinner");
+    if ($spinner.length) {
+        loading.make_indicator($spinner);
     } else {
-        loading.destroy_indicator(spinner);
+        loading.destroy_indicator($spinner);
     }
 }
 
@@ -100,19 +103,19 @@ export function set_up() {
     $("#export-data").on("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const export_status = $("#export_status");
+        const $export_status = $("#export_status");
 
         channel.post({
             url: "/json/export/realm",
             success() {
                 ui_report.success(
                     $t_html({defaultMessage: "Export started. Check back in a few minutes."}),
-                    export_status,
+                    $export_status,
                     4000,
                 );
             },
             error(xhr) {
-                ui_report.error($t_html({defaultMessage: "Export failed"}), xhr, export_status);
+                ui_report.error($t_html({defaultMessage: "Export failed"}), xhr, $export_status);
             },
         });
     });
@@ -128,14 +131,15 @@ export function set_up() {
     $(".admin_exports_table").on("click", ".delete", function (e) {
         e.preventDefault();
         e.stopPropagation();
-        const btn = $(this);
+        const $btn = $(this);
+        const url = "/json/export/realm/" + encodeURIComponent($btn.attr("data-export-id"));
+        const html_body = render_confirm_delete_data_export();
 
-        channel.del({
-            url: "/json/export/realm/" + encodeURIComponent(btn.attr("data-export-id")),
-            error(xhr) {
-                ui_report.generic_row_button_error(xhr, btn);
-            },
-            // No success function, since UI updates are done via server_events
+        confirm_dialog.launch({
+            html_heading: $t_html({defaultMessage: "Delete data export?"}),
+            html_body,
+            on_click: () => dialog_widget.submit_api_request(channel.del, url),
+            loading_spinner: true,
         });
     });
 }

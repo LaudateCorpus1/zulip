@@ -1,5 +1,4 @@
 import $ from "jquery";
-import Micromodal from "micromodal";
 
 import render_dialog_widget from "../templates/dialog_widget.hbs";
 
@@ -7,6 +6,7 @@ import * as blueslip from "./blueslip";
 import {$t_html} from "./i18n";
 import * as loading from "./loading";
 import * as overlays from "./overlays";
+import * as ui_report from "./ui_report";
 
 /*
  *  Look for confirm_dialog in settings_user_groups
@@ -46,8 +46,8 @@ export function hide_dialog_spinner() {
     $(".dialog_submit_button span").show();
     $("#dialog_widget_modal .modal__btn").prop("disabled", false);
 
-    const spinner = $("#dialog_widget_modal .modal__spinner");
-    loading.destroy_indicator(spinner);
+    const $spinner = $("#dialog_widget_modal .modal__spinner");
+    loading.destroy_indicator($spinner);
 }
 
 export function show_dialog_spinner() {
@@ -55,12 +55,18 @@ export function show_dialog_spinner() {
     // Disable both the buttons.
     $("#dialog_widget_modal .modal__btn").prop("disabled", true);
 
-    const spinner = $("#dialog_widget_modal .modal__spinner");
-    loading.make_indicator(spinner);
+    const $spinner = $("#dialog_widget_modal .modal__spinner");
+    const dialog_submit_button_span_width = $(".dialog_submit_button span").width();
+    const dialog_submit_button_span_height = $(".dialog_submit_button span").height();
+    loading.make_indicator($spinner, {
+        width: dialog_submit_button_span_width,
+        height: dialog_submit_button_span_height,
+    });
 }
 
-export function close_modal() {
-    Micromodal.close("dialog_widget_modal");
+// Supports a callback to be called once the modal finishes closing.
+export function close_modal(on_hidden_callback) {
+    overlays.close_modal("dialog_widget_modal", {on_hidden: on_hidden_callback});
 }
 
 export function launch(conf) {
@@ -86,17 +92,12 @@ export function launch(conf) {
     // * on_shown: Callback to run when the modal is shown.
     // * on_hide: Callback to run when the modal is triggered to hide.
     // * on_hidden: Callback to run when the modal is hidden.
+    // * post_render: Callback to run after the modal body is added to DOM.
 
     for (const f of mandatory_fields) {
         if (conf[f] === undefined) {
             blueslip.error("programmer omitted " + f);
         }
-    }
-
-    // Close any existing modals--on settings screens you can
-    // have multiple buttons that need confirmation.
-    if (overlays.is_modal_open()) {
-        close_modal();
     }
 
     const html_submit_button = conf.html_submit_button || $t_html({defaultMessage: "Save changes"});
@@ -108,24 +109,28 @@ export function launch(conf) {
         id: conf.id,
         single_footer_button: conf.single_footer_button,
     });
-    const dialog = $(html);
-    $("body").append(dialog);
+    const $dialog = $(html);
+    $("body").append($dialog);
 
     if (conf.post_render !== undefined) {
         conf.post_render();
     }
 
-    const submit_button = dialog.find(".dialog_submit_button");
+    const $submit_button = $dialog.find(".dialog_submit_button");
+    const $send_email_checkbox = $dialog.find(".send_email");
+    const $email_field = $dialog.find(".email_field");
+
+    $email_field.hide();
 
     // This is used to link the submit button with the form, if present, in the modal.
     // This makes it so that submitting this form by pressing Enter on an input element
     // triggers a click on the submit button.
     if (conf.form_id) {
-        submit_button.attr("form", conf.form_id);
+        $submit_button.attr("form", conf.form_id);
     }
 
     // Set up handlers.
-    submit_button.on("click", (e) => {
+    $submit_button.on("click", (e) => {
         if (conf.validate_input && !conf.validate_input(e)) {
             return;
         }
@@ -138,12 +143,19 @@ export function launch(conf) {
         conf.on_click(e);
     });
 
+    $send_email_checkbox.on("change", () => {
+        if ($send_email_checkbox.is(":checked")) {
+            $email_field.show();
+        } else {
+            $email_field.hide();
+        }
+    });
+
     overlays.open_modal("dialog_widget_modal", {
         autoremove: true,
-        micromodal: true,
         on_show: () => {
             if (conf.focus_submit_on_open) {
-                submit_button.trigger("focus");
+                $submit_button.trigger("focus");
             }
             if (conf.on_show) {
                 conf.on_show();
@@ -152,5 +164,35 @@ export function launch(conf) {
         on_hide: conf?.on_hide,
         on_shown: conf?.on_shown,
         on_hidden: conf?.on_hidden,
+    });
+}
+
+export function submit_api_request(
+    request_method,
+    url,
+    data = {},
+    {
+        failure_msg_html = $t_html({defaultMessage: "Failed"}),
+        success_continuation,
+        error_continuation,
+    } = {},
+) {
+    show_dialog_spinner();
+    request_method({
+        url,
+        data,
+        success(reponse_data) {
+            close_modal();
+            if (success_continuation !== undefined) {
+                success_continuation(reponse_data);
+            }
+        },
+        error(xhr) {
+            ui_report.error(failure_msg_html, xhr, $("#dialog_error"));
+            hide_dialog_spinner();
+            if (error_continuation !== undefined) {
+                error_continuation(xhr);
+            }
+        },
     });
 }

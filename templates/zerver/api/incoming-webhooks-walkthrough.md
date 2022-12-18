@@ -115,7 +115,7 @@ def api_helloworld_webhook(
     # send the message
     check_send_webhook_message(request, user_profile, topic, body)
 
-    return json_success()
+    return json_success(request)
 ```
 
 The above code imports the required functions and defines the main webhook
@@ -175,7 +175,7 @@ validate the message and do the following:
   message to the owner of the webhook bot.
 
 Finally, we return a 200 http status with a JSON format success message via
-`json_success()`.
+`json_success(request)`.
 
 ## Step 3: Create an API endpoint for the webhook
 
@@ -258,7 +258,7 @@ After running the above command, you should see something similar to:
 Using `manage.py` from within the Zulip development environment:
 
 ```console
-(zulip-py3-venv) vagrant@debian-10:/srv/zulip$
+(zulip-py3-venv) vagrant@vagrant:/srv/zulip$
 ./manage.py send_webhook_fixture_message \
     --fixture=zerver/webhooks/helloworld/fixtures/hello.json \
     '--url=http://localhost:9991/api/v1/external/helloworld?api_key=<api_key>'
@@ -384,7 +384,7 @@ Once you have written some tests, you can run just these new tests from within
 the Zulip development environment with this command:
 
 ```console
-(zulip-py3-venv) vagrant@debian-10:/srv/zulip$
+(zulip-py3-venv) vagrant@vagrant:/srv/zulip$
 ./tools/test-backend zerver/webhooks/helloworld
 ```
 
@@ -433,7 +433,7 @@ stream name:
 To trigger a notification using this webhook, use
 `send_webhook_fixture_message` from the Zulip command line:
 
-    (zulip-py3-venv) vagrant@debian-10:/srv/zulip$
+    (zulip-py3-venv) vagrant@vagrant:/srv/zulip$
     ./manage.py send_webhook_fixture_message \
         --fixture=zerver/tests/fixtures/helloworld/hello.json \
         '--url=http://localhost:9991/api/v1/external/helloworld?api_key=&lt;api_key&gt;'
@@ -483,8 +483,8 @@ request:
 
 If you would like feedback on your integration as you go, feel free to post a
 message on the [public Zulip instance](https://chat.zulip.org/#narrow/stream/bots).
-You can also create a [`[WIP]` pull request](
-https://zulip.readthedocs.io/en/latest/overview/contributing.html#working-on-an-issue) while you
+You can also create a [draft pull request](
+https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests#draft-pull-requests) while you
 are still working on your integration. See the
 [Git guide](https://zulip.readthedocs.io/en/latest/git/pull-requests.html#create-a-pull-request)
 for more on Zulip's pull request process.
@@ -610,7 +610,7 @@ event = validate_extract_webhook_http_header(request, header, integration_name)
 ```
 
 `request` is the `HttpRequest` object passed to your main webhook function. `header`
-is the name of the custom header you'd like to extract, such as `X_EVENT_KEY`, and
+is the name of the custom header you'd like to extract, such as `X-Event-Key`, and
 `integration_name` is the name of the third-party service in question, such as
 `GitHub`.
 

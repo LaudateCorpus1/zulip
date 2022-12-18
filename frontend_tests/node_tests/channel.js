@@ -2,17 +2,10 @@
 
 const {strict: assert} = require("assert");
 
-const _ = require("lodash");
-
 const {mock_jquery, mock_esm, set_global, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 const blueslip = require("../zjsunit/zblueslip");
 const {page_params} = require("../zjsunit/zpage_params");
-
-set_global("setTimeout", (f, delay) => {
-    assert.equal(delay, 0);
-    f();
-});
 
 const xhr_401 = {
     status: 401,
@@ -336,48 +329,6 @@ test("unexpected_403_response", () => {
     });
 });
 
-test("retry", () => {
-    test_with_mock_ajax({
-        run_code() {
-            channel.post({
-                idempotent: true,
-                data: 42,
-            });
-        },
-
-        check_ajax_options(options) {
-            blueslip.expect("log", "Retrying idempotent[object Object]");
-            test_with_mock_ajax({
-                run_code() {
-                    options.simulate_success();
-                },
-
-                check_ajax_options(options) {
-                    assert.equal(options.data, 42);
-                },
-            });
-        },
-    });
-});
-
-test("too_many_pending", () => {
-    channel.clear_for_tests();
-    $.ajax = () => {
-        const xhr = {stub: 0};
-        return xhr;
-    };
-
-    blueslip.expect(
-        "warn",
-        "The length of pending_requests is over 50. " +
-            "Most likely they are not being correctly removed.",
-    );
-    _.times(51, () => {
-        channel.post({});
-    });
-    channel.clear_for_tests();
-});
-
 test("xhr_error_message", () => {
     let xhr = {
         status: "200",
@@ -399,19 +350,18 @@ test("while_reloading", () => {
 
     assert.equal(channel.get({ignore_reload: false}), undefined);
 
-    let orig_success_called = false;
-    let orig_error_called = false;
-
     test_with_mock_ajax({
         run_code() {
             channel.del({
                 url: "/json/endpoint",
                 ignore_reload: true,
+                /* istanbul ignore next */
                 success() {
-                    orig_success_called = true;
+                    throw new Error("unexpected success");
                 },
+                /* istanbul ignore next */
                 error() {
-                    orig_error_called = true;
+                    throw new Error("unexpected error");
                 },
             });
         },
@@ -419,11 +369,9 @@ test("while_reloading", () => {
         check_ajax_options(options) {
             blueslip.expect("log", "Ignoring DELETE /json/endpoint response while reloading");
             options.simulate_success();
-            assert.ok(!orig_success_called);
 
             blueslip.expect("log", "Ignoring DELETE /json/endpoint error response while reloading");
             options.simulate_error();
-            assert.ok(!orig_error_called);
         },
     });
 });

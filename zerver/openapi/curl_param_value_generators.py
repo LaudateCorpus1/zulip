@@ -10,13 +10,11 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from django.utils.timezone import now as timezone_now
 
-from zerver.lib.actions import (
-    do_add_linkifier,
-    do_add_reaction,
-    do_add_realm_playground,
-    do_create_user,
-    update_user_presence,
-)
+from zerver.actions.create_user import do_create_user
+from zerver.actions.presence import update_user_presence
+from zerver.actions.reactions import do_add_reaction
+from zerver.actions.realm_linkifiers import do_add_linkifier
+from zerver.actions.realm_playgrounds import do_add_realm_playground
 from zerver.lib.events import do_events_register
 from zerver.lib.initial_password import initial_password
 from zerver.lib.test_classes import ZulipTestCase
@@ -218,7 +216,9 @@ def get_events() -> Dict[str, object]:
     profile = helpers.example_user("iago")
     helpers.subscribe(profile, "Verona")
     client = Client.objects.create(name="curl-test-client-1")
-    response = do_events_register(profile, client, event_types=["message", "realm_emoji"])
+    response = do_events_register(
+        profile, profile.realm, client, event_types=["message", "realm_emoji"]
+    )
     helpers.send_stream_message(helpers.example_user("hamlet"), "Verona")
     return {
         "queue_id": response["queue_id"],
@@ -230,7 +230,7 @@ def get_events() -> Dict[str, object]:
 def delete_event_queue() -> Dict[str, object]:
     profile = helpers.example_user("iago")
     client = Client.objects.create(name="curl-test-client-2")
-    response = do_events_register(profile, client, event_types=["message"])
+    response = do_events_register(profile, profile.realm, client, event_types=["message"])
     return {
         "queue_id": response["queue_id"],
         "last_event_id": response["last_event_id"],
@@ -272,7 +272,10 @@ def get_temp_user_group_id() -> Dict[str, object]:
 @openapi_param_value_generator(["/realm/filters/{filter_id}:delete"])
 def remove_realm_filters() -> Dict[str, object]:
     filter_id = do_add_linkifier(
-        get_realm("zulip"), "#(?P<id>[0-9]{2,8})", "https://github.com/zulip/zulip/pull/%(id)s"
+        get_realm("zulip"),
+        "#(?P<id>[0-9]{2,8})",
+        "https://github.com/zulip/zulip/pull/%(id)s",
+        acting_user=None,
     )
     return {
         "filter_id": filter_id,
@@ -302,7 +305,7 @@ def remove_realm_playground() -> Dict[str, object]:
         pygments_language="Python",
         url_prefix="https://python.example.com",
     )
-    playground_id = do_add_realm_playground(get_realm("zulip"), **playground_info)
+    playground_id = do_add_realm_playground(get_realm("zulip"), acting_user=None, **playground_info)
     return {
         "playground_id": playground_id,
     }

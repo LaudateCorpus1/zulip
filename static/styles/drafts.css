@@ -50,7 +50,7 @@
     }
 
     .drafts-list {
-        padding: 10px 0;
+        padding: 10px 25px;
         overflow: auto;
 
         .no-drafts {
@@ -69,11 +69,17 @@
             color: hsl(0, 0%, 67%);
             pointer-events: none;
         }
+
+        h2 {
+            font-size: 1.1em;
+            line-height: normal;
+            margin-bottom: 5px;
+        }
     }
 }
 
 .draft-row {
-    padding: 5px 25px;
+    padding: 5px 0;
 
     > div {
         display: inline-block;
@@ -87,10 +93,16 @@
 
         &.active {
             outline: 2px solid hsl(215, 47%, 50%);
+            /* this offset ensures no gap between the blue box and the draft in active state */
+            outline-offset: -1px;
         }
 
         .message_row {
             border: 0;
+        }
+
+        .messagebox-content {
+            padding: 4px 10px 1px;
         }
 
         .messagebox {
@@ -102,19 +114,15 @@
             line-height: 1;
             padding-top: 10px;
             padding-bottom: 10px;
+            padding-right: 10px;
             margin-left: 0;
         }
 
         .draft_controls {
             display: inline-block;
-            position: absolute;
-            top: 9px;
-            right: -103px;
+            padding-top: 10px;
+            float: right;
             font-size: 0.9em;
-
-            @media (width < $sm_min) {
-                right: 0;
-            }
 
             [data-tippy-root] {
                 width: max-content;

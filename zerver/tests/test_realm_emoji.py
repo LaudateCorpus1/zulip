@@ -1,15 +1,14 @@
 from unittest import mock
 
-from zerver.lib.actions import (
-    check_add_realm_emoji,
-    do_change_user_role,
-    do_create_realm,
-    do_create_user,
-    do_set_realm_property,
-)
+from zerver.actions.create_realm import do_create_realm
+from zerver.actions.create_user import do_create_user
+from zerver.actions.realm_emoji import check_add_realm_emoji
+from zerver.actions.realm_settings import do_set_realm_property
+from zerver.actions.users import do_change_user_role
 from zerver.lib.exceptions import JsonableError
 from zerver.lib.test_classes import ZulipTestCase
 from zerver.lib.test_helpers import get_test_image_file
+from zerver.lib.upload import BadImageError
 from zerver.models import Realm, RealmEmoji, UserProfile, get_realm
 
 
@@ -24,7 +23,7 @@ class RealmEmojiTest(ZulipTestCase):
         return realm_emoji
 
     def create_test_emoji_with_no_author(self, name: str, realm: Realm) -> RealmEmoji:
-        realm_emoji = RealmEmoji.objects.create(realm=realm, name=name)
+        realm_emoji = RealmEmoji.objects.create(realm=realm, name=name, file_name=name)
         return realm_emoji
 
     def test_list(self) -> None:
@@ -33,9 +32,8 @@ class RealmEmojiTest(ZulipTestCase):
         self.create_test_emoji("my_emoji", emoji_author)
 
         result = self.client_get("/json/realm/emoji")
-        self.assert_json_success(result)
-        self.assertEqual(200, result.status_code)
-        self.assert_length(result.json()["emoji"], 2)
+        response_dict = self.assert_json_success(result)
+        self.assert_length(response_dict["emoji"], 2)
 
     def test_list_no_author(self) -> None:
         self.login("iago")
@@ -43,8 +41,7 @@ class RealmEmojiTest(ZulipTestCase):
         realm_emoji = self.create_test_emoji_with_no_author("my_emoji", realm)
 
         result = self.client_get("/json/realm/emoji")
-        self.assert_json_success(result)
-        content = result.json()
+        content = self.assert_json_success(result)
         self.assert_length(content["emoji"], 2)
         test_emoji = content["emoji"][str(realm_emoji.id)]
         self.assertIsNone(test_emoji["author_id"])
@@ -59,8 +56,7 @@ class RealmEmojiTest(ZulipTestCase):
         realm_emoji = self.create_test_emoji_with_no_author("my_emoji", realm)
 
         result = self.client_get("/json/realm/emoji")
-        self.assert_json_success(result)
-        content = result.json()
+        content = self.assert_json_success(result)
         self.assert_length(content["emoji"], 2)
         test_emoji = content["emoji"][str(realm_emoji.id)]
         self.assertIsNone(test_emoji["author_id"])
@@ -79,8 +75,7 @@ class RealmEmojiTest(ZulipTestCase):
         self.assertEqual(realm_emoji.author.email, email)
 
         result = self.client_get("/json/realm/emoji")
-        content = result.json()
-        self.assert_json_success(result)
+        content = self.assert_json_success(result)
         self.assert_length(content["emoji"], 2)
         test_emoji = content["emoji"][str(realm_emoji.id)]
         self.assertIn("author_id", test_emoji)
@@ -107,7 +102,7 @@ class RealmEmojiTest(ZulipTestCase):
         self.assert_json_success(result)
         self.assertEqual(200, result.status_code)
         realm_emoji = RealmEmoji.objects.get(name="smile")
-        assert realm_emoji is not None and realm_emoji.author is not None
+        assert realm_emoji.author is not None
         self.assertEqual(realm_emoji.author.email, email)
 
     def test_realm_emoji_repr(self) -> None:
@@ -123,14 +118,39 @@ class RealmEmojiTest(ZulipTestCase):
         with get_test_image_file("img.png") as fp1:
             emoji_data = {"f1": fp1}
             result = self.client_post("/json/realm/emoji/my_em*oji", info=emoji_data)
-        self.assert_json_error(result, "Invalid characters in emoji name")
+        self.assert_json_error(
+            result,
+            "Emoji names must contain only numbers, lowercase English letters, spaces, dashes, underscores, and periods.",
+        )
+
+    def test_forward_slash_exception(self) -> None:
+        self.login("iago")
+        with get_test_image_file("img.png") as fp1:
+            emoji_data = {"f1": fp1}
+            result = self.client_post(
+                "/json/realm/emoji/my/emoji/with/forward/slash/", info=emoji_data
+            )
+        self.assert_json_error(
+            result,
+            "Emoji names must contain only numbers, lowercase English letters, spaces, dashes, underscores, and periods.",
+        )
 
     def test_upload_uppercase_exception(self) -> None:
         self.login("iago")
         with get_test_image_file("img.png") as fp1:
             emoji_data = {"f1": fp1}
             result = self.client_post("/json/realm/emoji/my_EMoji", info=emoji_data)
-        self.assert_json_error(result, "Invalid characters in emoji name")
+        self.assert_json_error(
+            result,
+            "Emoji names must contain only numbers, lowercase English letters, spaces, dashes, underscores, and periods.",
+        )
+
+    def test_upload_end_character_exception(self) -> None:
+        self.login("iago")
+        with get_test_image_file("img.png") as fp1:
+            emoji_data = {"f1": fp1}
+            result = self.client_post("/json/realm/emoji/my_emoji_", info=emoji_data)
+        self.assert_json_error(result, "Emoji names must end with either a letter or number.")
 
     def test_missing_name_exception(self) -> None:
         self.login("iago")
@@ -223,8 +243,7 @@ class RealmEmojiTest(ZulipTestCase):
         self.assert_json_success(result)
 
         result = self.client_get("/json/realm/emoji")
-        emojis = result.json()["emoji"]
-        self.assert_json_success(result)
+        emojis = self.assert_json_success(result)["emoji"]
         # We only mark an emoji as deactivated instead of
         # removing it from the database.
         self.assert_length(emojis, 2)
@@ -271,6 +290,18 @@ class RealmEmojiTest(ZulipTestCase):
             result = self.client_post("/json/realm/emoji/my_emoji", {"f1": fp1, "f2": fp2})
         self.assert_json_error(result, "You must upload exactly one file.")
 
+    def test_emoji_upload_success(self) -> None:
+        self.login("iago")
+        with get_test_image_file("img.gif") as fp:
+            result = self.client_post("/json/realm/emoji/my_emoji", {"file": fp})
+        self.assert_json_success(result)
+
+    def test_emoji_upload_resize_success(self) -> None:
+        self.login("iago")
+        with get_test_image_file("still_large_img.gif") as fp:
+            result = self.client_post("/json/realm/emoji/my_emoji", {"file": fp})
+        self.assert_json_success(result)
+
     def test_emoji_upload_file_size_error(self) -> None:
         self.login("iago")
         with get_test_image_file("img.png") as fp:
@@ -286,7 +317,7 @@ class RealmEmojiTest(ZulipTestCase):
         self.assert_json_error(result, "A custom emoji with this name already exists.")
 
     def test_reupload(self) -> None:
-        # An user should be able to reupload an emoji with same name.
+        # A user should be able to reupload an emoji with same name.
         self.login("iago")
         with get_test_image_file("img.png") as fp1:
             emoji_data = {"f1": fp1}
@@ -302,17 +333,18 @@ class RealmEmojiTest(ZulipTestCase):
         self.assert_json_success(result)
 
         result = self.client_get("/json/realm/emoji")
-        emojis = result.json()["emoji"]
-        self.assert_json_success(result)
+        emojis = self.assert_json_success(result)["emoji"]
         self.assert_length(emojis, 3)
 
     def test_failed_file_upload(self) -> None:
         self.login("iago")
-        with mock.patch("zerver.lib.upload.write_local_file", side_effect=Exception()):
+        with mock.patch(
+            "zerver.lib.upload.write_local_file", side_effect=BadImageError(msg="Broken")
+        ):
             with get_test_image_file("img.png") as fp1:
                 emoji_data = {"f1": fp1}
                 result = self.client_post("/json/realm/emoji/my_emoji", info=emoji_data)
-        self.assert_json_error(result, "Image file upload failed.")
+        self.assert_json_error(result, "Broken")
 
     def test_check_admin_realm_emoji(self) -> None:
         # Test that an user A is able to remove a realm emoji uploaded by him

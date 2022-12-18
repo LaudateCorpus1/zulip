@@ -105,7 +105,7 @@ const default_stream_ids = new Set();
 export const stream_privacy_policy_values = {
     web_public: {
         code: "web-public",
-        name: $t({defaultMessage: "Web public"}),
+        name: $t({defaultMessage: "Web-public"}),
         description: $t({
             defaultMessage:
                 "Organization members can join (guests must be invited by a subscriber); anyone on the Internet can view complete message history without creating an account",
@@ -142,21 +142,21 @@ export const stream_post_policy_values = {
     // Stream.POST_POLICIES object in zerver/models.py.
     everyone: {
         code: 1,
-        description: $t({defaultMessage: "All stream members can post"}),
+        description: $t({defaultMessage: "Everyone"}),
     },
-    admins: {
-        code: 2,
-        description: $t({defaultMessage: "Only organization administrators can post"}),
+    non_new_members: {
+        code: 3,
+        description: $t({defaultMessage: "Admins, moderators and full members"}),
     },
     moderators: {
         code: 4,
         description: $t({
-            defaultMessage: "Only organization administrators and moderators can post",
+            defaultMessage: "Admins and moderators",
         }),
     },
-    non_new_members: {
-        code: 3,
-        description: $t({defaultMessage: "Only organization full members can post"}),
+    admins: {
+        code: 2,
+        description: $t({defaultMessage: "Admins only"}),
     },
 };
 
@@ -202,6 +202,10 @@ export function is_active(sub) {
         return true;
     }
     return stream_topic_history.stream_has_topics(sub.stream_id) || sub.newly_subscribed;
+}
+
+export function is_muted_active(sub) {
+    return sub.is_muted && is_active(sub);
 }
 
 export function rename_sub(sub, new_name) {
@@ -277,16 +281,6 @@ export function get_sub_by_name(name) {
     return sub_store.get(stream_id);
 }
 
-export function id_to_slug(stream_id) {
-    let name = maybe_get_stream_name(stream_id) || "unknown";
-
-    // The name part of the URL doesn't really matter, so we try to
-    // make it pretty.
-    name = name.replace(" ", "-");
-
-    return stream_id + "-" + name;
-}
-
 export function name_to_slug(name) {
     const stream_id = get_stream_id(name);
 
@@ -296,7 +290,7 @@ export function name_to_slug(name) {
 
     // The name part of the URL doesn't really matter, so we try to
     // make it pretty.
-    name = name.replace(" ", "-");
+    name = name.replaceAll(" ", "-");
 
     return stream_id + "-" + name;
 }
@@ -390,6 +384,12 @@ export function subscribed_stream_ids() {
     return subscribed_subs().map((sub) => sub.stream_id);
 }
 
+export function muted_stream_ids() {
+    return subscribed_subs()
+        .filter((sub) => sub.is_muted)
+        .map((sub) => sub.stream_id);
+}
+
 export function get_subscribed_streams_for_user(user_id) {
     // Note that we only have access to subscribers of some streams
     // depending on our role.
@@ -468,10 +468,7 @@ export function receives_notifications(stream_id, notification_name) {
     if (sub[notification_name] !== null) {
         return sub[notification_name];
     }
-    if (notification_name === "wildcard_mentions_notify") {
-        return user_settings[notification_name];
-    }
-    return user_settings["enable_stream_" + notification_name];
+    return user_settings[settings_config.generalize_stream_notification_setting[notification_name]];
 }
 
 export function all_subscribed_streams_are_in_home_view() {
@@ -522,12 +519,22 @@ export function can_toggle_subscription(sub) {
     //
     // One can only join a stream if it is public (!invite_only) and
     // your role is Member or above (!is_guest).
+    // Spectators cannot subscribe to any streams.
     //
     // Note that the correctness of this logic relies on the fact that
     // one cannot be subscribed to a deactivated stream, and
     // deactivated streams are automatically made private during the
     // archive stream process.
-    return sub.subscribed || (!page_params.is_guest && !sub.invite_only);
+    return (
+        (sub.subscribed || (!page_params.is_guest && !sub.invite_only)) && !page_params.is_spectator
+    );
+}
+
+export function can_access_topic_history(sub) {
+    // Anyone can access topic history for web-public streams and
+    // subscriptions; additionally, members can access history for
+    // public streams.
+    return sub.is_web_public || can_toggle_subscription(sub);
 }
 
 export function can_preview(sub) {
@@ -546,6 +553,43 @@ export function can_view_subscribers(sub) {
 export function can_subscribe_others(sub) {
     // User can add other users to stream if stream is public or user is subscribed to stream.
     return !page_params.is_guest && (!sub.invite_only || sub.subscribed);
+}
+
+export function can_post_messages_in_stream(stream) {
+    if (page_params.is_admin) {
+        return true;
+    }
+
+    if (stream.stream_post_policy === stream_post_policy_values.admins.code) {
+        return false;
+    }
+
+    if (page_params.is_moderator) {
+        return true;
+    }
+
+    if (stream.stream_post_policy === stream_post_policy_values.moderators.code) {
+        return false;
+    }
+
+    if (
+        page_params.is_guest &&
+        stream.stream_post_policy !== stream_post_policy_values.everyone.code
+    ) {
+        return false;
+    }
+
+    const person = people.get_by_user_id(people.my_current_user_id());
+    const current_datetime = new Date(Date.now());
+    const person_date_joined = new Date(person.date_joined);
+    const days = (current_datetime - person_date_joined) / 1000 / 86400;
+    if (
+        stream.stream_post_policy === stream_post_policy_values.non_new_members.code &&
+        days < page_params.realm_waiting_period_threshold
+    ) {
+        return false;
+    }
+    return true;
 }
 
 export function is_subscribed_by_name(stream_name) {

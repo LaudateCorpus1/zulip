@@ -15,7 +15,7 @@ import * as popovers from "./popovers";
 import * as presence from "./presence";
 import * as ui_util from "./ui_util";
 import {UserSearch} from "./user_search";
-import * as user_status from "./user_status";
+import * as util from "./util";
 import * as watchdog from "./watchdog";
 
 export let user_cursor;
@@ -59,8 +59,8 @@ function get_pm_list_item(user_id) {
 }
 
 function set_pm_count(user_ids_string, count) {
-    const pm_li = get_pm_list_item(user_ids_string);
-    ui_util.update_unread_count_in_dom(pm_li, count);
+    const $pm_li = get_pm_list_item(user_ids_string);
+    ui_util.update_unread_count_in_dom($pm_li, count);
 }
 
 export function update_dom_with_unread_counts(counts) {
@@ -197,7 +197,6 @@ export function send_presence_to_server(want_redraw) {
             new_user_input,
             slim_presence: true,
         },
-        idempotent: true,
         success(data) {
             // Update Zephyr mirror activity warning
             if (data.zephyr_mirror_active === false) {
@@ -243,31 +242,19 @@ export function initialize() {
 
     buddy_list.start_scroll_handler();
 
-    // Let the server know we're here, but pass "false" for
-    // want_redraw, since we just got all this info in page_params.
-    send_presence_to_server(false);
-
     function get_full_presence_list_update() {
         send_presence_to_server(true);
     }
 
-    setInterval(get_full_presence_list_update, ACTIVE_PING_INTERVAL_MS);
+    util.call_function_periodically(get_full_presence_list_update, ACTIVE_PING_INTERVAL_MS);
+
+    // Let the server know we're here, but pass "false" for
+    // want_redraw, since we just got all this info in page_params.
+    send_presence_to_server(false);
 }
 
 export function update_presence_info(user_id, info, server_time) {
     presence.update_info_from_event(user_id, info, server_time);
-    redraw_user(user_id);
-    pm_list.update_private_messages();
-}
-
-export function on_set_away(user_id) {
-    user_status.set_away(user_id);
-    redraw_user(user_id);
-    pm_list.update_private_messages();
-}
-
-export function on_revoke_away(user_id) {
-    user_status.revoke_away(user_id);
     redraw_user(user_id);
     pm_list.update_private_messages();
 }
@@ -285,7 +272,7 @@ export function reset_users() {
 }
 
 export function narrow_for_user(opts) {
-    const user_id = buddy_list.get_key_from_li({li: opts.li});
+    const user_id = buddy_list.get_key_from_li({$li: opts.$li});
     return narrow_for_user_id({user_id});
 }
 
@@ -324,7 +311,7 @@ export function set_cursor_and_filter() {
     $input.on("blur", () => user_cursor.clear());
 
     keydown_util.handle({
-        elem: $input,
+        $elem: $input,
         handlers: {
             Enter() {
                 keydown_enter_key();

@@ -5,12 +5,15 @@ preparing a new release.
 
 ### A week before the release
 
-- For a major release (e.g. 4.0):
+- _Major releases only (e.g. 4.0):_
   - Upgrade all Python dependencies in
     `requirements` to latest upstream versions so they can burn in (use
     `pip list --outdated`).
+  - Upgrade all puppet dependencies in `puppet/deps.yaml`
+  - Upgrade all puppet-installed dependencies (e.g. Smokescreen, go,
+    etc) in `puppet/zulip/manifests/common.pp`
   - [Upload strings to
-    Transifex](../translating/internationalization.html#translation-process)
+    Transifex](../translating/internationalization.md#translation-process)
     using `push-translations`. Post a Transifex
     [Announcement](https://www.transifex.com/zulip/zulip/announcements/)
     notifying translators that we're approaching a release.
@@ -29,17 +32,17 @@ preparing a new release.
 ### Final release preparation
 
 - Update the Paper blog post draft with any new commits.
-- _Except minor releases:_ Download updated translation strings from
+- _Major releases only:_ Download updated translation strings from
   Transifex and commit them.
-- Use `build-release-tarball` to generate a release tarball.
+- Use `build-release-tarball` to generate a pre-release tarball.
 - Test the new tarball extensively, both new install and upgrade from last
-  release, on Ubuntu 20.04.
+  release, on Ubuntu 20.04 or 22.04.
 - Repeat until release is ready.
 - Send around the Paper blog post draft for review.
-- Move the blog post draft to Ghost. (For a draft in Dropbox Paper,
-  use "··· > Export > Markdown" to get a pretty good markup
-  conversion.) Proofread the post, especially for formatting. Tag
-  the post with "Release announcements" in Ghost.
+- Move the blog post draft to Ghost:
+  - Use "··· > Export > Markdown" to get a pretty good markdown conversion, then insert that as a Markdown block in Ghost.
+  - Proofread, especially for formatting.
+  - Tag the post with "Release announcements" _first_, then any other tags (e.g. "Security").
 
 ### Executing the release
 
@@ -47,41 +50,40 @@ preparing a new release.
   release branch (for minor releases):
   - Copy the Markdown release notes for the release into
     `docs/overview/changelog.md`.
-  - _Except minor releases:_ Adjust the `changelog.md` heading to have
+  - Verify the changelog passes lint, and has the right release date.
+  - _Major releases only:_ Adjust the `changelog.md` heading to have
     the stable release series boilerplate.
   - Update `ZULIP_VERSION` and `LATEST_RELEASE_VERSION` in `version.py`.
-  - _Except minor releases:_ Update `API_FEATURE_LEVEL` to a feature
+  - _Major releases only:_ Update `API_FEATURE_LEVEL` to a feature
     level for the final release, and document a reserved range.
-- Tag that commit with an unsigned Git tag named the release number.
-- Use `build-release-tarball` to generate a final release tarball.
-- Push the tag and release commit.
-- Upload the tarball using `tools/upload-release`.
-- Post the release by [editing the latest tag on
-  GitHub](https://github.com/zulip/zulip/tags); use the text from
-  `changelog.md` for the release notes.
-
-  **Note:** This will trigger the [GitHub action](https://github.com/zulip/zulip/blob/main/tools/oneclickapps/README.md)
-  for updating DigitalOcean one-click app image. The action uses the latest release
-  tarball published on `download.zulip.com` for creating the image.
-
-- Update the [Docker image](https://github.com/zulip/docker-zulip) and
-  do a release of that.
-- Update the image of DigitalOcean one click app using
-  [Fabric](https://github.com/zulip/marketplace-partners) and publish
-  it to DO marketplace.
+- Run `tools/release` with the release version.
+- Update the [Docker image](https://github.com/zulip/docker-zulip):
+  - Commit the Docker updates:
+    - Update `ZULIP_GIT_REF` in `Dockerfile`
+    - Update `README.md`
+    - Update the image in `docker-compose.yml`, as well as the `ZULIP_GIT_REF`
+  - Commit the Helm updates:
+    - Add a new entry to `kubernetes/chart/zulip/CHANGELOG.md`
+    - Update the `appVersion` in `kubernetes/chart/zulip/Chart.yaml`
+    - Update the `tag` in `kubernetes/chart/zulip/values.yaml`
+    - Update the docs by running `helm-docs`
+    - Update the `image` in `kubernetes/manual/zulip-rc.yml`
+  - Build the image: `docker build . -t zulip/docker-zulip:4.11-0 --no-cache`
+  - Also tag it with `latest`: `docker build . -t zulip/docker-zulip:latest`
+  - Push those tags: `docker push zulip/docker-zulip:4.11-0; docker push zulip/docker-zulip:latest`
+  - Push the commits to `main`.
 - Publish the blog post; check the box to "send by email."
-- Email [zulip-announce](https://groups.google.com/g/zulip-announce),
-  post to [#announce](https://chat.zulip.org/#narrow/stream/1-announce),
-  and [send a tweet](https://twitter.com/zulip).
+- Announce the release, pointing to the blog post, via:
+  - Email to [zulip-announce](https://groups.google.com/g/zulip-announce)
+  - Message in [#announce](https://chat.zulip.org/#narrow/stream/1-announce)
+  - Tweet from [@zulip](https://twitter.com/zulip).
 
 ### Post-release
 
-- Update the CI targets in `.github/workflows/production-suite.yml` to
-  include upgrades from the most recent point releases from the last
-  two series -- e.g after releasing 4.8, both `main` and `4.x`
-  should test upgrades from 3.4 and 4.8, and after releasing 5.0 both
-  `main` and `5.x` should test upgrades from 4.8 and 5.0.
-- Following a major release (e.g. 4.0):
+- The DigitalOcean one-click image will report in an internal channel
+  once it is built, and how to test it. Verify it, then publish it to
+  DigitalOcean marketplace.
+- _Major releases only:_
   - Create a release branch (e.g. `4.x`).
   - On the release branch, update `ZULIP_VERSION` in `version.py` to
     the present release with a `+git` suffix, e.g. `4.0+git`.
@@ -92,8 +94,15 @@ preparing a new release.
     number for future Cloud deployments.
   - Consider removing a few old releases from ReadTheDocs; we keep about
     two years of back-versions.
-- Following a minor release (e.g. 3.2), on the release branch:
-  - Update `ZULIP_VERSION` to the present release with a `+git`
-    suffix, e.g. `3.2+git`.
-  - Update `LATEST_RELEASE_VERSION` with the released version.
-  - Cherry-pick the changelog changes back to `main`.
+  - Update Transifex to add the new `4.x` style release branch
+    resources and archive the previous release branch's resources with
+    the "Translations can't translate this resource" setting.
+  - Add a new CI production upgrade target:
+    - Build a docker image: `cd tools/ci && docker build . -f Dockerfile.prod --build-arg=BASE_IMAGE=zulip/ci:bullseye --build-arg=VERSION=5.0 --tag=zulip/ci:bullseye-5.0 && docker push zulip/ci:bullseye-5.0`
+    - Add a new line to the `production_upgrade` matrix in
+      `.github/workflows/production-suite.yml`.
+- _Minor releases only (e.g. 3.2):_
+  - On the release branch, update `ZULIP_VERSION` to the present
+    release with a `+git` suffix, e.g. `3.2+git`.
+  - On main, update `LATEST_RELEASE_VERSION` with the released
+    version, as well as the changelog changes from the release branch.

@@ -2,12 +2,7 @@
 
 const {strict: assert} = require("assert");
 
-const {
-    mock_esm,
-    set_global,
-    with_function_call_disallowed_rewire,
-    zrequire,
-} = require("../zjsunit/namespace");
+const {mock_esm, set_global, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 const blueslip = require("../zjsunit/zblueslip");
 const {page_params} = require("../zjsunit/zpage_params");
@@ -93,10 +88,10 @@ function convert_recipients(people) {
 }
 
 function test(label, f) {
-    run_test(label, ({override}) => {
+    run_test(label, (helpers) => {
         message_store.clear_for_testing();
         message_user_ids.clear_for_testing();
-        f({override});
+        f(helpers);
     });
 }
 
@@ -110,7 +105,6 @@ test("process_new_message", () => {
         is_me_message: false,
         id: 2067,
     };
-    message_store.set_message_booleans(message);
     message_helper.process_new_message(message);
 
     assert.deepEqual(message_user_ids.user_ids().sort(), [me.user_id, bob.user_id, cindy.user_id]);
@@ -153,7 +147,6 @@ test("process_new_message", () => {
         id: 2068,
     };
 
-    message_store.set_message_booleans(message);
     message_helper.process_new_message(message);
     assert.deepEqual(message.stream, message.display_recipient);
     assert.equal(message.reply_to, "denise@example.com");
@@ -208,7 +201,7 @@ test("message_booleans_parity", () => {
     });
 });
 
-test("errors", () => {
+test("errors", ({disallow_rewire}) => {
     // Test a user that doesn't exist
     let message = {
         type: "private",
@@ -232,9 +225,8 @@ test("errors", () => {
     };
 
     // This should early return and not run pm_conversations.set_partner
-    with_function_call_disallowed_rewire(pm_conversations, "set_partner", () => {
-        pm_conversations.process_message(message);
-    });
+    disallow_rewire(pm_conversations, "set_partner");
+    pm_conversations.process_message(message);
 });
 
 test("reify_message_id", () => {
@@ -307,7 +299,6 @@ test("update_property", () => {
         id: 101,
     };
     for (const message of [message1, message2]) {
-        message_store.set_message_booleans(message);
         message_helper.process_new_message(message);
     }
 

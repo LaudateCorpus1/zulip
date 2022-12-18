@@ -7,7 +7,15 @@ const _ = require("lodash");
 const {mock_esm, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 
-const muted_topics = mock_esm("../../static/js/muted_topics", {
+mock_esm("../../static/js/message_store", {
+    get() {
+        return {
+            stream_id: 556,
+            topic: "general",
+        };
+    },
+});
+const user_topics = mock_esm("../../static/js/user_topics", {
     is_topic_muted() {
         return false;
     },
@@ -38,9 +46,9 @@ function get_list_info(zoomed) {
 }
 
 function test(label, f) {
-    run_test(label, ({override, override_rewire}) => {
+    run_test(label, (helpers) => {
         stream_topic_history.reset();
-        f({override, override_rewire});
+        f(helpers);
     });
 }
 
@@ -50,6 +58,7 @@ test("get_list_info w/real stream_topic_history", ({override}) => {
 
     assert.deepEqual(empty_list_info, {
         items: [],
+        more_topics_have_unread_mention_messages: false,
         more_topics_unreads: 0,
         num_possible_topics: 0,
     });
@@ -77,28 +86,29 @@ test("get_list_info w/real stream_topic_history", ({override}) => {
     list_info = get_list_info();
     assert.equal(list_info.items.length, 5);
     assert.equal(list_info.more_topics_unreads, 0);
+    assert.equal(list_info.more_topics_have_unread_mention_messages, false);
     assert.equal(list_info.num_possible_topics, 7);
 
     assert.deepEqual(list_info.items[0], {
+        contains_unread_mention: false,
         is_active_topic: true,
         is_muted: false,
         is_zero: true,
-        resolved: false,
-        resolved_topic_prefix: "✔ ",
         topic_display_name: "topic 6",
         topic_name: "topic 6",
+        topic_resolved_prefix: "",
         unread: 0,
         url: "#narrow/stream/556-general/topic/topic.206",
     });
 
     assert.deepEqual(list_info.items[1], {
+        contains_unread_mention: false,
         is_active_topic: false,
         is_muted: false,
         is_zero: true,
-        resolved: true,
-        resolved_topic_prefix: "✔ ",
         topic_display_name: "topic 5",
         topic_name: "✔ topic 5",
+        topic_resolved_prefix: "✔ ",
         unread: 0,
         url: "#narrow/stream/556-general/topic/.E2.9C.94.20topic.205",
     });
@@ -110,6 +120,7 @@ test("get_list_info w/real stream_topic_history", ({override}) => {
     list_info = get_list_info(zoomed);
     assert.equal(list_info.items.length, 7);
     assert.equal(list_info.more_topics_unreads, 0);
+    assert.equal(list_info.more_topics_have_unread_mention_messages, false);
     assert.equal(list_info.num_possible_topics, 7);
 
     add_topic_message("After Brooklyn", 1008);
@@ -119,21 +130,47 @@ test("get_list_info w/real stream_topic_history", ({override}) => {
     list_info = get_list_info(zoomed);
     assert.equal(list_info.items.length, 2);
     assert.equal(list_info.more_topics_unreads, 0);
+    assert.equal(list_info.more_topics_have_unread_mention_messages, false);
     assert.equal(list_info.num_possible_topics, 2);
 });
 
-test("get_list_info unreads", ({override, override_rewire}) => {
+test("get_list_info unreads", ({override}) => {
     let list_info;
 
-    override_rewire(stream_topic_history, "get_recent_topic_names", () =>
-        _.range(15).map((i) => "topic " + i),
-    );
+    let message_id = 0;
+    for (let i = 14; i >= 0; i -= 1) {
+        stream_topic_history.add_message({
+            stream_id: general.stream_id,
+            message_id: (message_id += 1),
+            topic_name: `topic ${i}`,
+        });
+    }
 
-    const unread_cnt = new Map();
-    override_rewire(unread, "num_unread_for_topic", (stream_id, topic_name) => {
-        assert.equal(stream_id, general.stream_id);
-        return unread_cnt.get(topic_name) || 0;
-    });
+    function add_unreads(topic, count) {
+        unread.process_loaded_messages(
+            Array.from({length: count}, () => ({
+                id: (message_id += 1),
+                stream_id: general.stream_id,
+                topic,
+                type: "stream",
+                unread: true,
+            })),
+        );
+    }
+
+    function add_unreads_with_mention(topic, count) {
+        unread.process_loaded_messages(
+            Array.from({length: count}, () => ({
+                id: (message_id += 1),
+                stream_id: general.stream_id,
+                topic,
+                type: "stream",
+                unread: true,
+                mentioned: true,
+                mentioned_me_directly: true,
+            })),
+        );
+    }
 
     /*
         We have 15 topics, but we only show up
@@ -144,12 +181,21 @@ test("get_list_info unreads", ({override, override_rewire}) => {
         So first we'll get 7 topics, where 2 are
         unread.
     */
-    unread_cnt.set("topic 8", 8);
-    unread_cnt.set("topic 9", 9);
+    add_unreads("topic 8", 8);
+    add_unreads("topic 9", 9);
+
+    /*
+        We added 9 unread messages in 'topic 9',
+        but now we would add a unread message
+        with `mention` for user, to test
+        `more_topics_have_unread_mention_messages`.
+    */
+    add_unreads_with_mention("topic 9", 1);
 
     list_info = get_list_info();
     assert.equal(list_info.items.length, 7);
     assert.equal(list_info.more_topics_unreads, 0);
+    assert.equal(list_info.more_topics_have_unread_mention_messages, false);
     assert.equal(list_info.num_possible_topics, 15);
 
     assert.deepEqual(
@@ -157,12 +203,13 @@ test("get_list_info unreads", ({override, override_rewire}) => {
         ["topic 0", "topic 1", "topic 2", "topic 3", "topic 4", "topic 8", "topic 9"],
     );
 
-    unread_cnt.set("topic 6", 6);
-    unread_cnt.set("topic 7", 7);
+    add_unreads("topic 6", 6);
+    add_unreads("topic 7", 7);
 
     list_info = get_list_info();
     assert.equal(list_info.items.length, 8);
-    assert.equal(list_info.more_topics_unreads, 9);
+    assert.equal(list_info.more_topics_unreads, 10);
+    assert.equal(list_info.more_topics_have_unread_mention_messages, true);
     assert.equal(list_info.num_possible_topics, 15);
 
     assert.deepEqual(
@@ -170,18 +217,19 @@ test("get_list_info unreads", ({override, override_rewire}) => {
         ["topic 0", "topic 1", "topic 2", "topic 3", "topic 4", "topic 6", "topic 7", "topic 8"],
     );
 
-    unread_cnt.set("topic 4", 4);
-    unread_cnt.set("topic 5", 5);
-    unread_cnt.set("topic 13", 13);
+    add_unreads("topic 4", 4);
+    add_unreads("topic 5", 5);
+    add_unreads("topic 13", 13);
 
-    override(muted_topics, "is_topic_muted", (stream_id, topic_name) => {
+    override(user_topics, "is_topic_muted", (stream_id, topic_name) => {
         assert.equal(stream_id, general.stream_id);
         return topic_name === "topic 4";
     });
 
     list_info = get_list_info();
     assert.equal(list_info.items.length, 8);
-    assert.equal(list_info.more_topics_unreads, 9 + 13);
+    assert.equal(list_info.more_topics_unreads, 10 + 13);
+    assert.equal(list_info.more_topics_have_unread_mention_messages, true);
     assert.equal(list_info.num_possible_topics, 15);
 
     assert.deepEqual(

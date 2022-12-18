@@ -1,12 +1,10 @@
-import _ from "lodash";
-
 import * as blueslip from "./blueslip";
 import {FetchStatus} from "./fetch_status";
 import {Filter} from "./filter";
-import * as muted_topics from "./muted_topics";
 import * as muted_users from "./muted_users";
 import {page_params} from "./page_params";
 import * as unread from "./unread";
+import * as user_topics from "./user_topics";
 import * as util from "./util";
 
 export class MessageListData {
@@ -40,6 +38,21 @@ export class MessageListData {
 
     last() {
         return this._items.at(-1);
+    }
+
+    ids_greater_or_equal_than(my_id) {
+        const result = [];
+
+        for (let i = this._items.length - 1; i >= 0; i -= 1) {
+            const message_id = this._items[i].id;
+            if (message_id >= my_id) {
+                result.push(message_id);
+            } else {
+                continue;
+            }
+        }
+
+        return result;
     }
 
     select_idx() {
@@ -175,7 +188,7 @@ export class MessageListData {
                 return true;
             }
             return (
-                !muted_topics.is_topic_muted(message.stream_id, message.topic) || message.mentioned
+                !user_topics.is_topic_muted(message.stream_id, message.topic) || message.mentioned
             );
         });
     }
@@ -223,6 +236,10 @@ export class MessageListData {
 
         // if no unread, return the bottom message
         return this.last().id;
+    }
+
+    has_unread_messages() {
+        return this._items.some((message) => unread.message_unread(message));
     }
 
     add_messages(messages) {
@@ -521,8 +538,16 @@ export class MessageListData {
         return false;
     }
 
+    get_messages_sent_by_user(user_id) {
+        const msgs = this._items.filter((msg) => msg.sender_id === user_id);
+        if (msgs.length === 0) {
+            return [];
+        }
+        return msgs;
+    }
+
     get_last_message_sent_by_me() {
-        const msg_index = _.findLastIndex(this._items, {sender_id: page_params.user_id});
+        const msg_index = this._items.findLastIndex((msg) => msg.sender_id === page_params.user_id);
         if (msg_index === -1) {
             return undefined;
         }

@@ -12,7 +12,13 @@ from django.views.generic import TemplateView
 
 from zerver.context_processors import zulip_default_context
 from zerver.decorator import add_google_analytics_context
-from zerver.lib.integrations import CATEGORIES, INTEGRATIONS, HubotIntegration, WebhookIntegration
+from zerver.lib.integrations import (
+    CATEGORIES,
+    INTEGRATIONS,
+    META_CATEGORY,
+    HubotIntegration,
+    WebhookIntegration,
+)
 from zerver.lib.request import REQ, RequestNotes, has_request_variables
 from zerver.lib.subdomains import get_subdomain
 from zerver.lib.templates import render_markdown_path
@@ -104,6 +110,15 @@ class MarkdownDirectoryView(ApiURLView):
                 endpoint_method=None,
             )
 
+        if path == "/zerver/api/api-doc-template.md":
+            # This template shouldn't be accessed directly.
+            return DocumentationArticle(
+                article_path=self.path_template % ("missing",),
+                article_http_status=404,
+                endpoint_path=None,
+                endpoint_method=None,
+            )
+
         # The following is a somewhat hacky approach to extract titles from articles.
         # Hack: `context["article"] has a leading `/`, so we use + to add directories.
         article_path = os.path.join(settings.DEPLOY_ROOT, "templates") + path
@@ -164,7 +179,7 @@ class MarkdownDirectoryView(ApiURLView):
             context["doc_root_title"] = "Help center"
             sidebar_article = self.get_path("include/sidebar_index")
             sidebar_index = sidebar_article.article_path
-            title_base = "Zulip Help Center"
+            title_base = "Zulip help center"
         elif self.path_template == f"{settings.POLICIES_DIRECTORY}/%s.md":
             context["page_is_policy_center"] = True
             context["doc_root"] = "/policies/"
@@ -195,22 +210,24 @@ class MarkdownDirectoryView(ApiURLView):
                 assert endpoint_name is not None
                 assert endpoint_method is not None
                 article_title = get_openapi_summary(endpoint_name, endpoint_method)
-            elif self.path_template == "/zerver/api/%s.md" and "{generate_api_title(" in first_line:
-                api_operation = context["OPEN_GRAPH_URL"].split("/api/")[1]
+            elif (
+                self.path_template == "/zerver/api/%s.md" and "{generate_api_header(" in first_line
+            ):
+                api_operation = context["PAGE_METADATA_URL"].split("/api/")[1]
                 endpoint_name, endpoint_method = get_endpoint_from_operationid(api_operation)
                 article_title = get_openapi_summary(endpoint_name, endpoint_method)
             else:
                 article_title = first_line.lstrip("#").strip()
                 endpoint_name = endpoint_method = None
             if context["not_index_page"]:
-                context["OPEN_GRAPH_TITLE"] = f"{article_title} ({title_base})"
+                context["PAGE_TITLE"] = f"{article_title} | {title_base}"
             else:
-                context["OPEN_GRAPH_TITLE"] = title_base
+                context["PAGE_TITLE"] = title_base
             request_notes = RequestNotes.get_notes(self.request)
             request_notes.placeholder_open_graph_description = (
-                f"REPLACMENT_OPEN_GRAPH_DESCRIPTION_{int(2**24 * random.random())}"
+                f"REPLACEMENT_PAGE_DESCRIPTION_{int(2**24 * random.random())}"
             )
-            context["OPEN_GRAPH_DESCRIPTION"] = request_notes.placeholder_open_graph_description
+            context["PAGE_DESCRIPTION"] = request_notes.placeholder_open_graph_description
 
         context["sidebar_index"] = sidebar_index
         # An "article" might require the api_uri_context to be rendered
@@ -223,7 +240,9 @@ class MarkdownDirectoryView(ApiURLView):
         add_google_analytics_context(context)
         return context
 
-    def get(self, request: HttpRequest, article: str = "") -> HttpResponse:
+    def get(
+        self, request: HttpRequest, *args: object, article: str = "", **kwargs: object
+    ) -> HttpResponse:
         # Hack: It's hard to reinitialize urls.py from tests, and so
         # we want to defer the use of settings.POLICIES_DIRECTORY to
         # runtime.
@@ -232,7 +251,7 @@ class MarkdownDirectoryView(ApiURLView):
 
         documentation_article = self.get_path(article)
         http_status = documentation_article.article_http_status
-        result = super().get(self, article=article)
+        result = super().get(request, article=article)
         if http_status != 200:
             result.status_code = http_status
         return result
@@ -260,17 +279,20 @@ def add_integrations_open_graph_context(context: Dict[str, Any], request: HttpRe
 
     if path_name in INTEGRATIONS:
         integration = INTEGRATIONS[path_name]
-        context["OPEN_GRAPH_TITLE"] = f"Connect {integration.display_name} to Zulip"
-        context["OPEN_GRAPH_DESCRIPTION"] = description
+        context["PAGE_TITLE"] = f"{integration.display_name} | Zulip integrations"
+        context["PAGE_DESCRIPTION"] = description
 
     elif path_name in CATEGORIES:
         category = CATEGORIES[path_name]
-        context["OPEN_GRAPH_TITLE"] = f"Connect your {category} tools to Zulip"
-        context["OPEN_GRAPH_DESCRIPTION"] = description
+        if path_name in META_CATEGORY:
+            context["PAGE_TITLE"] = f"{category} | Zulip integrations"
+        else:
+            context["PAGE_TITLE"] = f"{category} tools | Zulip integrations"
+        context["PAGE_DESCRIPTION"] = description
 
     elif path_name == "integrations":
-        context["OPEN_GRAPH_TITLE"] = "Connect the tools you use to Zulip"
-        context["OPEN_GRAPH_DESCRIPTION"] = description
+        context["PAGE_TITLE"] = "Zulip integrations"
+        context["PAGE_DESCRIPTION"] = description
 
 
 class IntegrationView(ApiURLView):
@@ -303,6 +325,11 @@ def integration_doc(request: HttpRequest, integration_name: str = REQ()) -> Http
     context["recommended_stream_name"] = integration.stream_name
     if isinstance(integration, WebhookIntegration):
         context["integration_url"] = integration.url[3:]
+        if (
+            hasattr(integration.function, "_all_event_types")
+            and integration.function._all_event_types is not None
+        ):
+            context["all_event_types"] = integration.function._all_event_types
     if isinstance(integration, HubotIntegration):
         context["hubot_docs_url"] = integration.hubot_docs_url
 

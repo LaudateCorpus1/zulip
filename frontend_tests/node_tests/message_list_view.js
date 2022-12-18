@@ -6,15 +6,11 @@ const _ = require("lodash");
 
 const {mock_esm, set_global, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
-const {user_settings} = require("../zjsunit/zpage_params");
+const $ = require("../zjsunit/zjquery");
 
 set_global("document", "document-stub");
 
 const noop = () => {};
-
-user_settings.twenty_four_hour_time = false;
-
-mock_esm("../../static/js/message_lists", {home: "stub"});
 
 // timerender calls setInterval when imported
 mock_esm("../../static/js/timerender", {
@@ -25,9 +21,6 @@ mock_esm("../../static/js/timerender", {
         return [{outerHTML: String(time1.getTime()) + " - " + String(time2.getTime())}];
     },
     stringify_time(time) {
-        if (user_settings.twenty_four_hour_time) {
-            return time.toString("HH:mm");
-        }
         return time.toString("h:mm TT");
     },
 });
@@ -42,6 +35,12 @@ mock_esm("../../static/js/rows", {
             },
         };
     },
+});
+
+mock_esm("../../static/js/people", {
+    sender_is_bot: () => false,
+    sender_is_guest: () => false,
+    small_avatar_url: () => "fake/small/avatar/url",
 });
 
 const {Filter} = zrequire("../js/filter");
@@ -67,10 +66,16 @@ test("msg_moved_var", () => {
         message_context = {
             ...message_context,
         };
-        message_context.msg = {
-            last_edit_timestamp: (next_timestamp += 1),
-            ...message,
-        };
+        if ("edit_history" in message) {
+            message_context.msg = {
+                last_edit_timestamp: (next_timestamp += 1),
+                ...message,
+            };
+        } else {
+            message_context.msg = {
+                ...message,
+            };
+        }
         return message_context;
     }
 
@@ -90,50 +95,80 @@ test("msg_moved_var", () => {
     function assert_moved_false(message_container) {
         assert.equal(message_container.moved, false);
     }
+    function assert_moved_undefined(message_container) {
+        assert.equal(message_container.moved, undefined);
+    }
 
     (function test_msg_moved_var() {
         const messages = [
-            // no edits: Not moved.
-            build_message_context(),
-            // stream changed: Move
+            // no edit history: NO LABEL
+            build_message_context({}),
+            // stream changed: MOVED
             build_message_context({
-                edit_history: [{prev_stream: "test_stream", timestamp: 1000, user_id: 1}],
+                edit_history: [{prev_stream: 1, timestamp: 1000, user_id: 1}],
             }),
-            // topic changed: Move
+            // topic changed (not resolved/unresolved): MOVED
             build_message_context({
-                edit_history: [{prev_subject: "test_topic", timestamp: 1000, user_id: 1}],
+                edit_history: [
+                    {prev_topic: "test_topic", topic: "new_topic", timestamp: 1000, user_id: 1},
+                ],
             }),
-            // content edited: Edit
+            // content edited: EDITED
             build_message_context({
                 edit_history: [{prev_content: "test_content", timestamp: 1000, user_id: 1}],
             }),
-            // stream and topic edited: Move
+            // stream and topic edited: MOVED
             build_message_context({
                 edit_history: [
-                    {prev_stream: "test_stream", timestamp: 1000, user_id: 1},
-                    {prev_topic: "test_topic", timestamp: 1000, user_id: 1},
+                    {
+                        prev_stream: 1,
+                        prev_topic: "test_topic",
+                        topic: "new_topic",
+                        timestamp: 1000,
+                        user_id: 1,
+                    },
                 ],
             }),
-            // topic and content changed: Edit
+            // topic and content changed: EDITED
             build_message_context({
                 edit_history: [
-                    {prev_topic: "test_topic", timestamp: 1000, user_id: 1},
-                    {prev_content: "test_content", timestamp: 1001, user_id: 1},
+                    {
+                        prev_topic: "test_topic",
+                        topic: "new_topic",
+                        prev_content: "test_content",
+                        timestamp: 1000,
+                        user_id: 1,
+                    },
                 ],
             }),
-            // stream and content changed: Edit
+            // only topic resolved: NO LABEL
             build_message_context({
                 edit_history: [
-                    {prev_content: "test_content", timestamp: 1000, user_id: 1},
-                    {prev_stream: "test_stream", timestamp: 1001, user_id: 1},
+                    {prev_topic: "test_topic", topic: "✔ test_topic", timestamp: 1000, user_id: 1},
                 ],
             }),
-            // topic, stream, and content changed: Edit
+            // only topic unresolved: NO LABEL
             build_message_context({
                 edit_history: [
-                    {prev_topic: "test_topic", timestamp: 1000, user_id: 1},
-                    {prev_stream: "test_stream", timestamp: 1001, user_id: 1},
+                    {prev_topic: "✔ test_topic", topic: "test_topic", timestamp: 1000, user_id: 1},
+                ],
+            }),
+            // multiple edit history logs, with at least one content edit: EDITED
+            build_message_context({
+                edit_history: [
+                    {prev_stream: 1, timestamp: 1000, user_id: 1},
+                    {prev_topic: "old_topic", topic: "test_topic", timestamp: 1001, user_id: 1},
                     {prev_content: "test_content", timestamp: 1002, user_id: 1},
+                    {prev_topic: "test_topic", topic: "✔ test_topic", timestamp: 1003, user_id: 1},
+                ],
+            }),
+            // multiple edit history logs with no content edit: MOVED
+            build_message_context({
+                edit_history: [
+                    {prev_stream: 1, timestamp: 1000, user_id: 1},
+                    {prev_topic: "old_topic", topic: "test_topic", timestamp: 1001, user_id: 1},
+                    {prev_topic: "test_topic", topic: "✔ test_topic", timestamp: 1002, user_id: 1},
+                    {prev_topic: "✔ test_topic", topic: "test_topic", timestamp: 1003, user_id: 1},
                 ],
             }),
         ];
@@ -148,8 +183,8 @@ test("msg_moved_var", () => {
 
         const result = list._message_groups[0].message_containers;
 
-        // no edits: false
-        assert_moved_false(result[0]);
+        // no edit history: undefined
+        assert_moved_undefined(result[0]);
         // stream changed: true
         assert_moved_true(result[1]);
         // topic changed: true
@@ -160,10 +195,14 @@ test("msg_moved_var", () => {
         assert_moved_true(result[4]);
         // topic and content changed: false
         assert_moved_false(result[5]);
-        // stream and content changed: false
-        assert_moved_false(result[6]);
-        // topic, stream, and content changed: false
-        assert_moved_false(result[7]);
+        // only topic resolved: undefined
+        assert_moved_undefined(result[6]);
+        // only topic unresolved: undefined
+        assert_moved_undefined(result[7]);
+        // multiple edits with content edit: false
+        assert_moved_false(result[8]);
+        // multiple edits without content edit: true
+        assert_moved_true(result[9]);
     })();
 });
 
@@ -183,6 +222,7 @@ test("msg_edited_vars", () => {
         message_context.msg = {
             is_me_message: false,
             last_edit_timestamp: (next_timestamp += 1),
+            edit_history: [{prev_content: "test_content", timestamp: 1000, user_id: 1}],
             ...message,
         };
         return message_context;
@@ -270,11 +310,26 @@ test("muted_message_vars", () => {
     }
 
     (function test_hidden_message_variables() {
+        // We want to have no search results, which apparently works like this.
+        // See https://chat.zulip.org/#narrow/stream/6-frontend/topic/set_find_results.20with.20no.20results/near/1414799
+        const empty_list_stub = $.create("empty-stub", {children: []});
+        $("<message-stub-1>").set_find_results(".user-mention:not(.silent)", empty_list_stub);
+        $("<message-stub2>").set_find_results(".user-mention:not(.silent)", empty_list_stub);
+        $("<message-stub-3>").set_find_results(".user-mention:not(.silent)", empty_list_stub);
         // Make a representative message group of three messages.
         const messages = [
-            build_message_context({sender_id: 10}, {include_sender: true}),
-            build_message_context({mentioned: true, sender_id: 10}, {include_sender: false}),
-            build_message_context({sender_id: 10}, {include_sender: false}),
+            build_message_context(
+                {sender_id: 10, content: "<message-stub-1>"},
+                {include_sender: true},
+            ),
+            build_message_context(
+                {mentioned: true, sender_id: 10, content: "<message-stub2>"},
+                {include_sender: false},
+            ),
+            build_message_context(
+                {sender_id: 10, content: "<message-stub-3>"},
+                {include_sender: false},
+            ),
         ];
         const message_group = build_message_group(messages);
         const list = build_list([message_group]);
@@ -282,6 +337,11 @@ test("muted_message_vars", () => {
 
         // Sender is not muted.
         let result = calculate_variables(list, messages);
+
+        // sanity check on mocked values
+        assert.equal(result[1].sender_is_bot, false);
+        assert.equal(result[1].sender_is_guest, false);
+        assert.equal(result[1].small_avatar_url, "fake/small/avatar/url");
 
         // Check that `is_hidden` is false on all messages, and `include_sender` has not changed.
         assert.equal(result[0].is_hidden, false);
@@ -292,8 +352,8 @@ test("muted_message_vars", () => {
         assert.equal(result[1].include_sender, false);
         assert.equal(result[2].include_sender, false);
 
-        // Additionally test that, `contains_mention` is true on that message has a mention.
-        assert.equal(result[1].contains_mention, true);
+        // Additionally test that the message with a mention is marked as such.
+        assert.equal(result[1].mention_classname, "group_mention");
 
         // Now, mute the sender.
         muted_users.add_muted_user(10);
@@ -308,8 +368,9 @@ test("muted_message_vars", () => {
         assert.equal(result[1].include_sender, false);
         assert.equal(result[2].include_sender, false);
 
-        // Additionally test that, `contains_mention` is false even on that message which has a mention.
-        assert.equal(result[1].contains_mention, false);
+        // Additionally test that, both there is no mention classname even on that message
+        // which has a mention, since we don't want to display muted mentions so visibly.
+        assert.equal(result[1].mention_classname, null);
 
         // Now, reveal the hidden messages.
         let is_revealed = true;
@@ -324,8 +385,8 @@ test("muted_message_vars", () => {
         assert.equal(result[1].include_sender, true);
         assert.equal(result[2].include_sender, true);
 
-        // Additionally test that, `contains_mention` is true on that message which has a mention.
-        assert.equal(result[1].contains_mention, true);
+        // Additionally test that the message with a mention is marked as such.
+        assert.equal(result[1].mention_classname, "group_mention");
 
         // Now test rehiding muted user's message
         is_revealed = false;
@@ -340,14 +401,15 @@ test("muted_message_vars", () => {
         assert.equal(result[1].include_sender, false);
         assert.equal(result[2].include_sender, false);
 
-        // Additionally test that, `contains_mention` is false on that message which has a mention.
-        assert.equal(result[1].contains_mention, false);
+        // Additionally test that, both there is no mention classname even on that message
+        // which has a mention, since we don't want to display hidden mentions so visibly.
+        assert.equal(result[1].mention_classname, null);
     })();
 });
 
 test("merge_message_groups", () => {
     // MessageListView has lots of DOM code, so we are going to test the message
-    // group mearging logic on its own.
+    // group merging logic on its own.
 
     function build_message_context(message = {}, message_context = {}) {
         message_context = {
@@ -359,7 +421,7 @@ test("merge_message_groups", () => {
             status_message: false,
             type: "stream",
             stream: "Test stream 1",
-            topic: "Test subject 1",
+            topic: "Test topic 1",
             sender_email: "test@example.com",
             timestamp: (next_timestamp += 1),
             ...message,
@@ -375,13 +437,19 @@ test("merge_message_groups", () => {
     }
 
     function build_list(message_groups) {
-        const list = new MessageListView(undefined, undefined, true);
-        list._message_groups = message_groups;
-        list.list = {
-            unsubscribed_bookend_content() {},
-            subscribed_bookend_content() {},
-        };
-        return list;
+        const table_name = "zfilt";
+        const filter = new Filter([{operator: "stream", operand: "foo"}]);
+
+        const list = new message_list.MessageList({
+            table_name,
+            filter,
+        });
+
+        const view = new MessageListView(list, table_name, true);
+        view._message_groups = message_groups;
+        view.list.unsubscribed_bookend_content = () => {};
+        view.list.subscribed_bookend_content = () => {};
+        return view;
     }
 
     function extract_message_ids(lst) {
@@ -420,7 +488,7 @@ test("merge_message_groups", () => {
         assert.deepEqual(result.rerender_messages_next_same_sender, []);
     })();
 
-    (function test_append_message_same_subject() {
+    (function test_append_message_same_topic() {
         const message1 = build_message_context();
         const message_group1 = build_message_group([message1]);
 
@@ -440,11 +508,11 @@ test("merge_message_groups", () => {
         assert_message_list_equal(result.rerender_messages_next_same_sender, [message1]);
     })();
 
-    (function test_append_message_different_subject() {
+    (function test_append_message_different_topic() {
         const message1 = build_message_context();
         const message_group1 = build_message_group([message1]);
 
-        const message2 = build_message_context({topic: "Test subject 2"});
+        const message2 = build_message_context({topic: "Test topic 2"});
         const message_group2 = build_message_group([message2]);
 
         const list = build_list([message_group1]);
@@ -459,11 +527,11 @@ test("merge_message_groups", () => {
         assert.deepEqual(result.rerender_messages_next_same_sender, []);
     })();
 
-    (function test_append_message_different_subject_and_days() {
+    (function test_append_message_different_topic_and_days() {
         const message1 = build_message_context({timestamp: 1000});
         const message_group1 = build_message_group([message1]);
 
-        const message2 = build_message_context({topic: "Test subject 2", timestamp: 900000});
+        const message2 = build_message_context({topic: "Test topic 2", timestamp: 900000});
         const message_group2 = build_message_group([message2]);
 
         const list = build_list([message_group1]);
@@ -516,7 +584,7 @@ test("merge_message_groups", () => {
         assert.deepEqual(result.rerender_messages_next_same_sender, []);
     })();
 
-    (function test_append_message_same_subject_me_message() {
+    (function test_append_message_same_topic_me_message() {
         const message1 = build_message_context();
         const message_group1 = build_message_group([message1]);
 
@@ -537,7 +605,7 @@ test("merge_message_groups", () => {
         assert_message_list_equal(result.rerender_messages_next_same_sender, [message1]);
     })();
 
-    (function test_prepend_message_same_subject() {
+    (function test_prepend_message_same_topic() {
         const message1 = build_message_context();
         const message_group1 = build_message_group([message1]);
 
@@ -559,11 +627,11 @@ test("merge_message_groups", () => {
         assert.deepEqual(result.rerender_messages_next_same_sender, []);
     })();
 
-    (function test_prepend_message_different_subject() {
+    (function test_prepend_message_different_topic() {
         const message1 = build_message_context();
         const message_group1 = build_message_group([message1]);
 
-        const message2 = build_message_context({topic: "Test subject 2"});
+        const message2 = build_message_context({topic: "Test topic 2"});
         const message_group2 = build_message_group([message2]);
 
         const list = build_list([message_group1]);
@@ -577,11 +645,11 @@ test("merge_message_groups", () => {
         assert.deepEqual(result.rerender_messages_next_same_sender, []);
     })();
 
-    (function test_prepend_message_different_subject_and_day() {
+    (function test_prepend_message_different_topic_and_day() {
         const message1 = build_message_context({timestamp: 900000});
         const message_group1 = build_message_group([message1]);
 
-        const message2 = build_message_context({topic: "Test subject 2", timestamp: 1000});
+        const message2 = build_message_context({topic: "Test topic 2", timestamp: 1000});
         const message_group2 = build_message_group([message2]);
 
         const list = build_list([message_group1]);

@@ -5,7 +5,8 @@ notifications, unless you are
 [mentioned](/help/mention-a-user-or-group). Messages from muted streams
 do not generate [alert word](/help/pm-mention-alert-notifications#alert-words) notifications.
 
-Muted streams still appear in the left sidebar, though they are grayed out.
+Muted streams still appear in the left sidebar, but they are grayed out and
+sorted to the bottom of their section.
 
 !!! warn ""
 
@@ -18,7 +19,7 @@ Muted streams still appear in the left sidebar, though they are grayed out.
 
 {!stream-actions.md!}
 
-3. Select **Mute the stream (stream name)**.
+3. Select **Mute stream**.
 
 {end_tabs}
 
@@ -29,7 +30,7 @@ Muted streams still appear in the left sidebar, though they are grayed out.
 
 {!stream-actions.md!}
 
-3. Select the **Unmute the stream (stream name)**.
+3. Select **Unmute stream**.
 
 {end_tabs}
 

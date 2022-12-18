@@ -112,6 +112,13 @@ export function get_bot_owner_user(user) {
     return get_by_user_id(owner_id);
 }
 
+export function can_admin_user(user) {
+    return (
+        (user.is_bot && user.bot_owner_id && user.bot_owner_id === page_params.user_id) ||
+        is_my_user_id(user.user_id)
+    );
+}
+
 export function id_matches_email_operand(user_id, email) {
     const person = get_by_email(email);
 
@@ -221,7 +228,7 @@ export function user_ids_string_to_emails_string(user_ids_string) {
 
 export function user_ids_string_to_ids_array(user_ids_string) {
     const user_ids = user_ids_string.split(",");
-    const ids = user_ids.map((id) => Number(id));
+    const ids = user_ids.map(Number);
     return ids;
 }
 
@@ -255,6 +262,19 @@ export function reply_to_to_user_ids_string(emails_string) {
     return user_ids.join(",");
 }
 
+export function emails_to_full_names_string(emails) {
+    return emails
+        .map((email) => {
+            email = email.trim();
+            const person = get_by_email(email);
+            if (person !== undefined) {
+                return person.full_name;
+            }
+            return email;
+        })
+        .join(", ");
+}
+
 export function get_user_time_preferences(user_id) {
     const user_timezone = get_by_user_id(user_id).timezone;
     if (user_timezone) {
@@ -274,9 +294,6 @@ export function get_user_time(user_id) {
 
 export function get_user_type(user_id) {
     const user_profile = get_by_user_id(user_id);
-    if (user_profile.is_bot) {
-        return $t({defaultMessage: "Bot"});
-    }
 
     return settings_config.user_role_map.get(user_profile.role);
 }
@@ -306,31 +323,38 @@ export function get_full_names_for_poll_option(user_ids) {
     return get_display_full_names(user_ids).join(", ");
 }
 
+function get_display_full_name(user_id) {
+    const person = get_by_user_id(user_id);
+    if (!person) {
+        blueslip.error("Unknown user id " + user_id);
+        return "?";
+    }
+
+    if (muted_users.is_user_muted(user_id)) {
+        return $t({defaultMessage: "Muted user"});
+    }
+
+    return person.full_name;
+}
+
 export function get_display_full_names(user_ids) {
-    return user_ids.map((user_id) => {
-        const person = get_by_user_id(user_id);
-        if (!person) {
-            blueslip.error("Unknown user id " + user_id);
-            return "?";
-        }
-
-        if (muted_users.is_user_muted(user_id)) {
-            return $t({defaultMessage: "Muted user"});
-        }
-
-        return person.full_name;
-    });
+    return user_ids.map((user_id) => get_display_full_name(user_id));
 }
 
 export function get_full_name(user_id) {
     return people_by_user_id_dict.get(user_id).full_name;
 }
 
+function _calc_user_and_other_ids(user_ids_string) {
+    const user_ids = split_to_ints(user_ids_string);
+    const other_ids = user_ids.filter((user_id) => !is_my_user_id(user_id));
+    return {user_ids, other_ids};
+}
+
 export function get_recipients(user_ids_string) {
     // See message_store.get_pm_full_names() for a similar function.
 
-    const user_ids = split_to_ints(user_ids_string);
-    const other_ids = user_ids.filter((user_id) => !is_my_user_id(user_id));
+    const {other_ids} = _calc_user_and_other_ids(user_ids_string);
 
     if (other_ids.length === 0) {
         // private message with oneself
@@ -403,15 +427,19 @@ export function concat_huddle(user_ids, user_id) {
     return sorted_ids.join(",");
 }
 
-export function pm_lookup_key(user_ids_string) {
+export function pm_lookup_key_from_user_ids(user_ids) {
     /*
         The server will sometimes include our own user id
         in keys for PMs, but we only want our user id if
         we sent a message to ourself.
     */
-    let user_ids = split_to_ints(user_ids_string);
     user_ids = sorted_other_user_ids(user_ids);
     return user_ids.join(",");
+}
+
+export function pm_lookup_key(user_ids_string) {
+    const user_ids = split_to_ints(user_ids_string);
+    return pm_lookup_key_from_user_ids(user_ids);
 }
 
 export function all_user_ids_in_pm(message) {
@@ -499,8 +527,8 @@ export function pm_with_url(message) {
         suffix = "group";
     } else {
         const person = get_by_user_id(user_ids[0]);
-        if (person && person.email) {
-            suffix = person.email.split("@")[0].toLowerCase();
+        if (person && person.full_name) {
+            suffix = person.full_name.replace(/[ "%/<>`\p{C}]+/gu, "-");
         } else {
             blueslip.error("Unknown people in message");
             suffix = "unk";
@@ -574,7 +602,8 @@ export function emails_to_slug(emails_string) {
     const emails = emails_string.split(",");
 
     if (emails.length === 1) {
-        slug += emails[0].split("@")[0].toLowerCase();
+        const name = get_by_email(emails[0]).full_name;
+        slug += name.replace(/[ "%/<>`\p{C}]+/gu, "-");
     } else {
         slug += "group";
     }
@@ -1067,44 +1096,6 @@ export function get_user_id_from_name(full_name) {
     return person.user_id;
 }
 
-function people_cmp(person1, person2) {
-    const name_cmp = util.strcmp(person1.full_name, person2.full_name);
-    if (name_cmp < 0) {
-        return -1;
-    } else if (name_cmp > 0) {
-        return 1;
-    }
-    return util.strcmp(person1.email, person2.email);
-}
-
-export function get_people_for_stream_create() {
-    /*
-        If you are thinking of reusing this function,
-        a better option in most cases is to just
-        call `get_realm_users()` and then filter out
-        the "me" user yourself as part of any other
-        filtering that you are doing.
-
-        In particular, this function does a sort
-        that is kinda expensive and may not apply
-        to your use case.
-    */
-    const people_minus_you = [];
-    for (const person of active_user_dict.values()) {
-        if (!is_my_user_id(person.user_id)) {
-            people_minus_you.push({
-                email: get_visible_email(person),
-                show_email: settings_data.show_email(),
-                user_id: person.user_id,
-                full_name: person.full_name,
-                checked: false,
-                disabled: false,
-            });
-        }
-    }
-    return people_minus_you.sort(people_cmp);
-}
-
 export function track_duplicate_full_name(full_name, user_id, to_remove) {
     let ids;
     if (duplicate_full_name_data.has(full_name)) {
@@ -1391,7 +1382,7 @@ export function is_my_user_id(user_id) {
     return user_id === my_user_id;
 }
 
-function compare_by_name(a, b) {
+export function compare_by_name(a, b) {
     return util.strcmp(a.full_name, b.full_name);
 }
 

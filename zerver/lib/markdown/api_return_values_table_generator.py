@@ -7,7 +7,7 @@ import markdown
 from markdown.extensions import Extension
 from markdown.preprocessors import Preprocessor
 
-from zerver.lib.markdown.preprocessor_priorities import PREPROCESSOR_PRIORITES
+from zerver.lib.markdown.priorities import PREPROCESSOR_PRIORITES
 from zerver.openapi.openapi import check_deprecated_consistency, get_openapi_return_values
 
 from .api_arguments_table_generator import generate_data_type
@@ -156,6 +156,28 @@ class APIReturnValuesTablePreprocessor(Preprocessor):
                     ans += self.render_table(
                         return_values[return_value]["additionalProperties"]["properties"],
                         spacing + 8,
+                    )
+                elif return_values[return_value]["additionalProperties"].get(
+                    "additionalProperties", False
+                ):
+                    data_type = generate_data_type(
+                        return_values[return_value]["additionalProperties"]["additionalProperties"]
+                    )
+                    ans.append(
+                        self.render_desc(
+                            return_values[return_value]["additionalProperties"][
+                                "additionalProperties"
+                            ]["description"],
+                            spacing + 8,
+                            data_type,
+                        )
+                    )
+
+                    ans += self.render_table(
+                        return_values[return_value]["additionalProperties"]["additionalProperties"][
+                            "properties"
+                        ],
+                        spacing + 12,
                     )
             if (
                 "items" in return_values[return_value]

@@ -16,9 +16,12 @@ exports.set_verbose = (value) => {
     verbose = value;
 };
 
-exports.run_test = (label, f, opts) => {
+exports.suite = [];
+
+async function execute_test(label, f, opts) {
     const {sloppy_$} = opts || {};
 
+    /* istanbul ignore if */
     if (verbose) {
         console.info("        test: " + label);
     }
@@ -30,11 +33,14 @@ exports.run_test = (label, f, opts) => {
 
     try {
         namespace._start_template_mocking();
-        namespace.with_overrides(({override, override_rewire}) => {
-            f({override, override_rewire, mock_template: namespace._mock_template});
+        await namespace.with_overrides(async (helpers) => {
+            await f({
+                ...helpers,
+                mock_template: namespace._mock_template,
+            });
         });
         namespace._finish_template_mocking();
-    } catch (error) {
+    } catch (error) /* istanbul ignore next */ {
         console.info("-".repeat(50));
         console.info(`test failed: ${current_file_name} > ${label}`);
         console.info();
@@ -42,4 +48,8 @@ exports.run_test = (label, f, opts) => {
     }
     // defensively reset blueslip after each test.
     zblueslip.reset();
+}
+
+exports.run_test = (label, f, opts) => {
+    exports.suite.push(() => execute_test(label, f, opts));
 };

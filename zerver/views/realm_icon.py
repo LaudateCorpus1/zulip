@@ -1,10 +1,11 @@
 from django.conf import settings
+from django.core.files.uploadedfile import UploadedFile
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect
 from django.utils.translation import gettext as _
 
+from zerver.actions.realm_icon import do_change_icon_source
 from zerver.decorator import require_realm_admin
-from zerver.lib.actions import do_change_icon_source
 from zerver.lib.exceptions import JsonableError
 from zerver.lib.realm_icon import realm_icon_url
 from zerver.lib.response import json_success
@@ -20,6 +21,8 @@ def upload_icon(request: HttpRequest, user_profile: UserProfile) -> HttpResponse
         raise JsonableError(_("You must upload exactly one icon."))
 
     icon_file = list(request.FILES.values())[0]
+    assert isinstance(icon_file, UploadedFile)
+    assert icon_file.size is not None
     if (settings.MAX_ICON_FILE_SIZE_MIB * 1024 * 1024) < icon_file.size:
         raise JsonableError(
             _("Uploaded file is larger than the allowed limit of {} MiB").format(
@@ -35,7 +38,7 @@ def upload_icon(request: HttpRequest, user_profile: UserProfile) -> HttpResponse
     json_result = dict(
         icon_url=icon_url,
     )
-    return json_success(json_result)
+    return json_success(request, data=json_result)
 
 
 @require_realm_admin
@@ -50,7 +53,7 @@ def delete_icon_backend(request: HttpRequest, user_profile: UserProfile) -> Http
     json_result = dict(
         icon_url=gravatar_url,
     )
-    return json_success(json_result)
+    return json_success(request, data=json_result)
 
 
 def get_icon_backend(request: HttpRequest, user_profile: UserProfile) -> HttpResponse:

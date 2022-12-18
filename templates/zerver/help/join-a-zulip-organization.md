@@ -2,7 +2,7 @@
 
 By default, Zulip organizations require an invitation to join.
 
-Organization administrators can also allow anyone to join without an
+Organization owners can also allow anyone to join without an
 invitation, and/or restrict user email addresses to a company domain. See
 [inviting new users](/help/invite-new-users).
 
@@ -12,9 +12,9 @@ invitation, and/or restrict user email addresses to a company domain. See
 
 1. Go to the Zulip URL of the organization.
 
-1. Click **Sign up** at the top of the screen.
+1. Click **Sign up** in the top right corner of the page.
 
-1. If you see a sign up form, invitations are not required! Otherwise, the
+1. If you see a sign-up form, invitations are not required! Otherwise, the
   page will say that you need an invitation to join.
 
 {end_tabs}
@@ -25,7 +25,7 @@ invitation, and/or restrict user email addresses to a company domain. See
 
 1. Go to the Zulip URL of the organization.
 
-1. Click **Sign up** at the top of the screen.
+1. Click **Sign up** in the top right corner of the page.
 
 1. Try to create an account with your desired email address.
 
@@ -53,3 +53,10 @@ link via another method.
   these instructions may not apply. Try going to your company's Zulip URL
   to see if there are instructions there; otherwise contact your manager
   or IT department for company-specific instructions.
+
+
+## Related articles
+
+* [Invite new users](/help/invite-new-users)
+* [Switching between organizations](/help/switching-between-organizations)
+* [Import your settings](/help/import-your-settings)

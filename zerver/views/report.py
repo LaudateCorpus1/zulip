@@ -1,7 +1,7 @@
 # System documented in https://zulip.readthedocs.io/en/latest/subsystems/logging.html
 import logging
 import subprocess
-from typing import Any, Dict, Mapping, Optional, Union
+from typing import Any, Mapping, Optional, Union
 from urllib.parse import SplitResult
 
 from django.conf import settings
@@ -19,7 +19,14 @@ from zerver.lib.response import json_success
 from zerver.lib.storage import static_path
 from zerver.lib.unminify import SourceMap
 from zerver.lib.utils import statsd, statsd_key
-from zerver.lib.validator import check_bool, check_dict, to_non_negative_int
+from zerver.lib.validator import (
+    WildValue,
+    check_bool,
+    check_dict,
+    check_string,
+    to_non_negative_int,
+    to_wild_value,
+)
 from zerver.models import UserProfile
 
 js_source_map: Optional[SourceMap] = None
@@ -70,7 +77,7 @@ def report_send_times(
         statsd.incr("locally_echoed")
     if rendered_content_disparity:
         statsd.incr("render_disparity")
-    return json_success()
+    return json_success(request)
 
 
 @has_request_variables
@@ -89,7 +96,7 @@ def report_narrow_times(
     statsd.timing(f"narrow.initial_core.{base_key}", initial_core)
     statsd.timing(f"narrow.initial_free.{base_key}", initial_free)
     statsd.timing(f"narrow.network.{base_key}", network)
-    return json_success()
+    return json_success(request)
 
 
 @has_request_variables
@@ -106,13 +113,13 @@ def report_unnarrow_times(
     base_key = statsd_key(realm.string_id, clean_periods=True)
     statsd.timing(f"unnarrow.initial_core.{base_key}", initial_core)
     statsd.timing(f"unnarrow.initial_free.{base_key}", initial_free)
-    return json_success()
+    return json_success(request)
 
 
 @has_request_variables
 def report_error(
     request: HttpRequest,
-    user_profile: UserProfile,
+    maybe_user_profile: Union[AnonymousUser, UserProfile],
     message: str = REQ(),
     stacktrace: str = REQ(),
     ui_message: bool = REQ(json_validator=check_bool),
@@ -124,7 +131,7 @@ def report_error(
     """Accepts an error report and stores in a queue for processing.  The
     actual error reports are later handled by do_report_error"""
     if not settings.BROWSER_ERROR_REPORTING:
-        return json_success()
+        return json_success(request)
     more_info = dict(more_info)
 
     js_source_map = get_js_source_map()
@@ -148,9 +155,9 @@ def report_error(
     if more_info.get("draft_content"):
         more_info["draft_content"] = privacy_clean_markdown(more_info["draft_content"])
 
-    if user_profile.is_authenticated:
-        email = user_profile.delivery_email
-        full_name = user_profile.full_name
+    if maybe_user_profile.is_authenticated:
+        email = maybe_user_profile.delivery_email
+        full_name = maybe_user_profile.full_name
     else:
         email = "unauthenticated@example.com"
         full_name = "Anonymous User"
@@ -177,17 +184,18 @@ def report_error(
         ),
     )
 
-    return json_success()
+    return json_success(request)
 
 
 @csrf_exempt
 @require_POST
 @has_request_variables
 def report_csp_violations(
-    request: HttpRequest, csp_report: Dict[str, Any] = REQ(argument_type="body")
+    request: HttpRequest,
+    csp_report: WildValue = REQ(argument_type="body", converter=to_wild_value),
 ) -> HttpResponse:
     def get_attr(csp_report_attr: str) -> str:
-        return csp_report.get(csp_report_attr, "")
+        return csp_report.get(csp_report_attr, "").tame(check_string)
 
     logging.warning(
         "CSP violation in document('%s'). "
@@ -206,4 +214,4 @@ def report_csp_violations(
         get_attr("script-sample"),
     )
 
-    return json_success()
+    return json_success(request)

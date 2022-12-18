@@ -3,14 +3,14 @@
 ## What this covers
 
 This page documents how views work in Zulip. You may want to read the
-[new feature tutorial](../tutorials/new-feature-tutorial.md)
+[new feature tutorial](new-feature-tutorial.md)
 and treat this as a reference.
 
 If you have experience with Django, much of this will be familiar, but
 you may want to read about how REST requests are dispatched, and how
 request authentication works.
 
-This document supplements the [new feature tutorial](../tutorials/new-feature-tutorial.md)
+This document supplements the [new feature tutorial](new-feature-tutorial.md)
 and the [testing](../testing/testing.md)
 documentation.
 
@@ -37,7 +37,7 @@ integrations).
 The format of the URL patterns in Django is [documented
 here](https://docs.djangoproject.com/en/3.2/topics/http/urls/), and
 the Zulip specific details for these are discussed in detail in the
-[life of a request doc](life-of-a-request.html#options).
+[life of a request doc](life-of-a-request.md#options).
 
 We have two Zulip-specific conventions we use for internationalization and for
 our REST API, respectively.
@@ -102,7 +102,7 @@ Templates for the main website are found in
 
 ## Writing API REST endpoints
 
-These are code-parseable views that take x-www-form-urlencoded or JSON
+These are code-parsable views that take x-www-form-urlencoded or JSON
 request bodies, and return JSON-string responses. Almost all Zulip
 view code is in the implementations of API REST endpoints.
 
@@ -135,7 +135,7 @@ one of several bad outcomes:
 - Every view function comes with another function that does the
   validation that has the problems from the last bullet point.
 
-In Zulip, we solve this problem with a the special decorator called
+In Zulip, we solve this problem with a special decorator called
 `has_request_variables` which allows a developer to declare the
 arguments a view function takes and validate their types all within
 the `def` line of the function. We like this framework because we
@@ -242,7 +242,7 @@ change the server more than once or cause unwanted side effects.
 ### Making changes to the database
 
 If the view does any modification to the database, that change is done
-in a helper function in `zerver/lib/actions.py`. Those functions are
+in a helper function in `zerver/actions/*.py`. Those functions are
 responsible for doing a complete update to the state of the server,
 which often entails both updating the database and sending any events
 to notify clients about the state change. When possible, we prefer to
@@ -275,7 +275,7 @@ def update_realm(
 
 `realm.save()` actually saves the changes to the realm to the
 database, and `send_event` sends the event to active clients belonging
-to the provided list of users (in this case, all altive users in the
+to the provided list of users (in this case, all active users in the
 Zulip realm).
 
 ### Calling from the web application

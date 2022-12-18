@@ -2,14 +2,17 @@
 
 const {strict: assert} = require("assert");
 
-const {mock_esm, with_field, zrequire} = require("../zjsunit/namespace");
+const {parseOneAddress} = require("email-addresses");
+
+const {mock_esm, with_overrides, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
+const blueslip = require("../zjsunit/zblueslip");
 const $ = require("../zjsunit/zjquery");
 const {page_params} = require("../zjsunit/zpage_params");
 
-const message_edit = mock_esm("../../static/js/message_edit");
 const message_store = mock_esm("../../static/js/message_store");
 
+const resolved_topic = zrequire("../shared/js/resolved_topic");
 const stream_data = zrequire("stream_data");
 const people = zrequire("people");
 const {Filter} = zrequire("../js/filter");
@@ -61,9 +64,9 @@ function make_sub(name, stream_id) {
 }
 
 function test(label, f) {
-    run_test(label, ({override, override_rewire}) => {
+    run_test(label, (helpers) => {
         stream_data.clear_subscriptions();
-        f({override, override_rewire});
+        f(helpers);
     });
 }
 
@@ -87,6 +90,7 @@ test("basics", () => {
 
     assert.ok(!filter.is_search());
     assert.ok(!filter.can_mark_messages_read());
+    assert.ok(filter.supports_collapsing_recipients());
     assert.ok(!filter.contains_only_private_messages());
     assert.ok(!filter.allow_use_first_unread_when_narrowing());
     assert.ok(filter.includes_full_stream_history());
@@ -102,9 +106,27 @@ test("basics", () => {
 
     assert.ok(filter.is_search());
     assert.ok(!filter.can_mark_messages_read());
+    assert.ok(!filter.supports_collapsing_recipients());
     assert.ok(!filter.contains_only_private_messages());
     assert.ok(!filter.allow_use_first_unread_when_narrowing());
     assert.ok(!filter.can_apply_locally());
+    assert.ok(!filter.is_personal_filter());
+    assert.ok(filter.can_bucket_by("stream"));
+    assert.ok(filter.can_bucket_by("stream", "topic"));
+
+    operators = [
+        {operator: "stream", operand: "foo"},
+        {operator: "topic", operand: "bar"},
+        {operator: "near", operand: 17},
+    ];
+    filter = new Filter(operators);
+
+    assert.ok(!filter.is_search());
+    assert.ok(!filter.can_mark_messages_read());
+    assert.ok(filter.supports_collapsing_recipients());
+    assert.ok(!filter.contains_only_private_messages());
+    assert.ok(!filter.allow_use_first_unread_when_narrowing());
+    assert.ok(filter.can_apply_locally());
     assert.ok(!filter.is_personal_filter());
     assert.ok(filter.can_bucket_by("stream"));
     assert.ok(filter.can_bucket_by("stream", "topic"));
@@ -117,6 +139,7 @@ test("basics", () => {
     assert.ok(!filter.contains_only_private_messages());
     assert.ok(!filter.has_operator("stream"));
     assert.ok(!filter.can_mark_messages_read());
+    assert.ok(filter.supports_collapsing_recipients());
     assert.ok(!filter.is_personal_filter());
 
     // Negated searches are just like positive searches for our purposes, since
@@ -128,6 +151,7 @@ test("basics", () => {
     assert.ok(filter.has_operator("search"));
     assert.ok(!filter.can_apply_locally());
     assert.ok(!filter.can_mark_messages_read());
+    assert.ok(!filter.supports_collapsing_recipients());
     assert.ok(!filter.is_personal_filter());
 
     // Similar logic applies to negated "has" searches.
@@ -138,6 +162,7 @@ test("basics", () => {
     assert.ok(!filter.can_apply_locally(true));
     assert.ok(!filter.includes_full_stream_history());
     assert.ok(!filter.can_mark_messages_read());
+    assert.ok(!filter.supports_collapsing_recipients());
     assert.ok(!filter.is_personal_filter());
 
     operators = [{operator: "streams", operand: "public", negated: true}];
@@ -145,6 +170,7 @@ test("basics", () => {
     assert.ok(!filter.contains_only_private_messages());
     assert.ok(!filter.has_operator("streams"));
     assert.ok(!filter.can_mark_messages_read());
+    assert.ok(filter.supports_collapsing_recipients());
     assert.ok(filter.has_negated_operand("streams", "public"));
     assert.ok(!filter.can_apply_locally());
     assert.ok(!filter.is_personal_filter());
@@ -154,6 +180,7 @@ test("basics", () => {
     assert.ok(!filter.contains_only_private_messages());
     assert.ok(filter.has_operator("streams"));
     assert.ok(!filter.can_mark_messages_read());
+    assert.ok(filter.supports_collapsing_recipients());
     assert.ok(!filter.has_negated_operand("streams", "public"));
     assert.ok(!filter.can_apply_locally());
     assert.ok(filter.includes_full_stream_history());
@@ -163,6 +190,7 @@ test("basics", () => {
     filter = new Filter(operators);
     assert.ok(filter.contains_only_private_messages());
     assert.ok(filter.can_mark_messages_read());
+    assert.ok(filter.supports_collapsing_recipients());
     assert.ok(!filter.has_operator("search"));
     assert.ok(filter.can_apply_locally());
     assert.ok(!filter.is_personal_filter());
@@ -171,6 +199,7 @@ test("basics", () => {
     filter = new Filter(operators);
     assert.ok(!filter.contains_only_private_messages());
     assert.ok(filter.can_mark_messages_read());
+    assert.ok(!filter.supports_collapsing_recipients());
     assert.ok(!filter.has_operator("search"));
     assert.ok(filter.can_apply_locally());
     assert.ok(filter.is_personal_filter());
@@ -179,6 +208,7 @@ test("basics", () => {
     filter = new Filter(operators);
     assert.ok(!filter.contains_only_private_messages());
     assert.ok(!filter.can_mark_messages_read());
+    assert.ok(!filter.supports_collapsing_recipients());
     assert.ok(!filter.has_operator("search"));
     assert.ok(filter.can_apply_locally());
     assert.ok(filter.is_personal_filter());
@@ -187,6 +217,8 @@ test("basics", () => {
     filter = new Filter(operators);
     assert.ok(filter.is_non_huddle_pm());
     assert.ok(filter.contains_only_private_messages());
+    assert.ok(filter.can_mark_messages_read());
+    assert.ok(filter.supports_collapsing_recipients());
     assert.ok(!filter.has_operator("search"));
     assert.ok(filter.can_apply_locally());
     assert.ok(!filter.is_personal_filter());
@@ -195,20 +227,49 @@ test("basics", () => {
     filter = new Filter(operators);
     assert.ok(!filter.is_non_huddle_pm());
     assert.ok(filter.contains_only_private_messages());
+    assert.ok(filter.can_mark_messages_read());
+    assert.ok(filter.supports_collapsing_recipients());
+    assert.ok(filter.can_apply_locally());
+    assert.ok(!filter.is_personal_filter());
 
     operators = [{operator: "group-pm-with", operand: "joe@example.com"}];
     filter = new Filter(operators);
     assert.ok(!filter.is_non_huddle_pm());
     assert.ok(filter.contains_only_private_messages());
     assert.ok(!filter.has_operator("search"));
+    assert.ok(!filter.can_mark_messages_read());
+    assert.ok(filter.supports_collapsing_recipients());
     assert.ok(filter.can_apply_locally());
+    assert.ok(!filter.is_personal_filter());
 
     operators = [{operator: "is", operand: "resolved"}];
     filter = new Filter(operators);
     assert.ok(!filter.contains_only_private_messages());
-    assert.ok(filter.can_mark_messages_read());
     assert.ok(!filter.has_operator("search"));
+    assert.ok(filter.can_mark_messages_read());
+    assert.ok(filter.supports_collapsing_recipients());
     assert.ok(filter.can_apply_locally());
+    assert.ok(!filter.is_personal_filter());
+
+    // Highly complex query to exercise
+    // filter.supports_collapsing_recipients loop.
+    operators = [
+        {operator: "is", operand: "resolved", negated: true},
+        {operator: "is", operand: "private", negated: true},
+        {operator: "stream", operand: "stream_name", negated: true},
+        {operator: "streams", operand: "web-public", negated: true},
+        {operator: "streams", operand: "public"},
+        {operator: "topic", operand: "patience", negated: true},
+        {operator: "in", operand: "all"},
+    ];
+    filter = new Filter(operators);
+    assert.ok(!filter.contains_only_private_messages());
+    assert.ok(!filter.has_operator("search"));
+    assert.ok(!filter.can_mark_messages_read());
+    assert.ok(filter.supports_collapsing_recipients());
+    // This next check verifies what is probably a bug; see the
+    // comment in the can_apply_locally implementation.
+    assert.ok(!filter.can_apply_locally());
     assert.ok(!filter.is_personal_filter());
 });
 
@@ -475,7 +536,7 @@ test("new_style_operators", () => {
     assert.ok(filter.can_bucket_by("stream"));
 });
 
-test("public_operators", () => {
+test("public_operators", ({override}) => {
     stream_data.clear_subscriptions();
     let operators = [
         {operator: "stream", operand: "some_stream"},
@@ -484,16 +545,14 @@ test("public_operators", () => {
     ];
 
     let filter = new Filter(operators);
-    with_field(page_params, "narrow_stream", undefined, () => {
-        assert_same_operators(filter.public_operators(), operators);
-    });
+    override(page_params, "narrow_stream", undefined);
+    assert_same_operators(filter.public_operators(), operators);
     assert.ok(filter.can_bucket_by("stream"));
 
     operators = [{operator: "stream", operand: "default"}];
     filter = new Filter(operators);
-    with_field(page_params, "narrow_stream", "default", () => {
-        assert_same_operators(filter.public_operators(), []);
-    });
+    override(page_params, "narrow_stream", "default");
+    assert_same_operators(filter.public_operators(), []);
 });
 
 test("redundancies", () => {
@@ -627,7 +686,7 @@ test("predicate_basics", () => {
     assert.ok(predicate({}));
 
     predicate = get_predicate([["is", "resolved"]]);
-    const resolved_topic_name = message_edit.RESOLVED_TOPIC_PREFIX + "foo";
+    const resolved_topic_name = resolved_topic.resolve_name("foo");
     assert.ok(predicate({type: "stream", topic: resolved_topic_name}));
     assert.ok(!predicate({topic: resolved_topic_name}));
     assert.ok(!predicate({type: "stream", topic: "foo"}));
@@ -637,7 +696,8 @@ test("predicate_basics", () => {
     assert.ok(!predicate({stream_id: unknown_stream_id, stream: "unknown"}));
     assert.ok(predicate({type: "private"}));
 
-    with_field(page_params, "narrow_stream", "kiosk", () => {
+    with_overrides(({override}) => {
+        override(page_params, "narrow_stream", "kiosk");
         assert.ok(predicate({stream: "kiosk"}));
     });
 
@@ -848,10 +908,9 @@ function test_mit_exceptions() {
     assert.ok(!predicate({type: "stream", stream: "foo", topic: "bar"}));
 }
 
-test("mit_exceptions", () => {
-    with_field(page_params, "realm_is_zephyr_mirror_realm", true, () => {
-        test_mit_exceptions();
-    });
+test("mit_exceptions", ({override}) => {
+    override(page_params, "realm_is_zephyr_mirror_realm", true);
+    test_mit_exceptions();
 });
 
 test("predicate_edge_cases", () => {
@@ -1419,6 +1478,18 @@ test("navbar_helpers", () => {
     const group_pm_including_missing_person = [
         {operator: "pm-with", operand: "joe@example.com,STEVE@foo.com,sally@doesnotexist.com"},
     ];
+    // not common narrows, but used for browser title updates
+    const is_alerted = [{operator: "is", operand: "alerted"}];
+    const is_unread = [{operator: "is", operand: "unread"}];
+    const stream_topic_near = [
+        {operator: "stream", operand: "foo"},
+        {operator: "topic", operand: "bar"},
+        {operator: "near", operand: "12"},
+    ];
+    const pm_with_near = [
+        {operator: "pm-with", operand: "joe@example.com"},
+        {operator: "near", operand: "12"},
+    ];
 
     const test_cases = [
         {
@@ -1474,7 +1545,7 @@ test("navbar_helpers", () => {
             operator: streams_public,
             is_common_narrow: true,
             icon: undefined,
-            title: "translated: Public stream messages in organization",
+            title: "translated: Messages in all public streams",
             redirect_url_with_search: "/#narrow/streams/public",
         },
         {
@@ -1488,14 +1559,14 @@ test("navbar_helpers", () => {
             operator: non_existent_stream,
             is_common_narrow: true,
             icon: "question-circle-o",
-            title: "translated: Unknown stream",
+            title: "translated: Unknown stream #Elephant",
             redirect_url_with_search: "#",
         },
         {
             operator: non_existent_stream_topic,
             is_common_narrow: true,
             icon: "question-circle-o",
-            title: "translated: Unknown stream",
+            title: "translated: Unknown stream #Elephant",
             redirect_url_with_search: "#",
         },
         {
@@ -1518,7 +1589,7 @@ test("navbar_helpers", () => {
             icon: "envelope",
             title: properly_separated_names([joe.full_name]),
             redirect_url_with_search:
-                "/#narrow/pm-with/" + joe.user_id + "-" + joe.email.split("@")[0],
+                "/#narrow/pm-with/" + joe.user_id + "-" + parseOneAddress(joe.email).local,
         },
         {
             operator: group_pm,
@@ -1539,6 +1610,34 @@ test("navbar_helpers", () => {
             ]),
             redirect_url_with_search: "/#narrow/pm-with/undefined",
         },
+        {
+            operator: is_alerted,
+            is_common_narrow: false,
+            icon: undefined,
+            title: "translated: Alerted messages",
+            redirect_url_with_search: "#",
+        },
+        {
+            operator: is_unread,
+            is_common_narrow: false,
+            icon: undefined,
+            title: "translated: Unread messages",
+            redirect_url_with_search: "#",
+        },
+        {
+            operator: stream_topic_near,
+            is_common_narrow: false,
+            icon: "hashtag",
+            title: "Foo",
+            redirect_url_with_search: "#",
+        },
+        {
+            operator: pm_with_near,
+            is_common_narrow: false,
+            icon: "envelope",
+            title: properly_separated_names([joe.full_name]),
+            redirect_url_with_search: "#",
+        },
     ];
 
     for (const test_case of test_cases) {
@@ -1552,14 +1651,12 @@ test("navbar_helpers", () => {
     const redirect_edge_cases = [
         {
             operator: sender_me,
-            redirect_url_with_search:
-                "/#narrow/sender/" + me.user_id + "-" + me.email.split("@")[0],
+            redirect_url_with_search: "/#narrow/sender/" + me.user_id + "-Me-Myself",
             is_common_narrow: false,
         },
         {
             operator: sender_joe,
-            redirect_url_with_search:
-                "/#narrow/sender/" + joe.user_id + "-" + joe.email.split("@")[0],
+            redirect_url_with_search: "/#narrow/sender/" + joe.user_id + "-joe",
             is_common_narrow: false,
         },
     ];
@@ -1594,7 +1691,7 @@ test("navbar_helpers", () => {
 
     const stream_topic_search_operator_test_case = {
         operator: stream_topic_search_operator,
-        title: "Foo",
+        title: undefined,
     };
 
     test_get_title(stream_topic_search_operator_test_case);
@@ -1610,13 +1707,13 @@ test("navbar_helpers", () => {
     assert.equal(filter.generate_redirect_url(), default_redirect.redirect_url);
 });
 
-test("error_cases", ({override_rewire}) => {
+test("error_cases", () => {
     // This test just gives us 100% line coverage on defensive code that
     // should not be reached unless we break other code.
-    override_rewire(people, "pm_with_user_ids", () => {});
 
     const predicate = get_predicate([["pm-with", "Joe@example.com"]]);
-    assert.ok(!predicate({type: "private"}));
+    blueslip.expect("error", "Empty recipient list in message");
+    assert.ok(!predicate({type: "private", display_recipient: []}));
 });
 
 run_test("is_spectator_compatible", () => {

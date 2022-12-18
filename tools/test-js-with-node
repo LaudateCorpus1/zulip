@@ -44,9 +44,12 @@ def make_set(files: List[str]) -> Set[str]:
 # We do not yet require 100% line coverage for these files:
 EXEMPT_FILES = make_set(
     [
+        "frontend_tests/zjsunit/mdiff.js",
         "static/js/about_zulip.js",
+        "static/js/add_subscribers_pill.js",
         "static/js/admin.js",
         "static/js/alert_popup.ts",
+        "static/js/alert_words_ui.js",
         "static/js/archive.js",
         "static/js/attachments_ui.js",
         "static/js/avatar.js",
@@ -68,8 +71,7 @@ EXEMPT_FILES = make_set(
         "static/js/confirm_dialog.js",
         "static/js/copy_and_paste.js",
         "static/js/csrf.ts",
-        "static/js/css_variables.js",
-        "static/js/dark_theme.ts",
+        "static/js/dark_theme.js",
         "static/js/debug.js",
         "static/js/deprecated_feature_notice.js",
         "static/js/desktop_integration.js",
@@ -81,10 +83,12 @@ EXEMPT_FILES = make_set(
         "static/js/emojisets.js",
         "static/js/favicon.js",
         "static/js/feedback_widget.js",
+        "static/js/flatpickr.js",
         "static/js/floating_recipient_bar.js",
         "static/js/gear_menu.js",
         "static/js/giphy.js",
         "static/js/global.d.ts",
+        "static/js/hash_util.js",
         "static/js/hashchange.js",
         "static/js/hbs.d.ts",
         "static/js/hotkey.js",
@@ -92,8 +96,8 @@ EXEMPT_FILES = make_set(
         "static/js/info_overlay.js",
         "static/js/invite.js",
         "static/js/lightbox.js",
-        "static/js/lightbox_canvas.js",
         "static/js/list_util.ts",
+        "static/js/list_widget.js",
         "static/js/loading.ts",
         "static/js/local_message.js",
         "static/js/localstorage.js",
@@ -119,10 +123,12 @@ EXEMPT_FILES = make_set(
         "static/js/overlays.js",
         "static/js/padded_widget.ts",
         "static/js/page_params.ts",
+        "static/js/pm_list.js",
         "static/js/pm_list_dom.js",
         "static/js/poll_widget.js",
         "static/js/popover_menus.js",
         "static/js/popovers.js",
+        "static/js/read_receipts.js",
         "static/js/ready.ts",
         "static/js/realm_icon.js",
         "static/js/realm_logo.js",
@@ -153,11 +159,13 @@ EXEMPT_FILES = make_set(
         "static/js/settings_panel_menu.js",
         "static/js/settings_playgrounds.js",
         "static/js/settings_profile_fields.js",
+        "static/js/settings_realm_domains.js",
         "static/js/settings_realm_user_settings_defaults.js",
         "static/js/settings_sections.js",
         "static/js/settings_streams.js",
         "static/js/settings_toggle.js",
         "static/js/settings_ui.js",
+        "static/js/settings_user_groups_legacy.js",
         "static/js/settings_users.js",
         "static/js/setup.js",
         "static/js/spectators.js",
@@ -166,14 +174,17 @@ EXEMPT_FILES = make_set(
         "static/js/stream_bar.js",
         "static/js/stream_color.js",
         "static/js/stream_create.js",
+        "static/js/stream_create_subscribers.js",
         "static/js/stream_edit.js",
+        "static/js/stream_edit_subscribers.js",
         "static/js/stream_list.js",
         "static/js/stream_muting.js",
         "static/js/stream_popover.js",
+        "static/js/stream_settings_containers.js",
         "static/js/stream_settings_ui.js",
-        "static/js/stream_subscribers_ui.js",
         "static/js/stream_ui_updates.js",
         "static/js/submessage.js",
+        "static/js/subscriber_api.js",
         "static/js/timerender.ts",
         "static/js/tippyjs.js",
         "static/js/todo_widget.js",
@@ -187,11 +198,20 @@ EXEMPT_FILES = make_set(
         "static/js/ui_init.js",
         "static/js/ui_report.ts",
         "static/js/ui_util.ts",
+        "static/js/unread.js",
         "static/js/unread_ops.js",
         "static/js/unread_ui.js",
         "static/js/upload_widget.ts",
+        "static/js/user_group_create.js",
+        "static/js/user_group_create_members.js",
+        "static/js/user_group_create_members_data.js",
+        "static/js/user_group_edit.js",
+        "static/js/user_group_edit_members.js",
+        "static/js/user_group_ui_updates.js",
+        "static/js/user_groups_settings_ui.js",
         "static/js/user_profile.js",
         "static/js/user_settings.ts",
+        "static/js/user_status.js",
         "static/js/user_status_ui.js",
         "static/js/webpack_public_path.js",
         "static/js/zcommand.js",
@@ -367,19 +387,21 @@ def read_coverage() -> Any:
 
 
 def enforce_proper_coverage(coverage_json: Any) -> bool:
-    all_js_files = set(
-        glob.glob("static/js/*.js")
-        + glob.glob("static/js/*.ts")
-        + glob.glob("static/shared/js/*.js")
-        + glob.glob("static/shared/js/*.ts")
-        + glob.glob("static/js/billing/*.js"),
-    )
-    enforce_fully_covered = all_js_files - EXEMPT_FILES
+    all_js_files = {
+        *glob.glob("frontend_tests/node_tests/*.js"),
+        *glob.glob("frontend_tests/zjsunit/*.js"),
+        *glob.glob("static/js/*.js"),
+        *glob.glob("static/js/*.ts"),
+        *glob.glob("static/shared/js/*.js"),
+        *glob.glob("static/shared/js/*.ts"),
+        *glob.glob("static/js/billing/*.js"),
+    }
+    enforce_fully_covered = sorted(all_js_files - EXEMPT_FILES)
 
     coverage_lost = False
     for relative_path in enforce_fully_covered:
         path = ROOT_DIR + "/" + relative_path
-        if not (path in coverage_json):
+        if path not in coverage_json:
             coverage_lost = True
             print_error(f"{relative_path} has no node test coverage")
             continue

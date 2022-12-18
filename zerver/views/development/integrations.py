@@ -1,8 +1,9 @@
 import os
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import orjson
 from django.http import HttpRequest, HttpResponse
+from django.http.response import HttpResponseBase
 from django.shortcuts import render
 from django.test import Client
 
@@ -13,6 +14,9 @@ from zerver.lib.response import json_success
 from zerver.lib.validator import check_bool
 from zerver.lib.webhooks.common import get_fixture_http_headers, standardize_headers
 from zerver.models import UserProfile, get_realm
+
+if TYPE_CHECKING:
+    from django.test.client import _MonkeyPatchedWSGIResponse as TestHttpResponse
 
 ZULIP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
 
@@ -42,7 +46,7 @@ def dev_panel(request: HttpRequest) -> HttpResponse:
 
 def send_webhook_fixture_message(
     url: str, body: str, is_json: bool, custom_headers: Dict[str, Any]
-) -> HttpResponse:
+) -> "TestHttpResponse":
     client = Client()
     realm = get_realm("zulip")
     standardized_headers = standardize_headers(custom_headers)
@@ -52,12 +56,18 @@ def send_webhook_fixture_message(
     else:
         content_type = standardized_headers.pop("HTTP_CONTENT_TYPE", "text/plain")
     return client.post(
-        url, body, content_type=content_type, HTTP_HOST=http_host, **standardized_headers
+        url,
+        body,
+        content_type=content_type,
+        follow=False,
+        secure=False,
+        HTTP_HOST=http_host,
+        **standardized_headers,
     )
 
 
 @has_request_variables
-def get_fixtures(request: HttpResponse, integration_name: str = REQ()) -> HttpResponse:
+def get_fixtures(request: HttpRequest, integration_name: str = REQ()) -> HttpResponse:
     valid_integration_name = get_valid_integration_name(integration_name)
     if not valid_integration_name:
         raise ResourceNotFoundError(f'"{integration_name}" is not a valid webhook integration.')
@@ -91,7 +101,7 @@ def get_fixtures(request: HttpResponse, integration_name: str = REQ()) -> HttpRe
         headers = {fix_name(k): v for k, v in headers_raw.items()}
         fixtures[fixture] = {"body": body, "headers": headers}
 
-    return json_success({"fixtures": fixtures})
+    return json_success(request, data={"fixtures": fixtures})
 
 
 @has_request_variables
@@ -101,7 +111,7 @@ def check_send_webhook_fixture_message(
     body: str = REQ(),
     is_json: bool = REQ(json_validator=check_bool),
     custom_headers: str = REQ(),
-) -> HttpResponse:
+) -> HttpResponseBase:
     try:
         custom_headers_dict = orjson.loads(custom_headers)
     except orjson.JSONDecodeError as ve:
@@ -110,7 +120,7 @@ def check_send_webhook_fixture_message(
     response = send_webhook_fixture_message(url, body, is_json, custom_headers_dict)
     if response.status_code == 200:
         responses = [{"status_code": response.status_code, "message": response.content.decode()}]
-        return json_success({"responses": responses})
+        return json_success(request, data={"responses": responses})
     else:
         return response
 
@@ -150,4 +160,4 @@ def send_all_webhook_fixture_messages(
                 "message": response.content.decode(),
             }
         )
-    return json_success({"responses": responses})
+    return json_success(request, data={"responses": responses})

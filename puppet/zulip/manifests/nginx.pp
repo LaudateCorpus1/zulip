@@ -4,16 +4,16 @@ class zulip::nginx {
     $zulip::common::nginx,
     'ca-certificates',
   ]
-  package { $web_packages: ensure => 'installed' }
+  package { $web_packages: ensure => installed }
 
-  if $::osfamily == 'redhat' {
+  if $::os['family'] == 'RedHat' {
     file { '/etc/nginx/sites-available':
-      ensure => 'directory',
+      ensure => directory,
       owner  => 'root',
       group  => 'root',
     }
     file { '/etc/nginx/sites-enabled':
-      ensure => 'directory',
+      ensure => directory,
       owner  => 'root',
       group  => 'root',
     }
@@ -80,7 +80,7 @@ class zulip::nginx {
     source  => 'puppet:///modules/zulip/nginx/dhparam.pem',
   }
 
-  if $::osfamily == 'debian' {
+  if $::os['family'] == 'Debian' {
       $ca_crt = '/etc/ssl/certs/ca-certificates.crt'
   } else {
       $ca_crt = '/etc/pki/tls/certs/ca-bundle.crt'
@@ -111,7 +111,7 @@ class zulip::nginx {
   }
 
   file { '/var/log/nginx':
-    ensure => 'directory',
+    ensure => directory,
     owner  => 'zulip',
     group  => 'adm',
     mode   => '0650',
@@ -125,10 +125,10 @@ class zulip::nginx {
     source  => 'puppet:///modules/zulip/logrotate/nginx',
   }
   package { 'certbot':
-    ensure => 'installed',
+    ensure => installed,
   }
   file { ['/var/lib/zulip', '/var/lib/zulip/certbot-webroot']:
-    ensure => 'directory',
+    ensure => directory,
     owner  => 'zulip',
     group  => 'adm',
     mode   => '0660',

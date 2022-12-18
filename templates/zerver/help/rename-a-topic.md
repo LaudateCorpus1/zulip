@@ -1,38 +1,50 @@
 # Rename a topic
 
-By default, any user can rename any topic within a stream, and change the
-topic of any message. This is useful for keeping messages organized even
-if some users are still learning how to use topics effectively.
+Zulip makes it possible to rename topics. This is useful for keeping messages
+organized, even if some users are still learning how to use topics effectively.
+You can also [move content to another
+topic](/help/move-content-to-another-topic).
 
-Organization administrators can additionally
-[move topics](/help/move-content-to-another-stream#move-a-topic-to-another-stream)
-from one stream to another, or
-[move a subset of messages](/help/move-content-to-another-stream#move-messages-in-a-topic-to-another-stream)
-to a topic from one stream to another.
+When a topic is renamed, Zulip's [permanent links to messages in
+context](/help/link-to-a-message-or-conversation#get-a-link-to-a-specific-message)
+will automatically redirect to the new location of the message. [Muted
+topics](/help/mute-a-topic) are automatically migrated when a topic is renamed.
 
-Organization administrators can also
-[configure who can edit topics](/help/configure-who-can-edit-topics),
-[move topics](/help/configure-message-editing-and-deletion#configure-who-can-move-topics-between-streams),
-or turn off message editing entirely. See the
+Organizations can [configure](/help/configure-who-can-edit-topics) which
+[roles](/help/roles-and-permissions) have permission to rename topics. See the
 [guide to message and topic editing](/help/configure-message-editing-and-deletion)
 for the details on when topic editing is allowed.
 
 ## Rename a topic
 
+### Via the message recipient bar
+
 {start_tabs}
 
-{!message-actions-menu.md!}
+1. Click the **pencil** (<i class="fa fa-pencil"></i>) icon in the message recipient bar.
 
-1. Select the first option. It may be called **View source / Move message**,
-   or simply **Edit**. If it's called **View source**, then you are not
-   allowed to edit the topic of that message.
+1. Edit the topic name.
 
-1. Edit the topic.
+1. Click the **checkmark** (<i class="fa fa-check"></i>) icon to save your changes.
 
-1. Pick **Change previous and following messages to this topic** from the
-   dropdown to the right.
+{end_tabs}
 
-1. Click **Save**.
+
+### Via the left sidebar (alternate method)
+
+{start_tabs}
+
+{!topic-actions.md!}
+
+1. Select **Move topic**.
+
+1. Edit the topic name.
+
+1. _(optional)_  Select the destination stream for the topic from the streams dropdown list.
+
+1. Toggle whether automated notices should be sent.
+
+1. Click **Confirm** to rename the topic.
 
 {end_tabs}
 

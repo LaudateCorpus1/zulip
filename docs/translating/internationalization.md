@@ -26,7 +26,7 @@ principles are important in how we think about internationalization:
   element needs to be built in a way that supports i18n.
 - This is more about string consistency in general, but we have a
   "Sentence case" [capitalization
-  policy](../translating/translating.html#capitalization) that we enforce using linters
+  policy](translating.md#capitalization) that we enforce using linters
   that check all strings tagged for translation in Zulip.
 
 This article aims to provide a brief introduction. We recommend the
@@ -48,7 +48,7 @@ to understand when implementing an internationalized application:
   translate the content.
 - **Word order** varies between languages (e.g. some languages put
   subjects before verbs, others the other way around). This means
-  that **concatenating translateable strings** produces broken results
+  that **concatenating translatable strings** produces broken results
   (more details with examples are below).
 - The **width of the string needed to express something** varies
   dramatically between languages; this means you can't just hardcode a
@@ -108,7 +108,7 @@ The end-to-end tooling process for translations in Zulip is as follows.
    Transifex API tool, `tx pull`, internally).
 
 If you're interested, you may also want to check out the [translators'
-workflow](../translating/translating.html#translators-workflow), just so you have a
+workflow](translating.md#translators-workflow), just so you have a
 sense of how everything fits together.
 
 ## Translation resource files
@@ -202,7 +202,7 @@ class Realm(models.Model):
     STREAM_EVENTS_NOTIFICATION_TOPIC = gettext_lazy('stream events')
 ```
 
-To ensure we always internationalize our JSON errors messages, the
+To ensure we always internationalize our JSON error messages, the
 Zulip linter (`tools/lint`) attempts to verify correct usage.
 
 ## Frontend translations
@@ -247,7 +247,7 @@ locally to the translation:
 ```js
 $t_html(
     {defaultMessage: "<b>HTML</b> linking to the <z-link>login page</z-link>"},
-    {"z-link": (content_html) => `<a href="/login/">${content_html}</a>`},
+    {"z-link": (content_html) => `<a href="/login/">${content_html.join("")}</a>`},
 )
 ```
 
@@ -293,7 +293,7 @@ translated block, because they don't work properly with translation.
 The Handlebars expression would be evaluated before the string is
 processed by FormatJS, so that the string to be translated wouldn't be
 constant. We have a linter to enforce that translated blocks don't
-contain handlebars.
+contain Handlebars.
 
 Restrictions on including HTML tags in translated strings are the same
 as in JavaScript. You can insert more complex markup using a local
@@ -339,4 +339,4 @@ organizations from the command line.
 [helpers]: https://handlebarsjs.com/guide/block-helpers.html
 [transifex]: https://transifex.com
 [transifexrc]: https://docs.transifex.com/client/client-configuration#transifexrc
-[html-templates]: ../subsystems/html-css.html#html-templates
+[html-templates]: ../subsystems/html-css.md#html-templates

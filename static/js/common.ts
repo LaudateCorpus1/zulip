@@ -4,7 +4,7 @@ import tippy from "tippy.js";
 
 import {$t} from "./i18n";
 
-export const status_classes = "alert-error alert-success alert-info alert-warning";
+export const status_classes = "alert-error alert-success alert-info alert-warning alert-loading";
 
 // TODO: Move this to the portico codebase.
 export function autofocus(selector: string): void {
@@ -32,23 +32,23 @@ export function phrase_match(query: string, phrase: string): boolean {
     return false;
 }
 
-export function copy_data_attribute_value(elem: JQuery, key: string): void {
+export function copy_data_attribute_value($elem: JQuery, key: string): void {
     // function to copy the value of data-key
     // attribute of the element to clipboard
-    const temp = $(document.createElement("input"));
-    $("body").append(temp);
-    temp.val(elem.data(key)).trigger("select");
+    const $temp = $(document.createElement("input"));
+    $("body").append($temp);
+    $temp.val($elem.data(key)).trigger("select");
     document.execCommand("copy");
-    temp.remove();
-    elem.fadeOut(250);
-    elem.fadeIn(1000);
+    $temp.remove();
+    $elem.fadeOut(250);
+    $elem.fadeIn(1000);
 }
 
 export function has_mac_keyboard(): boolean {
     return /mac/i.test(navigator.platform);
 }
 
-export function adjust_mac_shortcuts(key_elem_class: string, require_cmd_style = false): void {
+export function adjust_mac_shortcuts(kbd_elem_class: string): void {
     if (!has_mac_keyboard()) {
         return;
     }
@@ -56,26 +56,27 @@ export function adjust_mac_shortcuts(key_elem_class: string, require_cmd_style =
     const keys_map = new Map([
         ["Backspace", "Delete"],
         ["Enter", "Return"],
-        ["Home", "Fn + ←"],
-        ["End", "Fn + →"],
-        ["PgUp", "Fn + ↑"],
-        ["PgDn", "Fn + ↓"],
+        ["Home", "←"],
+        ["End", "→"],
+        ["PgUp", "↑"],
+        ["PgDn", "↓"],
         ["Ctrl", "⌘"],
+        ["Alt", "⌘"],
     ]);
 
-    $(key_elem_class).each(function () {
-        let key_text = $(this).text();
-        const keys = key_text.match(/[^\s+]+/g) || [];
+    const fn_shortcuts = new Set(["Home", "End", "PgUp", "PgDn"]);
 
-        if (key_text.includes("Ctrl") && require_cmd_style) {
-            $(this).addClass("mac-cmd-key");
+    $(kbd_elem_class).each(function () {
+        let key_text = $(this).text();
+
+        if (fn_shortcuts.has(key_text)) {
+            $(this).before("<kbd>Fn</kbd> + ");
+            $(this).addClass("arrow-key");
         }
 
-        for (const key of keys) {
-            const replace_key = keys_map.get(key);
-            if (replace_key !== undefined) {
-                key_text = key_text.replace(key, replace_key);
-            }
+        const replace_key = keys_map.get(key_text);
+        if (replace_key !== undefined) {
+            key_text = replace_key;
         }
 
         $(this).text(key_text);
@@ -105,14 +106,14 @@ function toggle_password_visibility(
     tippy_tooltips: boolean,
 ): void {
     let label;
-    const password_field = $(password_field_id);
+    const $password_field = $(password_field_id);
 
-    if (password_field.attr("type") === "password") {
-        password_field.attr("type", "text");
+    if ($password_field.attr("type") === "password") {
+        $password_field.attr("type", "text");
         $(password_selector).removeClass("fa-eye-slash").addClass("fa-eye");
         label = $t({defaultMessage: "Hide password"});
     } else {
-        password_field.attr("type", "password");
+        $password_field.attr("type", "password");
         $(password_selector).removeClass("fa-eye").addClass("fa-eye-slash");
         label = $t({defaultMessage: "Show password"});
     }

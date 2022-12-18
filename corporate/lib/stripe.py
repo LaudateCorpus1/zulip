@@ -5,7 +5,7 @@ import secrets
 from datetime import datetime, timedelta
 from decimal import Decimal
 from functools import wraps
-from typing import Any, Callable, Dict, Generator, Optional, Tuple, TypeVar, Union, cast
+from typing import Any, Callable, Dict, Generator, Optional, Tuple, TypeVar, Union
 
 import orjson
 import stripe
@@ -17,6 +17,7 @@ from django.utils.timezone import now as timezone_now
 from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy
 from django.utils.translation import override as override_language
+from typing_extensions import ParamSpec
 
 from corporate.models import (
     Customer,
@@ -45,7 +46,8 @@ billing_logger = logging.getLogger("corporate.stripe")
 log_to_file(billing_logger, BILLING_LOG_PATH)
 log_to_file(logging.getLogger("stripe"), BILLING_LOG_PATH)
 
-CallableT = TypeVar("CallableT", bound=Callable[..., object])
+ParamT = ParamSpec("ParamT")
+ReturnT = TypeVar("ReturnT")
 
 MIN_INVOICED_LICENSES = 30
 MAX_INVOICED_LICENSES = 1000
@@ -56,14 +58,29 @@ STRIPE_API_VERSION = "2020-08-27"
 
 
 def get_latest_seat_count(realm: Realm) -> int:
+    return get_seat_count(realm, extra_non_guests_count=0, extra_guests_count=0)
+
+
+def get_seat_count(
+    realm: Realm, extra_non_guests_count: int = 0, extra_guests_count: int = 0
+) -> int:
     non_guests = (
         UserProfile.objects.filter(realm=realm, is_active=True, is_bot=False)
         .exclude(role=UserProfile.ROLE_GUEST)
         .count()
+    ) + extra_non_guests_count
+
+    # This guest count calculation should match the similar query in render_stats().
+    guests = (
+        UserProfile.objects.filter(
+            realm=realm, is_active=True, is_bot=False, role=UserProfile.ROLE_GUEST
+        ).count()
+        + extra_guests_count
     )
-    guests = UserProfile.objects.filter(
-        realm=realm, is_active=True, is_bot=False, role=UserProfile.ROLE_GUEST
-    ).count()
+
+    # This formula achieves the pricing of the first 5*N guests
+    # being free of charge (where N is the number of non-guests in the organization)
+    # and each consecutive one being worth 1/5 the non-guest price.
     return max(non_guests, math.ceil(guests / 5))
 
 
@@ -243,9 +260,9 @@ class InvalidTier(Exception):
         super().__init__(self.message)
 
 
-def catch_stripe_errors(func: CallableT) -> CallableT:
+def catch_stripe_errors(func: Callable[ParamT, ReturnT]) -> Callable[ParamT, ReturnT]:
     @wraps(func)
-    def wrapped(*args: object, **kwargs: object) -> object:
+    def wrapped(*args: ParamT.args, **kwargs: ParamT.kwargs) -> ReturnT:
         try:
             return func(*args, **kwargs)
         # See https://stripe.com/docs/api/python#error_handling, though
@@ -279,7 +296,7 @@ def catch_stripe_errors(func: CallableT) -> CallableT:
                 )
             raise BillingError("other stripe error")
 
-    return cast(CallableT, wrapped)
+    return wrapped
 
 
 @catch_stripe_errors
@@ -323,7 +340,7 @@ def do_create_stripe_customer(user: UserProfile, payment_method: Optional[str] =
         customer, created = Customer.objects.update_or_create(
             realm=realm, defaults={"stripe_customer_id": stripe_customer.id}
         )
-        from zerver.lib.actions import do_make_user_billing_admin
+        from zerver.actions.users import do_make_user_billing_admin
 
         do_make_user_billing_admin(user)
     return customer
@@ -502,7 +519,9 @@ def make_end_of_cycle_updates_if_needed(
             standard_plan_last_ledger = (
                 LicenseLedger.objects.filter(plan=standard_plan).order_by("id").last()
             )
+            assert standard_plan_last_ledger is not None
             licenses_for_plus_plan = standard_plan_last_ledger.licenses_at_next_renewal
+            assert licenses_for_plus_plan is not None
             plus_plan_ledger_entry = LicenseLedger.objects.create(
                 plan=plus_plan,
                 is_renewal=True,
@@ -576,7 +595,7 @@ def compute_plan_parameters(
 ) -> Tuple[datetime, datetime, datetime, int]:
     # Everything in Stripe is stored as timestamps with 1 second resolution,
     # so standardize on 1 second resolution.
-    # TODO talk about leapseconds?
+    # TODO talk about leap seconds?
     billing_cycle_anchor = timezone_now().replace(microsecond=0)
     if billing_schedule == CustomerPlan.ANNUAL:
         period_end = add_months(billing_cycle_anchor, 12)
@@ -608,7 +627,7 @@ def is_free_trial_offer_enabled() -> bool:
     return settings.FREE_TRIAL_DAYS not in (None, 0)
 
 
-def ensure_realm_does_not_have_active_plan(realm: Customer) -> None:
+def ensure_realm_does_not_have_active_plan(realm: Realm) -> None:
     if get_current_plan_by_realm(realm) is not None:
         # Unlikely race condition from two people upgrading (clicking "Make payment")
         # at exactly the same time. Doesn't fully resolve the race condition, but having
@@ -629,7 +648,7 @@ def do_change_remote_server_plan_type(remote_server: RemoteZulipServer, plan_typ
         event_type=RealmAuditLog.REMOTE_SERVER_PLAN_TYPE_CHANGED,
         server=remote_server,
         event_time=timezone_now(),
-        extra_data={"old_value": old_value, "new_value": plan_type},
+        extra_data=str({"old_value": old_value, "new_value": plan_type}),
     )
 
 
@@ -720,7 +739,7 @@ def process_initial_upgrade(
         stripe.InvoiceItem.create(
             currency="usd",
             customer=customer.stripe_customer_id,
-            description="Zulip Standard",
+            description="Zulip Cloud Standard",
             discountable=False,
             period={
                 "start": datetime_to_timestamp(billing_cycle_anchor),
@@ -742,11 +761,11 @@ def process_initial_upgrade(
             collection_method=collection_method,
             customer=customer.stripe_customer_id,
             days_until_due=days_until_due,
-            statement_descriptor="Zulip Standard",
+            statement_descriptor="Zulip Cloud Standard",
         )
         stripe.Invoice.finalize_invoice(stripe_invoice)
 
-    from zerver.lib.actions import do_change_realm_plan_type
+    from zerver.actions.realm_settings import do_change_realm_plan_type
 
     do_change_realm_plan_type(realm, Realm.PLAN_TYPE_STANDARD, acting_user=user)
 
@@ -947,7 +966,7 @@ def attach_discount_to_realm(
         acting_user=acting_user,
         event_type=RealmAuditLog.REALM_DISCOUNT_CHANGED,
         event_time=timezone_now(),
-        extra_data={"old_discount": old_discount, "new_discount": discount},
+        extra_data=str({"old_discount": old_discount, "new_discount": discount}),
     )
 
 
@@ -962,14 +981,13 @@ def update_sponsorship_status(
         acting_user=acting_user,
         event_type=RealmAuditLog.REALM_SPONSORSHIP_PENDING_STATUS_CHANGED,
         event_time=timezone_now(),
-        extra_data={
-            "sponsorship_pending": sponsorship_pending,
-        },
+        extra_data=str({"sponsorship_pending": sponsorship_pending}),
     )
 
 
 def approve_sponsorship(realm: Realm, *, acting_user: Optional[UserProfile]) -> None:
-    from zerver.lib.actions import do_change_realm_plan_type, internal_send_private_message
+    from zerver.actions.message_send import internal_send_private_message
+    from zerver.actions.realm_settings import do_change_realm_plan_type
 
     do_change_realm_plan_type(realm, Realm.PLAN_TYPE_STANDARD_FREE, acting_user=acting_user)
     customer = get_customer_by_realm(realm)
@@ -1018,7 +1036,7 @@ def do_change_plan_status(plan: CustomerPlan, status: int) -> None:
 
 
 def process_downgrade(plan: CustomerPlan) -> None:
-    from zerver.lib.actions import do_change_realm_plan_type
+    from zerver.actions.realm_settings import do_change_realm_plan_type
 
     assert plan.customer.realm is not None
     do_change_realm_plan_type(plan.customer.realm, Realm.PLAN_TYPE_LIMITED, acting_user=None)
@@ -1037,6 +1055,7 @@ def estimate_annual_recurring_revenue_by_realm() -> Dict[str, int]:  # nocoverag
         if plan.billing_schedule == CustomerPlan.MONTHLY:
             renewal_cents *= 12
         # TODO: Decimal stuff
+        assert plan.customer.realm is not None
         annual_revenue[plan.customer.realm.string_id] = int(renewal_cents / 100)
     return annual_revenue
 
@@ -1045,6 +1064,7 @@ def get_realms_to_default_discount_dict() -> Dict[str, Decimal]:
     realms_to_default_discount: Dict[str, Any] = {}
     customers = Customer.objects.exclude(default_discount=None).exclude(default_discount=0)
     for customer in customers:
+        assert customer.realm is not None
         realms_to_default_discount[customer.realm.string_id] = assert_is_not_none(
             customer.default_discount
         )
@@ -1113,6 +1133,7 @@ def downgrade_small_realms_behind_on_payments_as_needed() -> None:
     customers = Customer.objects.all().exclude(stripe_customer_id=None)
     for customer in customers:
         realm = customer.realm
+        assert realm is not None
 
         # For larger realms, we generally want to talk to the customer
         # before downgrading or cancelling invoices; so this logic only applies with 5.
@@ -1169,6 +1190,8 @@ def switch_realm_from_standard_to_plus_plan(realm: Realm) -> None:
     standard_plan_last_renewal_ledger = (
         LicenseLedger.objects.filter(is_renewal=True, plan=standard_plan).order_by("id").last()
     )
+    assert standard_plan_last_renewal_ledger is not None
+    assert standard_plan.price_per_license is not None
     standard_plan_last_renewal_amount = (
         standard_plan_last_renewal_ledger.licenses * standard_plan.price_per_license
     )
@@ -1203,7 +1226,5 @@ def update_billing_method_of_current_plan(
             acting_user=acting_user,
             event_type=RealmAuditLog.REALM_BILLING_METHOD_CHANGED,
             event_time=timezone_now(),
-            extra_data={
-                "charge_automatically": charge_automatically,
-            },
+            extra_data=str({"charge_automatically": charge_automatically}),
         )

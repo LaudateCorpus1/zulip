@@ -156,11 +156,15 @@ function hide_catalog_show_integration() {
                     link = name;
                 }
             }
-            const category_el = $("<a></a>")
+            const $category_el = $("<a>")
                 .attr("href", "/integrations/" + link)
-                .append('<h3 class="integration-category"></h3>');
-            category_el.find(".integration-category").attr("data-category", link).text(category);
-            $("#integration-instructions-group .categories").append(category_el);
+                .append(
+                    $("<h3>")
+                        .addClass("integration-category")
+                        .attr("data-category", link)
+                        .text(category),
+                );
+            $("#integration-instructions-group .categories").append($category_el);
         }
         $("#integration-instructions-group").css({
             opacity: 0,
@@ -181,7 +185,7 @@ function hide_catalog_show_integration() {
     function hide_catalog(doc) {
         $(".integration-categories-dropdown").css("display", "none");
         $(".integrations .catalog").addClass("hide");
-        $(".extra, #integration-main-text, #integration-search").css("display", "none");
+        $(".extra, .integration-main-text, #integration-search").css("display", "none");
 
         show_integration(doc);
         $(".main").css("visibility", "visible");
@@ -206,7 +210,7 @@ function hide_integration_show_catalog() {
 
         $(".integration-categories-dropdown").css("display", "");
         $(".integrations .catalog").removeClass("hide");
-        $(".extra, #integration-main-text, #integration-search").css("display", "block");
+        $(".extra, .integration-main-text, #integration-search").css("display", "block");
         adjust_font_sizing();
     }
 
@@ -305,10 +309,10 @@ function integration_events() {
     $('#integration-search input[type="text"]').on("keypress", (e) => {
         if (e.key === "Enter" && e.target.value !== "") {
             for (const integration_element of $(".integration-lozenges").children()) {
-                const integration = $(integration_element).find(".integration-lozenge");
+                const $integration = $(integration_element).find(".integration-lozenge");
 
-                if ($(integration).css("display") !== "none") {
-                    $(integration).closest("a")[0].click();
+                if ($integration.css("display") !== "none") {
+                    $integration.closest("a")[0].click();
                     break;
                 }
             }
@@ -378,4 +382,5 @@ $(() => {
     load_data();
     dispatch("LOAD_PATH");
     $(".integrations .searchbar input[type='text']").trigger("focus");
+    adjust_font_sizing();
 });

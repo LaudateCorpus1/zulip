@@ -7,6 +7,8 @@
         "eslint:recommended",
         "plugin:import/errors",
         "plugin:import/warnings",
+        "plugin:no-jquery/recommended",
+        "plugin:no-jquery/deprecated",
         "plugin:unicorn/recommended",
         "prettier"
     ],
@@ -15,9 +17,17 @@
         "warnOnUnsupportedTypeScriptVersion": false,
         "sourceType": "unambiguous"
     },
-    "plugins": ["formatjs"],
+    "plugins": ["formatjs", "no-jquery"],
     "settings": {
-        "additionalFunctionNames": ["$t", "$t_html"]
+        "formatjs": {
+            "additionalFunctionNames": ["$t", "$t_html"]
+        },
+        "no-jquery": {
+            "collectionReturningPlugins": {
+                "expectOne": "always"
+            },
+            "variablePattern": "^\\$(?!t$|t_html$)."
+        }
     },
     "reportUnusedDisableDirectives": true,
     "rules": {
@@ -65,6 +75,8 @@
         "no-implied-eval": "error",
         "no-inner-declarations": "off",
         "no-iterator": "error",
+        "no-jquery/no-constructor-attributes": "error",
+        "no-jquery/no-parse-html-literal": "error",
         "no-label-var": "error",
         "no-labels": "error",
         "no-loop-func": "error",
@@ -84,6 +96,7 @@
         "no-undef-init": "error",
         "no-unneeded-ternary": ["error", {"defaultAssignment": false}],
         "no-unused-expressions": "error",
+        "no-unused-vars": ["error", {"ignoreRestSiblings": true}],
         "no-use-before-define": ["error", {"functions": false}],
         "no-useless-concat": "error",
         "no-useless-constructor": "error",
@@ -115,15 +128,22 @@
         "unicorn/prefer-node-protocol": "off",
         "unicorn/prefer-spread": "off",
         "unicorn/prefer-ternary": "off",
+        "unicorn/prefer-top-level-await": "off",
         "unicorn/prevent-abbreviations": "off",
+        "unicorn/switch-case-braces": "off",
         "valid-typeof": ["error", {"requireStringLiterals": true}],
         "yoda": "error"
     },
     "overrides": [
         {
+            "files": ["frontend_tests/node_tests/**", "frontend_tests/zjsunit/**"],
+            "rules": {
+                "no-jquery/no-selector-prop": "off"
+            }
+        },
+        {
             "files": ["frontend_tests/puppeteer_lib/**", "frontend_tests/puppeteer_tests/**"],
             "globals": {
-                "$": false,
                 "zulip_test": false
             }
         },
@@ -173,7 +193,7 @@
                 "@typescript-eslint/no-non-null-assertion": "off",
                 "@typescript-eslint/no-parameter-properties": "error",
                 "@typescript-eslint/no-unnecessary-qualifier": "error",
-                "@typescript-eslint/no-unused-vars": ["error", {"varsIgnorePattern": "^_"}],
+                "@typescript-eslint/no-unused-vars": ["error", {"ignoreRestSiblings": true}],
                 "@typescript-eslint/no-unsafe-argument": "off",
                 "@typescript-eslint/no-unsafe-assignment": "off",
                 "@typescript-eslint/no-unsafe-call": "off",

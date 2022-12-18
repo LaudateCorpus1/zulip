@@ -8,12 +8,10 @@ import * as message_helper from "./message_helper";
 import * as message_list from "./message_list";
 import * as message_lists from "./message_lists";
 import * as message_scroll from "./message_scroll";
-import * as message_store from "./message_store";
 import * as message_util from "./message_util";
 import * as narrow_banner from "./narrow_banner";
 import {page_params} from "./page_params";
 import * as people from "./people";
-import * as pm_list from "./pm_list";
 import * as recent_topics_ui from "./recent_topics_ui";
 import * as stream_data from "./stream_data";
 import * as stream_list from "./stream_list";
@@ -21,7 +19,6 @@ import * as ui_report from "./ui_report";
 
 const consts = {
     backfill_idle_time: 10 * 1000,
-    error_retry_time: 5000,
     backfill_batch_size: 1000,
     narrow_before: 50,
     narrow_after: 50,
@@ -40,27 +37,11 @@ function process_result(data, opts) {
         ui_report.hide_error($("#connection-error"));
     }
 
-    if (
-        messages.length === 0 &&
-        message_lists.current === message_list.narrowed &&
-        message_list.narrowed.empty()
-    ) {
-        // Even after trying to load more messages, we have no
-        // messages to display in this narrow.
-        narrow_banner.show_empty_narrow_message();
-    }
+    messages = messages.map((message) => message_helper.process_new_message(message));
 
-    messages = messages.map((message) => {
-        message_store.set_message_booleans(message);
-        return message_helper.process_new_message(message);
-    });
-
-    // In case any of the newly fetched messages are new, add them to
-    // our unread data structures.  It's important that this run even
-    // when fetching in a narrow, since we might return unread
-    // messages that aren't in the home view data set (e.g. on a muted
-    // stream).
-    message_util.do_unread_count_updates(messages);
+    // In some rare situations, we expect to discover new unread
+    // messages not tracked in unread.js during this fetching process.
+    message_util.do_unread_count_updates(messages, true);
 
     // If we're loading more messages into the home view, save them to
     // the all_messages_data as well, as the message_lists.home is
@@ -73,9 +54,14 @@ function process_result(data, opts) {
         message_util.add_old_messages(messages, opts.msg_list);
     }
 
+    if (message_lists.current === message_list.narrowed && message_list.narrowed.empty()) {
+        // Even after loading more messages, we have
+        // no messages to display in this narrow.
+        narrow_banner.show_empty_narrow_message();
+    }
+
     huddle_data.process_loaded_messages(messages);
     stream_list.update_streams_sidebar();
-    pm_list.update_private_messages();
     recent_topics_ui.process_messages(messages);
 
     stream_list.maybe_scroll_narrow_into_view();
@@ -179,7 +165,7 @@ function handle_operators_supporting_id_based_api(data) {
     return data;
 }
 
-export function load_messages(opts) {
+export function load_messages(opts, attempt = 1) {
     if (typeof opts.anchor === "number") {
         // Messages that have been locally echoed messages have
         // floating point temporary IDs, which is intended to be a.
@@ -265,7 +251,6 @@ export function load_messages(opts) {
     channel.get({
         url: "/json/messages",
         data,
-        idempotent: true,
         success(data) {
             get_messages_success(data, opts);
         },
@@ -289,11 +274,15 @@ export function load_messages(opts) {
                 return;
             }
 
-            // We might want to be more clever here
-            $("#connection-error").addClass("show");
+            // Backoff on retries, with full jitter: up to 2s, 4s, 8s, 16s, 32s
+            let delay = Math.random() * 2 ** attempt * 2000;
+            if (attempt >= 5) {
+                delay = 30000;
+            }
+            ui_report.show_error($("#connection-error"));
             setTimeout(() => {
-                load_messages(opts);
-            }, consts.error_retry_time);
+                load_messages(opts, attempt + 1);
+            }, delay);
         },
     });
 }
@@ -431,6 +420,12 @@ export function initialize(home_view_loaded) {
         }
 
         if (data.found_newest) {
+            if (page_params.is_spectator) {
+                // Since for spectators, this is the main fetch, we
+                // hide the Recent Topics loading indicator here.
+                recent_topics_ui.hide_loading_indicator();
+            }
+
             // See server_events.js for this callback.
             home_view_loaded();
             start_backfilling_messages();
@@ -472,6 +467,10 @@ export function initialize(home_view_loaded) {
     if (page_params.is_spectator) {
         // Since spectators never have old unreads, we can skip the
         // hacky fetch below for them (which would just waste resources).
+
+        // This optimization requires a bit of duplicated loading
+        // indicator code, here and hiding logic in hide_more.
+        recent_topics_ui.show_loading_indicator();
         return;
     }
 
@@ -491,7 +490,7 @@ export function initialize(home_view_loaded) {
     // (Users will see a weird artifact where Recent topics has a gap
     // between E.g. 6 days ago and 37 days ago while the catchup
     // process runs, so this strategy still results in problematic
-    // visual artifacts shortly after page load; just more forgiveable
+    // visual artifacts shortly after page load; just more forgivable
     // ones).
     //
     // This MessageList is defined similarly to home_message_list,
@@ -500,10 +499,16 @@ export function initialize(home_view_loaded) {
         filter: new Filter([{operator: "in", operand: "home"}]),
         excludes_muted_topics: true,
     });
+    // TODO: Ideally we'd have loading indicators for recent topics at
+    // both top and bottom be managed by load_messages, but that
+    // likely depends on other reorganizations of the early loading
+    // sequence.
+    recent_topics_ui.show_loading_indicator();
     load_messages({
         anchor: "newest",
         num_before: consts.recent_topics_initial_fetch_size,
         num_after: 0,
         msg_list: recent_topics_message_list,
+        cont: recent_topics_ui.hide_loading_indicator,
     });
 }

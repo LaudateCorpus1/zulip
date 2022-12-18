@@ -10,7 +10,7 @@ tasks you need to go back to or documents you reference often.
 {tab|desktop}
 {!message-actions.md!}
 
-1. Click the star (<i class="fa fa-star-o"></i>) icon.
+1. Click the **star** (<i class="fa fa-star-o"></i>) icon.
 
 {tab|mobile}
 
@@ -24,9 +24,9 @@ Starred messages have a filled in star (<i class="fa fa-star"></i>) to
 their right.  You can unstar a message using the same instructions
 used to star it.
 
-## Access your starred messages
+## View your starred messages
 
-You can access your starred messages by clicking **Starred messages** in the
+You can view your starred messages by clicking **Starred messages** in the
 left sidebar, or by [searching](/help/search-for-messages) for `is:starred`.
 
 By default, Zulip displays the number of starred messages in the left
@@ -42,3 +42,8 @@ can disable that feature.
 1. Under **Advanced**, toggle **Show counts for starred messages**.
 
 {end_tabs}
+
+## Related articles
+
+* [Marking messages as unread](/help/marking-messages-as-unread)
+* [Reading strategies](/help/reading-strategies)

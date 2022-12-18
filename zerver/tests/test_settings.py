@@ -1,10 +1,10 @@
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
 from unittest import mock
 
 import orjson
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest
 from django.test import override_settings
 
 from zerver.lib.initial_password import initial_password
@@ -19,6 +19,9 @@ from zerver.models import (
     UserProfile,
     get_user_profile_by_api_key,
 )
+
+if TYPE_CHECKING:
+    from django.test.client import _MonkeyPatchedWSGIResponse as TestHttpResponse
 
 
 class ChangeSettingsTest(ZulipTestCase):
@@ -118,9 +121,11 @@ class ChangeSettingsTest(ZulipTestCase):
         json_result = self.client_patch("/json/settings", dict(full_name="x" * 1000))
         self.assert_json_error(json_result, "Name too long!")
 
-        # Now try a too-short name
-        json_result = self.client_patch("/json/settings", dict(full_name="x"))
-        self.assert_json_error(json_result, "Name too short!")
+        # Now try too-short names
+        short_names = ["", "x"]
+        for name in short_names:
+            json_result = self.client_patch("/json/settings", dict(full_name=name))
+            self.assert_json_error(json_result, "Name too short!")
 
     def test_illegal_characters_in_name_changes(self) -> None:
         self.login("hamlet")
@@ -350,8 +355,9 @@ class ChangeSettingsTest(ZulipTestCase):
             default_language="de",
             default_view="all_messages",
             emojiset="google",
-            timezone="US/Mountain",
+            timezone="America/Denver",
             demote_inactive_streams=2,
+            user_list_style=2,
             color_scheme=2,
             email_notifications_batching_period_seconds=100,
             notification_sound="ding",
@@ -364,7 +370,7 @@ class ChangeSettingsTest(ZulipTestCase):
         if test_value is None:
             raise AssertionError(f"No test created for {setting_name}")
 
-        if setting_name not in ["demote_inactive_streams", "color_scheme"]:
+        if setting_name not in ["demote_inactive_streams", "user_list_style", "color_scheme"]:
             data = {setting_name: test_value}
         else:
             data = {setting_name: orjson.dumps(test_value).decode()}
@@ -390,6 +396,7 @@ class ChangeSettingsTest(ZulipTestCase):
             emojiset="apple",
             timezone="invalid_US/Mountain",
             demote_inactive_streams=10,
+            user_list_style=10,
             color_scheme=10,
             notification_sound="invalid_sound",
             desktop_icon_count_display=10,
@@ -407,11 +414,13 @@ class ChangeSettingsTest(ZulipTestCase):
             expected_error_msg = f"Invalid {setting_name}"
             if setting_name == "notification_sound":
                 expected_error_msg = f"Invalid notification sound '{invalid_value}'"
+            elif setting_name == "timezone":
+                expected_error_msg = "timezone is not a recognized time zone"
             self.assert_json_error(result, expected_error_msg)
             hamlet = self.example_user("hamlet")
             self.assertNotEqual(getattr(hamlet, setting_name), invalid_value)
 
-    def do_change_emojiset(self, emojiset: str) -> HttpResponse:
+    def do_change_emojiset(self, emojiset: str) -> "TestHttpResponse":
         self.login("hamlet")
         data = {"emojiset": emojiset}
         result = self.client_patch("/json/settings", data)
@@ -495,9 +504,18 @@ class UserChangesTest(ZulipTestCase):
         for api_key in old_api_keys:
             self.assertEqual(get_user_profile_by_api_key(api_key).email, email)
 
+        # First verify this endpoint is not registered in the /json/... path
+        # to prevent access with only a session.
         result = self.client_post("/json/users/me/api_key/regenerate")
-        self.assert_json_success(result)
-        new_api_key = result.json()["api_key"]
+        self.assertEqual(result.status_code, 404)
+
+        # A logged-in session doesn't allow access to an /api/v1/ endpoint
+        # of course.
+        result = self.client_post("/api/v1/users/me/api_key/regenerate")
+        self.assertEqual(result.status_code, 401)
+
+        result = self.api_post(user, "/api/v1/users/me/api_key/regenerate")
+        new_api_key = self.assert_json_success(result)["api_key"]
         self.assertNotIn(new_api_key, old_api_keys)
         user = self.example_user("hamlet")
         current_api_keys = get_all_api_keys(user)

@@ -4,35 +4,19 @@
 # be able to be deployed on their own host.
 class zulip::profile::base {
   include zulip::common
-  case $::osfamily {
-    'debian': {
+  case $::os['family'] {
+    'Debian': {
       include zulip::apt_repository
     }
-    'redhat': {
+    'RedHat': {
       include zulip::yum_repository
     }
     default: {
       fail('osfamily not supported')
     }
   }
-  case $::osfamily {
-    'debian': {
-      $release_name = $::operatingsystemrelease ? {
-        # Debian releases
-        /^7\.[0-9]*$/  => 'wheezy',
-        /^8\.[0-9]*$/  => 'jessie',
-        /^9\.[0-9]*$/  => 'stretch',
-        /^10\.[0-9]*$/ => 'buster',
-        /^11\.[0-9]*$/ => 'bullseye',
-        # Ubuntu releases
-        '12.04' => 'precise',
-        '14.04' => 'trusty',
-        '15.04' => 'vivid',
-        '15.10' => 'wily',
-        '16.04' => 'xenial',
-        '18.04' => 'bionic',
-        '20.04' => 'focal',
-      }
+  case $::os['family'] {
+    'Debian': {
       $base_packages = [
         # Basics
         'python3',
@@ -45,7 +29,7 @@ class zulip::profile::base {
         # Used to read /etc/zulip/zulip.conf for `zulipconf` Puppet function
         'crudini',
         # Accurate time is essential
-        'ntp',
+        'chrony',
         # Used for tools like sponge
         'moreutils',
         # Nagios monitoring plugins
@@ -56,8 +40,7 @@ class zulip::profile::base {
         'cron',
       ]
     }
-    'redhat': {
-      $release_name = "${::operatingsystem}${::operatingsystemmajrelease}"
+    'RedHat': {
       $base_packages = [
         'python3',
         'python3-pyyaml',
@@ -66,7 +49,7 @@ class zulip::profile::base {
         'curl',
         'jq',
         'crudini',
-        'ntp',
+        'chrony',
         'moreutils',
         'nmap-ncat',
         'nagios-plugins',  # there is no dummy package on CentOS 7
@@ -77,7 +60,9 @@ class zulip::profile::base {
       fail('osfamily not supported')
     }
   }
-  package { $base_packages: ensure => 'installed' }
+  package { 'ntp': ensure => purged, before => Package['chrony'] }
+  service { 'chrony': require => Package['chrony'] }
+  package { $base_packages: ensure => installed }
 
   group { 'zulip':
     ensure => present,
@@ -93,21 +78,21 @@ class zulip::profile::base {
   }
 
   file { '/etc/zulip':
-    ensure => 'directory',
+    ensure => directory,
     mode   => '0644',
     owner  => 'zulip',
     group  => 'zulip',
-    links  => 'follow',
+    links  => follow,
   }
   file { ['/etc/zulip/zulip.conf', '/etc/zulip/settings.py']:
-    ensure  => 'file',
+    ensure  => file,
     require => File['/etc/zulip'],
     mode    => '0644',
     owner   => 'zulip',
     group   => 'zulip',
   }
   file { '/etc/zulip/zulip-secrets.conf':
-    ensure  => 'file',
+    ensure  => file,
     require => File['/etc/zulip'],
     mode    => '0640',
     owner   => 'zulip',
@@ -130,7 +115,7 @@ class zulip::profile::base {
   }
 
   file { '/var/log/zulip':
-    ensure => 'directory',
+    ensure => directory,
     owner  => 'zulip',
     group  => 'zulip',
     mode   => '0640',

@@ -6,7 +6,7 @@ from django.utils.timezone import now as timezone_now
 
 from zerver.lib.stream_topic import StreamTopicTarget
 from zerver.lib.test_classes import ZulipTestCase
-from zerver.lib.topic_mutes import (
+from zerver.lib.user_topics import (
     add_topic_mute,
     get_topic_mutes,
     remove_topic_mute,
@@ -53,7 +53,7 @@ class MutedTopicsTests(ZulipTestCase):
             topic_name=topic_name,
         )
 
-        user_ids = stream_topic_target.user_ids_muting_topic()
+        user_ids = stream_topic_target.user_ids_with_visibility_policy(UserTopic.MUTED)
         self.assertEqual(user_ids, set())
 
         def mute_topic_for_user(user: UserProfile) -> None:
@@ -67,7 +67,7 @@ class MutedTopicsTests(ZulipTestCase):
             )
 
         mute_topic_for_user(hamlet)
-        user_ids = stream_topic_target.user_ids_muting_topic()
+        user_ids = stream_topic_target.user_ids_with_visibility_policy(UserTopic.MUTED)
         self.assertEqual(user_ids, {hamlet.id})
         hamlet_date_muted = UserTopic.objects.filter(
             user_profile=hamlet, visibility_policy=UserTopic.MUTED
@@ -75,7 +75,7 @@ class MutedTopicsTests(ZulipTestCase):
         self.assertTrue(timezone_now() - hamlet_date_muted <= timedelta(seconds=100))
 
         mute_topic_for_user(cordelia)
-        user_ids = stream_topic_target.user_ids_muting_topic()
+        user_ids = stream_topic_target.user_ids_with_visibility_policy(UserTopic.MUTED)
         self.assertEqual(user_ids, {hamlet.id, cordelia.id})
         cordelia_date_muted = UserTopic.objects.filter(
             user_profile=cordelia, visibility_policy=UserTopic.MUTED
@@ -105,7 +105,6 @@ class MutedTopicsTests(ZulipTestCase):
                 self.assert_json_success(result)
 
             self.assertIn((stream.name, "Verona3", mock_date_muted), get_topic_mutes(user))
-            self.assertTrue(topic_is_muted(user, stream.id, "Verona3"))
             self.assertTrue(topic_is_muted(user, stream.id, "verona3"))
 
             remove_topic_mute(
@@ -113,6 +112,24 @@ class MutedTopicsTests(ZulipTestCase):
                 stream_id=stream.id,
                 topic_name="Verona3",
             )
+
+        # Verify the error handling for the database level
+        # IntegrityError we'll get with a race between two processes
+        # trying to mute the topic.  To do this, we patch the
+        # topic_is_muted function to always return False when trying
+        # to mute a topic that is already muted.
+        assert stream.recipient is not None
+        add_topic_mute(
+            user_profile=user,
+            stream_id=stream.id,
+            recipient_id=stream.recipient.id,
+            topic_name="Verona3",
+            date_muted=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
+
+        with mock.patch("zerver.views.muting.topic_is_muted", return_value=False):
+            result = self.api_patch(user, url, data)
+            self.assert_json_error(result, "Topic already muted")
 
     def test_remove_muted_topic(self) -> None:
         user = self.example_user("hamlet")
@@ -170,7 +187,7 @@ class MutedTopicsTests(ZulipTestCase):
 
         data = {"stream_id": 999999999, "topic": "Verona3", "op": "add"}
         result = self.api_patch(user, url, data)
-        self.assert_json_error(result, "Invalid stream id")
+        self.assert_json_error(result, "Invalid stream ID")
 
         data = {"topic": "Verona3", "op": "add"}
         result = self.api_patch(user, url, data)

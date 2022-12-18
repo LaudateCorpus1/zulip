@@ -57,15 +57,25 @@
             display: block;
             font-style: italic;
             color: hsl(0, 0%, 67%);
+            position: absolute;
         }
 
         .fa-check-square-o,
         .fa-square-o {
             padding: 0 2px;
+            width: 10px;
         }
 
         .fa-lock {
             padding-right: 3px;
+        }
+
+        .fa-envelope {
+            font-size: 0.7rem;
+            margin-right: 2px;
+            position: relative;
+            top: -1px;
+            opacity: 0.6;
         }
 
         .table_fix_head {
@@ -79,16 +89,6 @@
         .table_fix_head table {
             /* To keep border properties to the thead th. */
             border-collapse: separate;
-            /* For visual reasons, in a message feed, we require a large
-             * bottom_whitespace to make it convenient to display new
-             * messages as they come in and prevent occluding the last
-             * message with an open compose box. Here, the bottom item
-             * is rarely interesting context for a message one is
-             * composing, but we do need at least 41px to allow the
-             * close-compose-box UI element (including border) to not
-             * overlap content. Add some more margin so that user
-             * can clearly see the end of the topics.
-             */
             margin-bottom: 100px;
         }
 
@@ -109,6 +109,10 @@
 
         #recent_topics_search {
             flex-grow: 1;
+            padding-right: 20px;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            overflow: hidden;
         }
 
         .clear_search_button {
@@ -128,6 +132,16 @@
                 background-color: hsl(0, 0%, 80%);
                 outline: 0;
             }
+
+            &.fake_disabled_button {
+                cursor: not-allowed;
+                opacity: 0.5;
+
+                &:hover {
+                    background-color: hsl(0, 0%, 100%);
+                    border-color: hsl(0, 0%, 80%);
+                }
+            }
         }
 
         .btn-recent-selected {
@@ -135,8 +149,31 @@
         }
 
         .unread_count {
-            margin-right: 10px;
+            /* Focus underline can only occupy the total length of the unread count */
+            margin-right: 1px;
+            margin-left: 1px;
             align-self: center;
+            background-color: hsl(105, 2%, 50%);
+        }
+
+        .unread_mention_info:not(:empty) {
+            margin-right: -5px;
+            /* Match with its font-size. */
+            line-height: 14px;
+        }
+
+        .unread_hidden {
+            visibility: hidden;
+        }
+
+        .flex_container_pm {
+            /* Flex container to fit in user circle and group icon */
+            display: flex;
+            justify-content: space-between;
+
+            .tippy-content {
+                font-weight: 400;
+            }
         }
 
         .flex_container {
@@ -146,6 +183,12 @@
 
         .flex_container .left_part {
             flex-wrap: wrap;
+
+            .user_status_icon_wrapper {
+                display: inline-flex;
+                align-items: center;
+                flex-direction: row;
+            }
         }
 
         .flex_container .right_part {
@@ -154,8 +197,24 @@
         }
 
         .recent_topic_actions {
+            /* To add spacing between unread count and mute icon */
+            margin-left: 10px;
             display: flex;
             flex-flow: row nowrap;
+        }
+
+        .mention_in_unread {
+            opacity: 0.7;
+        }
+
+        .recent_topic_actions.dummy_action_button {
+            visibility: hidden;
+        }
+
+        .recent_topic_actions .recent_topics_focusable {
+            display: flex;
+            align-items: center;
+            padding-bottom: 3px;
         }
 
         .recent_topics_participants {
@@ -183,6 +242,7 @@
             padding: 0 1.5px;
             position: relative;
             min-width: 24px;
+            cursor: pointer;
 
             .fa-user {
                 opacity: 0.7;
@@ -253,6 +313,8 @@
 
             &[data-sort]:hover {
                 cursor: pointer;
+                background-color: hsla(0, 0%, 95%);
+                transition: background-color 100ms ease-in-out;
 
                 &:not(.active)::after {
                     opacity: 0.3;
@@ -264,11 +326,35 @@
            as new messages arrive from the server. */
         .recent_topic_stream {
             width: 25%;
-            padding: 8px;
+            padding: 8px 0 8px 8px;
+
+            a {
+                word-break: break-word;
+                hyphens: auto;
+            }
         }
 
         .recent_topic_name {
             width: 40%;
+
+            a {
+                word-break: break-word;
+                /* No hyphes for word break since it caused hyphens to appear before
+                   the ellipsis `longText-...` which is not desirable. Ellipsis appears due
+                   to the line clamp applied below.
+                */
+            }
+
+            .line_clamp {
+                /* This -webkit-box display property is webkit-specific, but
+                   it appears that line clamping works fine for this component
+                   on Firefox anyway. */
+                /* stylelint-disable-next-line value-no-vendor-prefix */
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }
         }
 
         .recent_topic_users {
@@ -305,6 +391,75 @@
                 font-size: 15px;
             }
         }
+
+        .private_conversation_row {
+            .recent_topic_stream {
+                /* Reduce padding of stream section so that user status
+                   icon can have more padding without impacting height of the row */
+                padding: 5px 0 5px 8px;
+            }
+
+            .pm_status_icon {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                /* Increasing vertical padding any further will increase
+                the height of the row. */
+                padding: 8px;
+                position: relative;
+                right: -8px; /* To cancel padding-right */
+                /* To accommodate fa-group icon */
+                width: 14px;
+                height: 14px;
+
+                .fa-group {
+                    font-size: 0.8rem;
+                    /* color: hsl(105, 2%, 50%); */
+                    opacity: 0.6;
+                }
+
+                .user_circle {
+                    /* Shrink the user activity circle for the recent topics context. */
+                    width: 7px;
+                    height: 7px;
+                    float: left;
+                    position: unset;
+                }
+            }
+        }
+    }
+
+    #recent_topics_bottom_whitespace {
+        /* For visual reasons, in a message feed, we require a large
+         * bottom_whitespace to make it convenient to display new
+         * messages as they come in and prevent occluding the last
+         * message with an open compose box. Here, the bottom item
+         * is rarely interesting context for a message one is
+         * composing, but we do need at least 41px to allow the
+         * close-compose-box UI element (including border) to not
+         * overlap content. Add some more margin so that user
+         * can clearly see the end of the topics.
+         */
+        height: 120px;
+
+        #recent_topics_loading_messages_indicator,
+        .bottom-messages-logo {
+            display: block;
+            position: absolute;
+            top: 200px;
+            left: 0;
+            right: 0;
+            margin: auto;
+
+            .loading_indicator_spinner {
+                position: relative;
+                top: -7px;
+            }
+        }
+    }
+
+    .stream-privacy .zulip-icon.zulip-icon-globe {
+        left: -1px;
     }
 }
 

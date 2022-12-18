@@ -38,7 +38,7 @@ organization in Zulip). The following files are involved in the process:
 - `zerver/models.py`: Defines the database model.
 - `zerver/views/realm.py`: The view function that implements the API endpoint
   for editing realm objects.
-- `zerver/lib/actions.py`: Contains code for updating and interacting with the database.
+- `zerver/actions/realm_settings.py`: Contains code for updating and interacting with the database.
 - `zerver/lib/events.py`: Ensures that the state Zulip sends to clients is always
   consistent and correct.
 
@@ -89,7 +89,7 @@ to learn more about creating and applying database migrations.
 
 **Test your changes:** Once you've run the migration, flush memcached
 on your development server (`./scripts/setup/flush-memcached`) and then
-[restart the development server](../development/remote.html?highlight=tools%2Frun-dev.py#running-the-development-server)
+[restart the development server](../development/remote.md#running-the-development-server)
 to avoid interacting with cached objects.
 
 ### Backend changes
@@ -101,7 +101,7 @@ the flow of events even if the `property_types` framework means you don't
 have to write much code for a new setting.
 
 **Database interaction:** Add any necessary code for updating and
-interacting with the database in `zerver/lib/actions.py`. It should
+interacting with the database in `zerver/actions/realm_settings.py`. It should
 update the database and send an event announcing the change.
 
 **Application state:** Modify the `fetch_initial_state_data` and
@@ -138,7 +138,7 @@ Handlebars templates located in `static/templates`. Templates are
 precompiled as part of the build/deploy process.
 
 Zulip is fully internationalized, so when writing both HTML templates
-or JavaScript/TypeScript code that generates user-facing strings, be sure to
+or JavaScript/TypeScript/Python code that generates user-facing strings, be sure to
 [tag those strings for translation](../translating/translating.md).
 
 **Testing:** There are two types of frontend tests: node-based unit
@@ -156,10 +156,11 @@ any existing documentation that might be relevant to the new feature.
 For detailed information on the kinds of documentation Zulip has, see
 [Documentation](../documentation/overview.md).
 
-**End user documentation:** You will likely need to at least update,
-extend and link to `/help` articles that are related to your new
-feature. See [User documentation](../documentation/user.md) for more
-detailed information about writing and editing feature `/help` articles.
+**Help center documentation:** You will likely need to at least update,
+extend and link to `/help/` articles that are related to your new
+feature. [Writing help center articles](../documentation/helpcenter.md)
+provides more detailed information about writing and editing feature
+`/help/` articles.
 
 **API documentation:** A new feature will probably impact the REST API
 documentation as well, which will mean updating `zerver/openapi/zulip.yaml`
@@ -191,9 +192,9 @@ boolean field, `mandatory_topics`, to the Realm model in
 
  class Realm(models.Model):
      # ...
-     emails_restricted_to_domains: bool = models.BooleanField(default=True)
-     invite_required: bool = models.BooleanField(default=False)
-+    mandatory_topics: bool = models.BooleanField(default=False)
+     emails_restricted_to_domains = models.BooleanField(default=True)
+     invite_required = models.BooleanField(default=False)
++    mandatory_topics = models.BooleanField(default=False)
 ```
 
 The Realm model also contains an attribute, `property_types`, which
@@ -264,7 +265,7 @@ Running migrations:
 ```
 
 Once you've run the migration, restart memcached on your development
-server (`/etc/init.d/memcached restart`) and then [restart the development server](../development/remote.html?highlight=tools%2Frun-dev.py#running-the-development-server)
+server (`/etc/init.d/memcached restart`) and then [restart the development server](../development/remote.md#running-the-development-server)
 to avoid interacting with cached objects.
 
 ### Handle database interactions
@@ -289,10 +290,10 @@ gory details.
 Anyway, getting back to implementation details...
 
 If you are working on a feature that is in the realm `property_types`
-dictionary, you will not need to add code to `zerver/lib/actions.py`, but
+dictionary, you will not need to add code to `zerver/actions/realm_settings.py`, but
 we will describe what the process in that file does:
 
-In `zerver/lib/actions.py`, the function `do_set_realm_property` takes
+In `zerver/actions/realm_settings.py`, the function `do_set_realm_property` takes
 in the name of a realm property to update and the value it should
 have. This function updates the database and triggers an event to
 notify clients about the change. It uses the field's type, specified
@@ -309,7 +310,7 @@ time display format), members in a particular stream only or all
 active users in a realm.
 
 ```python
-# zerver/lib/actions.py
+# zerver/actions/realm_settings.py
 
 def do_set_realm_property(
     realm: Realm, name: str, value: Any, *, acting_user: Optional[UserProfile]
@@ -339,7 +340,7 @@ field), you'll need to create a new function to explicitly update this
 field and send an event. For example:
 
 ```python
-# zerver/lib/actions.py
+# zerver/actions/realm_settings.p
 
 def do_set_realm_authentication_methods(
     realm: Realm, authentication_methods: Dict[str, bool], *, acting_user: Optional[UserProfile]
@@ -479,8 +480,8 @@ with the new value. E.g., for `authentication_methods`, we created
 # zerver/views/realm.py
 
 # import do_set_realm_authentication_methods from actions.py
-from zerver.lib.actions import (
-    do_set_realm_message_editing,
+from zerver.actions.realm_settings import (
+    do_reactivate_realm,
     do_set_realm_authentication_methods,
     # ...
 )
@@ -538,12 +539,11 @@ Then add the new form control in `static/js/admin.js`.
 ```diff
  // static/js/admin.js
 
- function _setup_page() {
-     var options = {
+ export function build_page() {
+     const options = {
+         custom_profile_field_types: page_params.custom_profile_field_types,
+         full_name: page_params.full_name,
          realm_name: page_params.realm_name,
-         realm_description: page_params.realm_description,
-         realm_emails_restricted_to_domains: page_params.realm_emails_restricted_to_domains,
-         realm_invite_required: page_params.realm_invite_required,
          // ...
 +        realm_mandatory_topics: page_params.mandatory_topics,
          // ...
@@ -686,15 +686,15 @@ important to make sure that your new feature is well documented.
 This example feature adds new functionality that requires messages to
 have topics if the setting is enabled. A recommended way to document
 this feature would be to update and/or augment Zulip's existing
-[end user documentation (Help Center)](https://zulip.com/help/)
-to reflect your changes and additions.
+[help center documentation](https://zulip.com/help/) to reflect your
+changes and additions.
 
 At the very least, this will involve modifying (or adding) a Markdown
 file documenting the feature to `templates/zerver/help/` in the main
 Zulip server repository, where the source for Zulip's end user
 documentation is stored. Details about writing, editing and testing
 these Markdown files can be found in:
-[User documentation](../documentation/user.md).
+[Writing help center articles](../documentation/helpcenter.md).
 
 Also, new features will often impact Zulip's REST API documentation,
 which is found in `zerver/openapi/zulip.yaml`. You may have noticed

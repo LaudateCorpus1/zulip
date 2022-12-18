@@ -12,7 +12,7 @@
                     <th colspan="2" width="28%">{{t "Desktop"}}</th>
                     <th rowspan="2" width="14%" class="{{#if show_push_notifications_tooltip.push_notifications}}control-label-disabled{{/if}}">
                         {{t "Mobile"}}
-                        {{#if (not page_params.realm_push_notifications_enabled) }}
+                        {{#if (not realm_push_notifications_enabled) }}
                         <i class="fa fa-question-circle settings-info-icon tippy-zulip-tooltip" data-tippy-content="{{t 'Mobile push notifications are not configured on this server.' }}"></i>
                         {{/if}}
                     </th>
@@ -23,7 +23,7 @@
                 </tr>
                 <tr>
                     <th>{{t "Visual"}}</th>
-                    <th>{{t "Audio"}}</th>
+                    <th>{{t "Audible"}}</th>
                 </tr>
             </thead>
             <tbody>
@@ -51,7 +51,9 @@
     <div class="desktop_notifications m-10 {{#if for_realm_settings}}org-subsection-parent{{else}}subsection-parent{{/if}}">
 
         <div class="subsection-header inline-block">
-            <h3>{{t "Desktop message notifications" }}</h3>
+            <h3>{{t "Desktop message notifications" }}
+                {{> ../help_link_widget link="/help/desktop-notifications" }}
+            </h3>
             {{> settings_save_discard_widget section_name="desktop-message-settings" show_only_indicator=(not for_realm_settings) }}
         </div>
 
@@ -98,7 +100,9 @@
     <div class="mobile_notifications m-10 {{#if for_realm_settings}}org-subsection-parent{{else}}subsection-parent{{/if}}">
 
         <div class="subsection-header inline-block">
-            <h3>{{t "Mobile message notifications" }}</h3>
+            <h3>{{t "Mobile message notifications" }}
+                {{> ../help_link_widget link="/help/mobile-notifications" }}
+            </h3>
             {{> settings_save_discard_widget section_name="mobile-message-settings" show_only_indicator=(not for_realm_settings) }}
         </div>
 
@@ -115,31 +119,33 @@
     <div class="email_message_notifications m-10 {{#if for_realm_settings}}org-subsection-parent{{else}}subsection-parent{{/if}}">
 
         <div class="subsection-header inline-block">
-            <h3>{{t "Email message notifications" }}</h3>
+            <h3>{{t "Email message notifications" }}
+                {{> ../help_link_widget link="/help/email-notifications" }}
+            </h3>
             {{> settings_save_discard_widget section_name="email-message-settings" show_only_indicator=(not for_realm_settings) }}
         </div>
 
-        <div class="input-group form-horizontal">
+        <div class="input-group form-horizontal time-limit-setting">
 
             <label for="email_notifications_batching_period">
                 {{t "Delay before sending message notification emails" }}
             </label>
-            <select name="email_notifications_batching_period_seconds" class="setting_email_notifications_batching_period_seconds prop-element" data-setting-widget-type="number">
+            <select name="email_notifications_batching_period_seconds" class="setting_email_notifications_batching_period_seconds prop-element" data-setting-widget-type="time-limit">
                 {{#each email_notifications_batching_period_values}}
                     <option value="{{ this.value }}">{{ this.description }}</option>
                 {{/each}}
             </select>
-        </div>
-        <div class="dependent-block">
-            <label for="email_notification_batching_period_edit_minutes" class="inline-block">
-                {{t 'Delay period (minutes)' }}:
-            </label>
-            <input type="text"
-              name="email_notification_batching_period_edit_minutes"
-              class="email_notification_batching_period_edit_minutes admin-realm-time-limit-input prop-element"
-              data-setting-widget-type="number"
-              autocomplete="off"
-              id="{{prefix}}email_notification_batching_period_edit_minutes"/>
+            <div class="dependent-block">
+                <label for="email_notification_batching_period_edit_minutes" class="inline-block">
+                    {{t 'Delay period (minutes)' }}:
+                </label>
+                <input type="text"
+                  name="email_notification_batching_period_edit_minutes"
+                  class="email_notification_batching_period_edit_minutes admin-realm-time-limit-input"
+                  data-setting-widget-type="time-limit"
+                  autocomplete="off"
+                  id="{{prefix}}email_notification_batching_period_edit_minutes"/>
+            </div>
         </div>
 
         {{#each notification_settings.email_message_notification_settings}}

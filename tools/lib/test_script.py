@@ -3,17 +3,14 @@ import os
 import subprocess
 import sys
 from argparse import ArgumentParser
-from distutils.version import LooseVersion
 from typing import Iterable, List, Optional, Tuple
+
+import platformdirs
 
 from scripts.lib.zulip_tools import get_dev_uuid_var_path
 from version import PROVISION_VERSION
 
 ZULIP_PATH = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-def get_major_version(v: str) -> int:
-    return int(v.split(".")[0])
 
 
 def get_version_file() -> str:
@@ -30,7 +27,7 @@ properly.
 """
 
 
-def preamble(version: str) -> str:
+def preamble(version: Tuple[int, ...]) -> str:
     text = PREAMBLE.format(version, PROVISION_VERSION)
     text += "\n"
     return text
@@ -64,21 +61,16 @@ def get_provisioning_status() -> Tuple[bool, Optional[str]]:
         return True, None
 
     with open(version_file) as f:
-        version = f.read().strip()
-
-    # Normal path for people that provision--we're all good!
-    if version == PROVISION_VERSION:
-        return True, None
+        version = tuple(map(int, f.read().strip().split(".")))
 
     # We may be more provisioned than the branch we just moved to.  As
     # long as the major version hasn't changed, then we should be ok.
-    if LooseVersion(version) > LooseVersion(PROVISION_VERSION):
-        if get_major_version(version) == get_major_version(PROVISION_VERSION):
-            return True, None
-        else:
-            return False, preamble(version) + NEED_TO_DOWNGRADE
-
-    return False, preamble(version) + NEED_TO_UPGRADE
+    if version < PROVISION_VERSION:
+        return False, preamble(version) + NEED_TO_UPGRADE
+    elif version < (PROVISION_VERSION[0] + 1,):
+        return True, None
+    else:
+        return False, preamble(version) + NEED_TO_DOWNGRADE
 
 
 def assert_provisioning_status_ok(skip_provision_check: bool) -> None:
@@ -114,6 +106,10 @@ def find_js_test_files(test_dir: str, files: Iterable[str]) -> List[str]:
             ),
             default=file,
         )
+
+        if not os.path.isfile(file):
+            raise Exception(f"Cannot find a matching file for '{file}' in '{test_dir}'")
+
         test_files.append(os.path.abspath(file))
 
     if not test_files:
@@ -126,9 +122,12 @@ def find_js_test_files(test_dir: str, files: Iterable[str]) -> List[str]:
 
 def prepare_puppeteer_run(is_firefox: bool = False) -> None:
     os.chdir(ZULIP_PATH)
+    download_path = platformdirs.user_cache_dir("zulip/puppeteer-download")
+    os.makedirs(download_path, exist_ok=True)
+    os.environ["PUPPETEER_DOWNLOAD_PATH"] = download_path
     # This will determine if the browser will be firefox or chrome.
     os.environ["PUPPETEER_PRODUCT"] = "firefox" if is_firefox else "chrome"
-    subprocess.check_call(["node", "node_modules/puppeteer/install.js"])
+    subprocess.check_call(["node", "install.js"], cwd="node_modules/puppeteer")
     os.makedirs("var/puppeteer", exist_ok=True)
-    for f in glob.glob("var/puppeteer/puppeteer-failure*.png"):
+    for f in glob.glob("var/puppeteer/failure-*.png"):
         os.remove(f)

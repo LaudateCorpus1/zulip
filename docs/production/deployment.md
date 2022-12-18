@@ -18,8 +18,8 @@ git clone https://github.com/zulip/zulip.git zulip-server-git
 ```
 
 and then
-[continue the normal installation instructions](../production/install.html#step-2-install-zulip).
-You can also [upgrade Zulip from Git](../production/upgrade-or-modify.html#upgrading-from-a-git-repository).
+[continue the normal installation instructions](install.md#step-2-install-zulip).
+You can also [upgrade Zulip from Git](upgrade-or-modify.md#upgrading-from-a-git-repository).
 
 The most common use case for this is upgrading to `main` to get a
 feature that hasn't made it into an official release yet (often
@@ -33,14 +33,14 @@ In particular, we are always very glad to investigate problems with
 installing Zulip from `main`; they are rare and help us ensure that
 our next major release has a reliable install experience.
 
-[upgrade-to-main]: ../production/upgrade-or-modify.html#upgrading-to-main
-[upgrade-to-future-release]: ../production/upgrade-or-modify.html#upgrading-to-future-releases
+[upgrade-to-main]: upgrade-or-modify.md#upgrading-to-main
+[upgrade-to-future-release]: upgrade-or-modify.md#upgrading-to-future-releases
 
 ## Zulip in Docker
 
 Zulip has an officially supported, experimental
 [docker image](https://github.com/zulip/docker-zulip). Please note
-that Zulip's [normal installer](../production/install.md) has been
+that Zulip's [normal installer](install.md) has been
 extremely reliable for years, whereas the Docker image is new and has
 rough edges, so we recommend the normal installer unless you have a
 specific reason to prefer Docker.
@@ -49,10 +49,10 @@ specific reason to prefer Docker.
 
 The Zulip installer supports the following advanced installer options
 as well as those mentioned in the
-[install](../production/install.html#installer-options) documentation:
+[install](install.md#installer-options) documentation:
 
 - `--postgresql-version`: Sets the version of PostgreSQL that will be
-  installed. We currently support PostgreSQL 10, 11, 12, 13, and 14.
+  installed. We currently support PostgreSQL 11, 12, 13, and 14.
 
 - `--postgresql-database-name=exampledbname`: With this option, you
   can customize the default database name. If you do not set this. The
@@ -83,7 +83,7 @@ as well as those mentioned in the
 Zulip's installation process assumes it is the only application
 running on the server; though installing alongside other applications
 is not recommended, we do have [some notes on the
-process](../production/install-existing-server.md).
+process](install-existing-server.md).
 
 ## Running Zulip's service dependencies on different machines
 
@@ -132,7 +132,7 @@ below.
 
 #### Step 1: Set up Zulip
 
-Follow the [standard instructions](../production/install.md), with one
+Follow the [standard instructions](install.md), with one
 change. When running the installer, pass the `--no-init-db`
 flag, e.g.:
 
@@ -221,7 +221,7 @@ configure that as follows:
 We also have documentation for a Zulip server [using HTTP][using-http] for use
 behind reverse proxies.
 
-[using-http]: ../production/deployment.html#configuring-zulip-to-allow-http
+[using-http]: #configuring-zulip-to-allow-http
 
 ## Customizing the outgoing HTTP proxy
 
@@ -269,10 +269,23 @@ In Zulip 4.7 and older, to enable SSRF protection via Smokescreen, you
 will need to explicitly add the `zulip::profile::smokescreen` Puppet
 class, and configure the `[http_proxy]` block as above.
 
-[proxy.enable_for_camo]: #enable-for-camo
+[proxy.enable_for_camo]: #enable_for_camo
 [smokescreen]: https://github.com/stripe/smokescreen
 [smokescreen-acls]: https://github.com/stripe/smokescreen#acls
 [ssrf]: https://owasp.org/www-community/attacks/Server_Side_Request_Forgery
+
+### S3 file storage requests and outgoing proxies
+
+By default, the [S3 file storage backend][s3] bypasses the Smokescreen
+proxy, because when running on EC2 it may require metadata from the
+IMDS metadata endpoint, which resides on the internal IP address
+169.254.169.254 and would thus be blocked by Smokescreen.
+
+If your S3-compatible storage backend requires use of Smokescreen or
+some other proxy, you can override this default by setting
+`S3_SKIP_PROXY = False` in `/etc/zulip/settings.py`.
+
+[s3]: upload-backends.md#s3-backend-configuration
 
 ## Putting the Zulip application behind a reverse proxy
 
@@ -284,18 +297,20 @@ variable reverse proxy implementations.
 
 If your Zulip server will not be on the public Internet, we recommend,
 installing with the `--self-signed-cert` option (rather than the
-`--certbot` option), since CertBot requires the server to be on the
+`--certbot` option), since Certbot requires the server to be on the
 public Internet.
 
 #### Configuring Zulip to allow HTTP
 
-Depending on your environment, you may want the reverse proxy to talk
-to the Zulip server over HTTP; this can be secure when the Zulip
-server is not directly exposed to the public Internet.
+Zulip requires clients to connect to Zulip servers over the secure
+HTTPS protocol; the insecure HTTP protocol is not supported. However,
+we do support using a reverse proxy that speaks HTTPS to clients and
+connects to the Zulip server over HTTP; this can be secure when the
+Zulip server is not directly exposed to the public Internet.
 
-After installing the Zulip server as
-[described above](#installer-options), you can configure Zulip to talk
-HTTP as follows:
+After installing the Zulip server as [described
+above](#installer-options), you can configure Zulip to accept HTTP
+requests from a reverse proxy as follows:
 
 1. Add the following block to `/etc/zulip/zulip.conf`:
 
@@ -314,14 +329,20 @@ HTTP as follows:
 
 #### Configuring Zulip to trust proxies
 
-Before placing Zulip behind a reverse proxy, it needs to be configured to trust
-the client IP addresses that the proxy reports. This is important to have
-accurate IP addresses in server logs, as well as in notification emails which
-are sent to end users.
+Before placing Zulip behind a reverse proxy, it needs to be configured
+to trust the client IP addresses that the proxy reports via the
+`X-Forwarded-For` header. This is important to have accurate IP
+addresses in server logs, as well as in notification emails which are
+sent to end users. Zulip doesn't default to trusting all
+`X-Forwarded-For` headers, because doing so would allow clients to
+spoof any IP address; we specify which IP addresses are the Zulip
+server's incoming proxies, so we know how much of the
+`X-Forwarded-For` header to trust.
 
 1. Determine the IP addresses of all reverse proxies you are setting up, as seen
    from the Zulip host. Depending on your network setup, these may not be the
-   same as the public IP addresses of the reverse proxies.
+   same as the public IP addresses of the reverse proxies. These can also be IP
+   address ranges, as expressed in CIDR notation.
 
 1. Add the following block to `/etc/zulip/zulip.conf`.
 
@@ -341,43 +362,53 @@ are sent to end users.
 
 ### nginx configuration
 
-For `nginx` configuration, there's two things you need to set up:
+Below is a working example of a full nginx configuration. It assumes
+that your Zulip server sits at `https://10.10.10.10:443`; see
+[above](#configuring-zulip-to-allow-http) to switch to HTTP.
 
-- The root `nginx.conf` file. We recommend using
-  `/etc/nginx/nginx.conf` from your Zulip server for our recommended
-  settings. E.g. if you don't set `client_max_body_size`, it won't be
-  possible to upload large files to your Zulip server.
-- The `nginx` site-specific configuration (in
-  `/etc/nginx/sites-available`) for the Zulip app. The following
-  example is a good starting point:
+1. Follow the instructions to [configure Zulip to trust
+   proxies](#configuring-zulip-to-trust-proxies).
 
-```nginx
-server {
-        listen                  443 ssl http2;
-        listen                  [::]:443 ssl http2;
-        server_name             zulip.example.net;
+1. Configure the root `nginx.conf` file. We recommend using
+   `/etc/nginx/nginx.conf` from your Zulip server for our recommended
+   settings. E.g. if you don't set `client_max_body_size`, it won't be
+   possible to upload large files to your Zulip server.
 
-        ssl_certificate         /path/to/fullchain-cert.pem;
-        ssl_certificate_key     /path/to/private-key.pem;
+1. Configure the `nginx` site-specific configuration (in
+   `/etc/nginx/sites-available`) for the Zulip app. The following
+   example is a good starting point:
 
-        location / {
-                proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header        Host $http_host;
-                proxy_http_version      1.1;
-                proxy_buffering         off;
-                proxy_read_timeout      20m;
-                proxy_pass              https://zulip-upstream-host;
-        }
-}
-```
+   ```nginx
+   server {
+           listen 80;
+           listen [::]:80;
+           location / {
+                   return 301 https://$host$request_uri;
+           }
+   }
 
-Don't forget to update `server_name`, `ssl_certificate`,
-`ssl_certificate_key` and `proxy_pass` with the appropriate values for
-your installation.
+   server {
+           listen                  443 ssl http2;
+           listen                  [::]:443 ssl http2;
+           server_name             zulip.example.com;
 
-On the Zulip side, you will need to add the `nginx` server IP as a trusted
-reverse proxy. Follow the instructions to [configure Zulip to trust
-proxies](#configuring-zulip-to-trust-proxies).
+           ssl_certificate         /etc/letsencrypt/live/zulip.example.com/fullchain.pem;
+           ssl_certificate_key     /etc/letsencrypt/live/zulip.example.com/privkey.pem;
+
+           location / {
+                   proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
+                   proxy_set_header        Host $http_host;
+                   proxy_http_version      1.1;
+                   proxy_buffering         off;
+                   proxy_read_timeout      20m;
+                   proxy_pass              https://10.10.10.10:443;
+           }
+   }
+   ```
+
+   Don't forget to update `server_name`, `ssl_certificate`,
+   `ssl_certificate_key` and `proxy_pass` with the appropriate values
+   for your deployment.
 
 [nginx-proxy-longpolling-config]: https://github.com/zulip/zulip/blob/main/puppet/zulip/files/nginx/zulip-include-common/proxy_longpolling
 [standalone.pp]: https://github.com/zulip/zulip/blob/main/puppet/zulip/manifests/profile/standalone.pp
@@ -386,26 +417,24 @@ proxies](#configuring-zulip-to-trust-proxies).
 ### Apache2 configuration
 
 Below is a working example of a full Apache2 configuration. It assumes
-that your Zulip sits at `http://localhost:5080`. You first need to
-make the following changes in two configuration files.
+that your Zulip server sits at `https://internal.zulip.hostname:443`.
+Note that if you wish to use SSL to connect to the Zulip server,
+Apache requires you use the hostname, not the IP address; see
+[above](#configuring-zulip-to-allow-http) to switch to HTTP.
 
-1. Follow the instructions for [Configure Zulip to allow HTTP](#configuring-zulip-to-allow-http).
+1. Follow the instructions to [configure Zulip to trust
+   proxies](#configuring-zulip-to-trust-proxies).
 
-2. Add the following to `/etc/zulip/settings.py`:
+1. Set `USE_X_FORWARDED_HOST = True` in `/etc/zulip/settings.py` and
+   restart Zulip.
 
-   ```python
-   EXTERNAL_HOST = 'zulip.example.com'
-   ALLOWED_HOSTS = ['zulip.example.com', '127.0.0.1']
-   USE_X_FORWARDED_HOST = True
+1. Enable some required Apache modules:
+
+   ```
+   a2enmod ssl proxy proxy_http headers rewrite
    ```
 
-3. Restart your Zulip server with `/home/zulip/deployments/current/scripts/restart-server`.
-
-4. Follow the instructions to [configure Zulip to trust
-   proxies](#configuring-zulip-to-trust-proxies). For this example, the reverse
-   proxy IP would be `127.0.0.1`.
-
-5. Create an Apache2 virtual host configuration file, similar to the
+1. Create an Apache2 virtual host configuration file, similar to the
    following. Place it the appropriate path for your Apache2
    installation and enable it (E.g. if you use Debian or Ubuntu, then
    place it in `/etc/apache2/sites-available/zulip.example.com.conf`
@@ -423,22 +452,20 @@ make the following changes in two configuration files.
      ServerName zulip.example.com
 
      RequestHeader set "X-Forwarded-Proto" expr=%{REQUEST_SCHEME}
-     RequestHeader set "X-Forwarded-SSL" expr=%{HTTPS}
 
      RewriteEngine On
-     RewriteRule /(.*)           http://localhost:5080/$1 [P,L]
+     RewriteRule /(.*)           https://internal.zulip.hostname:443/$1 [P,L]
 
      <Location />
        Require all granted
-       ProxyPass  http://localhost:5080/  timeout=300
-       ProxyPassReverse  http://localhost:5080/
-       ProxyPassReverseCookieDomain  127.0.0.1  zulip.example.com
+       ProxyPass https://internal.zulip.hostname:443/ timeout=1200
      </Location>
 
      SSLEngine on
      SSLProxyEngine on
      SSLCertificateFile /etc/letsencrypt/live/zulip.example.com/fullchain.pem
      SSLCertificateKeyFile /etc/letsencrypt/live/zulip.example.com/privkey.pem
+     # This file can be found in ~zulip/deployments/current/puppet/zulip/files/nginx/dhparam.pem
      SSLOpenSSLConfCmd DHParameters "/etc/nginx/dhparam.pem"
      SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1
      SSLCipherSuite ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384
@@ -448,24 +475,38 @@ make the following changes in two configuration files.
    </VirtualHost>
    ```
 
+   Don't forget to update `ServerName`, `RewriteRule`, `ProxyPass`,
+   `SSLCertificateFile`, and `SSLCertificateKeyFile` as are
+   appropriate for your deployment.
+
 ### HAProxy configuration
 
-If you want to use HAProxy with Zulip, this `backend` config is a good
-place to start.
+Below is a working example of a HAProxy configuration. It assumes that
+your Zulip server sits at `https://10.10.10.10:443`see
+[above](#configuring-zulip-to-allow-http) to switch to HTTP.
 
-```text
-backend zulip
-    mode http
-    balance leastconn
-    reqadd X-Forwarded-Proto:\ https
-    server zulip 10.10.10.10:80 check
-```
+1. Follow the instructions to [configure Zulip to trust
+   proxies](#configuring-zulip-to-trust-proxies).
 
-Since this configuration uses the `http` mode, you will also need to
-[configure Zulip to allow HTTP](#configuring-zulip-to-allow-http) as
-described above. Additionally, you will need to [add the the HAProxy server IP
-address as a trusted load balancer](#configuring-zulip-to-trust-proxies)
-to have Zulip respect the addresses in `X-Forwarded-For` headers.
+1. Configure HAProxy. The below is a minimal `frontend` and `backend`
+   configuration:
+
+   ```text
+   frontend zulip
+       mode http
+       bind *:80
+       bind *:443 ssl crt /etc/ssl/private/zulip-combined.crt
+       http-request redirect scheme https code 301 unless { ssl_fc }
+       default_backend zulip
+
+   backend zulip
+       mode http
+       timeout server 20m
+       server zulip 10.10.10.10:443 check ssl ca-file /etc/ssl/certs/ca-certificates.crt
+   ```
+
+   Don't forget to update `bind *:443 ssl crt` and `server` as is
+   appropriate for your deployment.
 
 ### Other proxies
 
@@ -481,20 +522,26 @@ things you need to be careful about when configuring it:
    has the actual IP addresses of clients, not the IP address of the
    proxy server.
 
-2. Ensure your proxy doesn't interfere with Zulip's use of
+1. Configure your proxy to pass along the `Host:` header as was sent
+   from the client, not the internal hostname as seen by the proxy.
+   If this is not possible, you can set `USE_X_FORWARDED_HOST = True`
+   in `/etc/zulip/settings.py`, and pass the client's `Host` header to
+   Zulip in an `X-Forwarded-Host` header.
+
+1. Ensure your proxy doesn't interfere with Zulip's use of
    long-polling for real-time push from the server to your users'
    browsers. This [nginx code snippet][nginx-proxy-longpolling-config]
    does this.
 
-The key configuration options are, for the `/json/events` and
-`/api/1/events` endpoints:
+   The key configuration options are, for the `/json/events` and
+   `/api/1/events` endpoints:
 
-- `proxy_read_timeout 1200;`. It's critical that this be
-  significantly above 60s, but the precise value isn't important.
-- `proxy_buffering off`. If you don't do this, your `nginx` proxy may
-  return occasional 502 errors to clients using Zulip's events API.
+   - `proxy_read_timeout 1200;`. It's critical that this be
+     significantly above 60s, but the precise value isn't important.
+   - `proxy_buffering off`. If you don't do this, your `nginx` proxy may
+     return occasional 502 errors to clients using Zulip's events API.
 
-3. The other tricky failure mode we've seen with `nginx` reverse
+1. The other tricky failure mode we've seen with `nginx` reverse
    proxies is that they can load-balance between the IPv4 and IPv6
    addresses for a given hostname. This can result in mysterious errors
    that can be quite difficult to debug. Be sure to declare your
@@ -508,34 +555,29 @@ The key configuration options are, for the `/json/events` and
 Zulip's configuration allows for [warm standby database
 replicas][warm-standby] as a disaster recovery solution; see the
 linked PostgreSQL documentation for details on this type of
-deployment. Zulip's configuration leverages `wal-g`, our [database
-backup solution][wal-g], and thus requires that it be configured for
-the primary and all secondary warm standby replicas.
+deployment. Zulip's configuration builds on top of `wal-g`, our
+[streaming database backup solution][wal-g], and thus requires that it
+be configured for the primary and all secondary warm standby replicas.
 
-The primary should have log-shipping enabled, with:
-
-```ini
-[postgresql]
-replication = yes
-```
-
-Warm spare replicas should have log-shipping enabled, and their
-primary replica and replication username configured:
+In addition to having `wal-g` backups configured, warm standby
+replicas should configure the hostname of their primary replica, and
+username to use for replication, in `/etc/zulip/zulip.conf`:
 
 ```ini
 [postgresql]
-replication = yes
 replication_user = replicator
 replication_primary = hostname-of-primary.example.com
 ```
 
 The `postgres` user on the replica will need to be able to
-authenticate as the `replicator` user, which may require further
-configuration of `pg_hba.conf` and client certificates on the
-replica.
+authenticate as the `replication_user` user, which may require further
+configuration of `pg_hba.conf` and client certificates on the replica.
+If you are using password authentication, you can set a
+`postgresql_replication_password` secret in
+`/etc/zulip/zulip-secrets.conf`.
 
 [warm-standby]: https://www.postgresql.org/docs/current/warm-standby.html
-[wal-g]: ../production/export-and-import.html#backup-details
+[wal-g]: export-and-import.md#database-only-backup-tools
 
 ## System and deployment configuration
 
@@ -565,7 +607,7 @@ Any other value (including the empty string) is considered false.
 A comma-separated list of the Puppet classes to install on the server.
 The most common is **`zulip::profile::standalone`**, used for a
 stand-alone single-host deployment.
-[Components](../overview/architecture-overview.html#components) of
+[Components](../overview/architecture-overview.md#components) of
 that include:
 
 - **`zulip::profile::app_frontend`**
@@ -575,13 +617,13 @@ that include:
 - **`zulip::profile::rabbitmq`**
 
 If you are using a [Apache as a single-sign-on
-authenticator](../production/authentication-methods.html#apache-based-sso-with-remote-user),
+authenticator](authentication-methods.md#apache-based-sso-with-remote_user),
 you will need to add **`zulip::apache_sso`** to the list.
 
 #### `pgroonga`
 
 Set to true if enabling the [multi-language PGroonga search
-extension](../subsystems/full-text-search.html#multi-language-full-text-search).
+extension](../subsystems/full-text-search.md#multi-language-full-text-search).
 
 ### `[deployment]`
 
@@ -604,7 +646,7 @@ for servers that are upgraded frequently by core Zulip developers.
 #### `git_repo_url`
 
 Default repository URL used when [upgrading from a Git
-repository](../production/upgrade-or-modify.html#upgrading-from-a-git-repository).
+repository](upgrade-or-modify.md#upgrading-from-a-git-repository).
 
 ### `[application_server]`
 
@@ -626,7 +668,7 @@ configure `settings.py` and set this to true to configure
 `nginx`. Remove this field to return to the local uploads backend (any
 non-empty value is currently equivalent to true).
 
-[s3-uploads]: ../production/upload-backends.html#s3-backend-configuration
+[s3-uploads]: upload-backends.md#s3-backend-configuration
 
 #### `queue_workers_multiprocess`
 
@@ -651,10 +693,6 @@ all at once. This decreases the number of 502's served to clients, at
 the cost of slightly increased memory usage, and the possibility that
 different requests will be served by different versions of the code.
 
-#### `uwsgi_buffer_size`
-
-Override the default uwsgi buffer size of 8192.
-
 #### `uwsgi_listen_backlog_limit`
 
 Override the default uwsgi backlog of 128 connections.
@@ -669,7 +707,7 @@ more than 3.5GiB of RAM, 4 on hosts with less.
 #### `mailname`
 
 The hostname that [Postfix should be configured to receive mail
-at](../production/email-gateway.html#local-delivery-setup).
+at](email-gateway.md#local-delivery-setup).
 
 ### `[postgresql]`
 
@@ -688,14 +726,6 @@ setting](https://www.postgresql.org/docs/current/runtime-config-connection.html#
 Override PostgreSQL's [`random_page_cost`
 setting](https://www.postgresql.org/docs/current/runtime-config-query.html#GUC-RANDOM-PAGE-COST)
 
-#### `replication`
-
-Set to true to enable replication to enable [log shipping replication
-between PostgreSQL servers](#postgresql-warm-standby). This should be
-enabled on the primary, as well as any replicas, and further requires
-configuration of
-[wal-g](../production/export-and-import.html#backup-details).
-
 #### `replication_primary`
 
 On the [warm standby replicas](#postgresql-warm-standby), set to the
@@ -706,7 +736,10 @@ should be done from.
 
 On the [warm standby replicas](#postgresql-warm-standby), set to the
 username that the host should authenticate to the primary PostgreSQL
-server as, for streaming replication.
+server as, for streaming replication. Authentication will be done
+based on the `pg_hba.conf` file; if you are using password
+authentication, you can set a `postgresql_replication_password` secret
+for authentication.
 
 #### `ssl_ca_file`
 
@@ -723,10 +756,19 @@ client connections.
 Set to the path to the PEM-encoded private key used to secure client
 connections.
 
+#### `ssl_mode`
+
+The mode that should be used to verify the server certificate. The
+PostgreSQL default is `prefer`, which provides no security benefit; we
+strongly suggest setting this to `require` or better if you are using
+certificate authentication. See the [PostgreSQL
+documentation](https://www.postgresql.org/docs/current/libpq-ssl.html#LIBPQ-SSL-SSLMODE-STATEMENTS)
+for potential values.
+
 #### `version`
 
 The version of PostgreSQL that is in use. Do not set by hand; use the
-[PostgreSQL upgrade tool](../production/upgrade-or-modify.html#upgrading-postgresql).
+[PostgreSQL upgrade tool](upgrade-or-modify.md#upgrading-postgresql).
 
 ### `[memcached]`
 
@@ -739,8 +781,9 @@ configured to consume; defaults to 1/8th of the total server memory.
 
 #### `ips`
 
-Comma-separated list of IP addresses or netmasks of external
-load balancers whose `X-Forwarded-For` should be respected.
+Comma-separated list of IP addresses or netmasks of external load balancers
+whose `X-Forwarded-For` should be respected. These can be individual IP
+addresses, or CIDR IP address ranges.
 
 ### `[http_proxy]`
 

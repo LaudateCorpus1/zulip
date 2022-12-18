@@ -1,6 +1,4 @@
-{generate_api_title(API_ENDPOINT_NAME)}
-
-{generate_api_description(API_ENDPOINT_NAME)}
+{generate_api_header(API_ENDPOINT_NAME)}
 
 ## Usage examples
 
@@ -28,6 +26,6 @@
 
 {generate_response_description(API_ENDPOINT_NAME)}
 
-#### Example response
+#### Example response(s)
 
 {generate_code_example|API_ENDPOINT_NAME|fixture}

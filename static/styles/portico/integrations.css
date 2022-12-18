@@ -24,10 +24,8 @@ $category-text: hsl(219, 23%, 33%);
         width: calc(100% - 100px);
         max-width: 1170px;
         margin: 0 auto;
-
+        border-radius: 10px;
         background-color: hsl(0, 0%, 100%);
-        box-shadow: 0 0 80px hsla(0, 0%, 0%, 0.12);
-
         visibility: hidden;
 
         img {
@@ -36,10 +34,6 @@ $category-text: hsl(219, 23%, 33%);
         }
 
         @media (width <= 768px) {
-            width: auto;
-        }
-
-        @media (width <= 686px) {
             width: calc(100% - 50px);
             margin: 0 auto;
         }
@@ -88,7 +82,7 @@ $category-text: hsl(219, 23%, 33%);
         font-size: 0.85em;
     }
 
-    #integration-main-text {
+    .integration-main-text {
         padding: 0 15px;
     }
 
@@ -227,7 +221,8 @@ $category-text: hsl(219, 23%, 33%);
         }
 
         @media (width <= 906px) {
-            display: block;
+            /* Change it to `display: block` when enabling catergories. */
+            display: none;
             width: 670px;
 
             h3,
@@ -344,7 +339,8 @@ $category-text: hsl(219, 23%, 33%);
             font-weight: 400;
         }
 
-        .integration-category {
+        .integration-category,
+        .realm-category {
             font-size: 0.85em;
             margin-top: 5px;
             font-weight: 400;
@@ -369,11 +365,6 @@ $category-text: hsl(219, 23%, 33%);
             font-weight: 400;
             margin: 10px 4px 0;
 
-            &.create-your-own {
-                margin-top: 27px;
-                font-size: 1.1em !important;
-            }
-
             &.with-secondary {
                 font-size: 1.1em;
                 margin-top: 4px;
@@ -397,11 +388,8 @@ $category-text: hsl(219, 23%, 33%);
                 font-size: 1em;
             }
 
-            .integration-name.create-your-own {
-                font-size: 0.95em !important;
-            }
-
-            .integration-category {
+            .integration-category,
+            .realm-category {
                 font-size: 0.8em;
             }
         }
@@ -427,7 +415,8 @@ $category-text: hsl(219, 23%, 33%);
                 font-size: 0.9em;
             }
 
-            .integration-category {
+            .integration-category,
+            .realm-category {
                 font-size: 0.77em;
             }
         }
@@ -443,8 +432,16 @@ $category-text: hsl(219, 23%, 33%);
 
         .button {
             padding: 11px 25px;
-            margin: 5px;
+            margin: 0 auto;
             font-size: 0.9em;
+        }
+    }
+    @media (max-width: 550px) {
+        .button {
+            display: flex;
+            flex-wrap: wrap;
+            width: 170px;
+            justify-content: center;
         }
     }
 
@@ -463,11 +460,13 @@ $category-text: hsl(219, 23%, 33%);
 
             .integration-lozenge {
                 width: 125px;
-                height: 170px;
+                height: auto;
+                padding: 0 5px 20px;
                 margin: 0 21px 20px;
                 order: 1;
 
-                .integration-category {
+                .integration-category,
+                .realm-category {
                     display: none;
                 }
 
@@ -503,7 +502,8 @@ $category-text: hsl(219, 23%, 33%);
             .categories {
                 order: 2;
 
-                .integration-category {
+                .integration-category,
+                .realm-category {
                     font-size: 0.9em;
                     font-weight: 400;
                     padding: 6px 3px;
@@ -569,6 +569,11 @@ $category-text: hsl(219, 23%, 33%);
                 margin: 20px 0;
             }
 
+            .logos_disclaimer {
+                font-size: 13px;
+                font-style: italic;
+            }
+
             @media (width >= 768px) {
                 width: calc(100% - 200px);
             }
@@ -584,6 +589,98 @@ $category-text: hsl(219, 23%, 33%);
 
         @media (width <= 450px) {
             padding: 0 25px;
+        }
+    }
+}
+
+.portico-landing.integrations.communities {
+    .main {
+        visibility: visible;
+        max-width: 900px;
+    }
+
+    .portico-page-heading {
+        color: hsl(0, 0%, 0%);
+        font-size: 44px;
+    }
+
+    .portico-page-subheading {
+        font-weight: 300;
+        color: hsl(0, 0%, 20%);
+        max-width: 800px;
+        line-height: 150%;
+        margin: auto;
+    }
+
+    .integration-categories-sidebar h3 {
+        color: hsl(0, 0%, 0%);
+        font-size: 20px;
+        font-weight: 600;
+    }
+
+    .catalog {
+        margin: 50px auto 0;
+        max-width: 700px;
+    }
+
+    .eligible_realms {
+        display: flex;
+        flex-direction: column;
+
+        .eligible_realm {
+            display: flex;
+            margin-bottom: 20px;
+            padding: 5px 10px;
+            border: 1px solid transparent;
+            border-radius: 4px;
+
+            &:hover {
+                border: 1px solid hsl(167, 34%, 56%);
+            }
+
+            .eligible_realm_logo {
+                display: flex;
+                margin-right: 20px;
+                width: 60px;
+                height: 60px;
+            }
+
+            .eligible_realm_details {
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+
+                .eligible_realm_name {
+                    font-weight: 400;
+                    font-size: 21px;
+                    color: hsl(220.6, 20%, 33.3%);
+                    line-height: 23px;
+                    margin: 0 0 2px;
+                }
+
+                .eligible_realm_description {
+                    font-weight: 400;
+                    font-size: 15px;
+                    color: hsl(220, 2.7%, 56.5%);
+                    line-height: 19px;
+                    margin: 0;
+                    /* For restricting text to only two lines.
+                       See https://caniuse.com/?search=display%3A%20-webkit-box for support. */
+                    overflow: hidden;
+                    display: -webkit-box; /* stylelint-disable-line value-no-vendor-prefix */
+                    -webkit-line-clamp: 2;
+                    -webkit-box-orient: vertical;
+                }
+            }
+        }
+
+        hr {
+            margin: 10px 0;
+        }
+
+        .eligible_realm_end_notice {
+            text-align: center;
+            font-size: 18px;
         }
     }
 }

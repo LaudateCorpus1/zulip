@@ -1,3 +1,6 @@
+/* Width of emoji used by user to display status. */
+$user_status_emoji_width: 24px;
+
 .right-sidebar {
     a:hover {
         text-decoration: none;
@@ -109,18 +112,16 @@
     flex-direction: row;
 }
 
+.user-name-and-status-wrapper {
+    display: block;
+    width: 100%;
+}
+
 .user-presence-link {
-    width: calc(100% - 24px);
+    width: calc(100% - $user_status_emoji_width);
 
     .status_emoji {
-        height: 16px;
-        width: 16px;
-        /* We are setting minimum width here because when the user's name is very long,
-        emoji's width decreases and causes it to break. */
-        min-width: 16px;
-        margin-left: 4px;
-        margin-right: 4px;
-        top: 8px;
+        top: 9px;
     }
 }
 
@@ -132,10 +133,53 @@
     cursor: pointer;
 }
 
+.user_list_style_values {
+    .user-name-and-status-emoji {
+        display: block;
+        width: 100%;
+        height: 20px;
+
+        .user-name {
+            display: inline-block;
+            max-width: calc(100% - $user_status_emoji_width);
+            overflow-x: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .status_emoji {
+            line-height: 20px;
+            top: -2px;
+        }
+    }
+
+    .status-text {
+        overflow-x: hidden;
+        text-overflow: ellipsis;
+    }
+}
+
 .user_sidebar_entry {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
+
+    .user-name-and-status-emoji {
+        display: flex;
+    }
+
+    .status-text {
+        display: block;
+        width: 170px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        opacity: 0.75;
+        font-size: 90%;
+    }
+
+    span.status-text:not(:empty) {
+        margin-top: -3px;
+    }
 
     .unread_count {
         display: none;
@@ -144,6 +188,7 @@
 
     &.user-with-count .unread_count {
         display: block;
+        margin-left: 4px;
     }
 }
 
@@ -208,6 +253,7 @@
     position: relative;
     cursor: pointer;
     font-size: 20px;
+    margin-right: 15px;
 }
 
 #sidebar-keyboard-shortcuts {
@@ -221,7 +267,6 @@
     margin-top: 5px;
 }
 
-/* This max-width must be synced with message_viewport.is_narrow */
 @media (width < $xl_min) {
     #userlist-toggle {
         display: block;
@@ -235,6 +280,16 @@
     }
 }
 
+#user_search_section {
+    input {
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        overflow: hidden;
+        padding-right: 20px;
+        width: calc(100% - 40px - 3px);
+    }
+}
+
 @media (width < $sm_min) {
     #userlist-toggle {
         height: 30px;
@@ -245,5 +300,22 @@
         height: 30px;
         padding-top: 0;
         padding-bottom: 0;
+    }
+}
+
+.right-sidebar-shortcuts .realm-description {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-right: 20px;
+    width: 230px;
+
+    .color_animated_button {
+        width: 100%;
+        margin-bottom: 10px;
+    }
+
+    hr {
+        width: 90%;
     }
 }

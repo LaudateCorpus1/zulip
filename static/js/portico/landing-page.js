@@ -8,24 +8,13 @@ export function path_parts() {
 }
 
 const hello_events = function () {
-    let counter = 0;
-    $(window).on("scroll", function () {
-        if (counter % 2 === 0) {
-            $(".screen.hero-screen .message-feed").css(
-                "transform",
-                "translateY(-" + $(this).scrollTop() / 5 + "px)",
-            );
-        }
-        counter += 1;
-    });
-
     $(".footer").addClass("hello");
 };
 
 const apps_events = function () {
     const info = {
         windows: {
-            image: "/static/images/landing-page/microsoft.png",
+            image: "/static/images/app-screenshots/microsoft.png",
             alt: "Windows",
             description:
                 "Zulip for Windows is even better than Zulip on the web, with a cleaner look, tray integration, native notifications, and support for multiple Zulip accounts.",
@@ -35,7 +24,7 @@ const apps_events = function () {
             app_type: "desktop",
         },
         mac: {
-            image: "/static/images/landing-page/macbook.png",
+            image: "/static/images/app-screenshots/macbook.png",
             alt: "macOS",
             description:
                 "Zulip on macOS is even better than Zulip on the web, with a cleaner look, tray integration, native notifications, and support for multiple Zulip accounts.",
@@ -51,8 +40,7 @@ const apps_events = function () {
             description: "Zulip's native Android app makes it easy to keep up while on the go.",
             show_instructions: false,
             play_store_link: "https://play.google.com/store/apps/details?id=com.zulipmobile",
-            download_link:
-                "https://github.com/zulip/zulip-mobile/releases/latest/download/app-release.apk",
+            download_link: "https://github.com/zulip/zulip-mobile/releases/latest",
             app_type: "mobile",
         },
         ios: {
@@ -64,7 +52,7 @@ const apps_events = function () {
             app_type: "mobile",
         },
         linux: {
-            image: "/static/images/landing-page/ubuntu.png",
+            image: "/static/images/app-screenshots/ubuntu.png",
             alt: "Linux",
             description:
                 "Zulip on the Linux desktop is even better than Zulip on the web, with a cleaner look, tray integration, native notifications, and support for multiple Zulip accounts.",
@@ -130,7 +118,7 @@ const events = function () {
     // get the location url like `zulip.com/features/`, cut off the trailing
     // `/` and then split by `/` to get ["zulip.com", "features"], then
     // pop the last element to get the current section (eg. `features`).
-    const location = window.location.pathname.replace(/\/#*$/, "").split(/\//).pop();
+    const location = window.location.pathname.replace(/\/$/, "").split(/\//).pop();
 
     $(`[data-on-page='${CSS.escape(location)}']`).addClass("active");
 

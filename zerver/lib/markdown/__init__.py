@@ -21,11 +21,11 @@ from typing import (
     Pattern,
     Set,
     Tuple,
+    TypedDict,
     TypeVar,
     Union,
 )
 from urllib.parse import urlencode, urljoin, urlsplit
-from xml.etree import ElementTree as etree
 from xml.etree.ElementTree import Element, SubElement
 
 import ahocorasick
@@ -45,16 +45,20 @@ from markdown.blockparser import BlockParser
 from markdown.extensions import codehilite, nl2br, sane_lists, tables
 from soupsieve import escape as css_escape
 from tlds import tld_set
-from typing_extensions import TypedDict
 
 from zerver.lib import mention as mention
-from zerver.lib.cache import NotFoundInCache, cache_with_key
+from zerver.lib.cache import cache_with_key
 from zerver.lib.camo import get_camo_url
 from zerver.lib.emoji import EMOTICON_RE, codepoint_to_name, name_to_codepoint, translate_emoticons
 from zerver.lib.exceptions import MarkdownRenderingException
 from zerver.lib.markdown import fenced_code
 from zerver.lib.markdown.fenced_code import FENCE_RE
-from zerver.lib.mention import FullNameInfo, MentionBackend, MentionData
+from zerver.lib.mention import (
+    BEFORE_MENTION_ALLOWED_REGEX,
+    FullNameInfo,
+    MentionBackend,
+    MentionData,
+)
 from zerver.lib.outgoing_http import OutgoingSession
 from zerver.lib.subdomains import is_static_or_current_realm_url
 from zerver.lib.tex import render_tex
@@ -63,7 +67,7 @@ from zerver.lib.timeout import TimeoutExpired, timeout
 from zerver.lib.timezone import common_timezones
 from zerver.lib.types import LinkifierDict
 from zerver.lib.url_encoding import encode_stream, hash_util_encode
-from zerver.lib.url_preview import preview as link_preview
+from zerver.lib.url_preview.types import UrlEmbedData, UrlOEmbedData
 from zerver.models import EmojiInfo, Message, Realm, linkifiers_for_realm
 
 ReturnT = TypeVar("ReturnT")
@@ -162,11 +166,11 @@ def verbose_compile(pattern: str) -> Pattern[str]:
     )
 
 
-STREAM_LINK_REGEX = r"""
-                     (?<![^\s'"\(,:<])            # Start after whitespace or specified chars
-                     \#\*\*                       # and after hash sign followed by double asterisks
-                         (?P<stream_name>[^\*]+)  # stream name can contain anything
-                     \*\*                         # ends by double asterisks
+STREAM_LINK_REGEX = rf"""
+                     {BEFORE_MENTION_ALLOWED_REGEX} # Start after whitespace or specified chars
+                     \#\*\*                         # and after hash sign followed by double asterisks
+                         (?P<stream_name>[^\*]+)    # stream name can contain anything
+                     \*\*                           # ends by double asterisks
                     """
 
 
@@ -183,13 +187,13 @@ def get_compiled_stream_link_regex() -> Pattern[str]:
     )
 
 
-STREAM_TOPIC_LINK_REGEX = r"""
-                     (?<![^\s'"\(,:<])             # Start after whitespace or specified chars
-                     \#\*\*                        # and after hash sign followed by double asterisks
-                         (?P<stream_name>[^\*>]+)  # stream name can contain anything except >
-                         >                         # > acts as separator
-                         (?P<topic_name>[^\*]+)     # topic name can contain anything
-                     \*\*                          # ends by double asterisks
+STREAM_TOPIC_LINK_REGEX = rf"""
+                     {BEFORE_MENTION_ALLOWED_REGEX}  # Start after whitespace or specified chars
+                     \#\*\*                          # and after hash sign followed by double asterisks
+                         (?P<stream_name>[^\*>]+)    # stream name can contain anything except >
+                         >                           # > acts as separator
+                         (?P<topic_name>[^\*]+)      # topic name can contain anything
+                     \*\*                            # ends by double asterisks
                    """
 
 
@@ -242,7 +246,7 @@ def get_web_link_regex() -> Pattern[str]:
     nested_paren_chunk = nested_paren_chunk % (inner_paren_contents,)
 
     file_links = r"| (?:file://(/[^/ ]*)+/?)" if settings.ENABLE_FILE_LINKS else r""
-    REGEX = fr"""
+    REGEX = rf"""
         (?<![^\s'"\(,:<])    # Start after whitespace or specified chars
                              # (Double-negative lookbehind to allow start-of-string)
         (?P<url>             # Main group
@@ -287,10 +291,7 @@ def rewrite_local_links_to_relative(db_data: Optional[DbData], link: str) -> str
 
     if db_data:
         realm_uri_prefix = db_data.realm_uri + "/"
-        if (
-            link.startswith(realm_uri_prefix)
-            and urllib.parse.urljoin(realm_uri_prefix, link[len(realm_uri_prefix) :]) == link
-        ):
+        if link.startswith((realm_uri_prefix + "#", realm_uri_prefix + "user_uploads/")):
             return link[len(realm_uri_prefix) :]
 
     return link
@@ -384,7 +385,7 @@ class ResultWithFamily(Generic[T]):
     family: ElementFamily
     result: T
 
-    def __init__(self, family: ElementFamily, result: T):
+    def __init__(self, family: ElementFamily, result: T) -> None:
         self.family = family
         self.result = result
 
@@ -393,7 +394,7 @@ class ElementPair:
     parent: Optional["ElementPair"]
     value: Element
 
-    def __init__(self, parent: Optional["ElementPair"], value: Element):
+    def __init__(self, parent: Optional["ElementPair"], value: Element) -> None:
         self.parent = parent
         self.value = value
 
@@ -587,13 +588,17 @@ class InlineImageProcessor(markdown.treeprocessors.Treeprocessor):
     view.
     """
 
+    def __init__(self, zmd: "ZulipMarkdown") -> None:
+        super().__init__(zmd)
+        self.zmd = zmd
+
     def run(self, root: Element) -> None:
         # Get all URLs from the blob
         found_imgs = walk_tree(root, lambda e: e if e.tag == "img" else None)
         for img in found_imgs:
             url = img.get("src")
             assert url is not None
-            if is_static_or_current_realm_url(url, self.md.zulip_realm):
+            if is_static_or_current_realm_url(url, self.zmd.zulip_realm):
                 # Don't rewrite images on our own site (e.g. emoji, user uploads).
                 continue
             img.set("src", get_camo_url(url))
@@ -602,7 +607,7 @@ class InlineImageProcessor(markdown.treeprocessors.Treeprocessor):
 class BacktickInlineProcessor(markdown.inlinepatterns.BacktickInlineProcessor):
     """Return a `<code>` element containing the matching text."""
 
-    def handleMatch(  # type: ignore[override] # supertype incompatible with supersupertype
+    def handleMatch(  # type: ignore[override] # https://github.com/python/mypy/issues/10197
         self, m: Match[str], data: str
     ) -> Union[Tuple[None, None, None], Tuple[Element, int, int]]:
         # Let upstream's implementation do its job as it is, we'll
@@ -625,10 +630,14 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
     TWITTER_MAX_TO_PREVIEW = 3
     INLINE_PREVIEW_LIMIT_PER_MESSAGE = 10
 
+    def __init__(self, zmd: "ZulipMarkdown") -> None:
+        super().__init__(zmd)
+        self.zmd = zmd
+
     def add_a(
         self,
         root: Element,
-        url: str,
+        image_url: str,
         link: str,
         title: Optional[str] = None,
         desc: Optional[str] = None,
@@ -640,8 +649,8 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
         desc = desc if desc is not None else ""
 
         # Update message.has_image attribute.
-        if "message_inline_image" in class_attr and self.md.zulip_message:
-            self.md.zulip_message.has_image = True
+        if "message_inline_image" in class_attr and self.zmd.zulip_message:
+            self.zmd.zulip_message.has_image = True
 
         if insertion_index is not None:
             div = Element("div")
@@ -660,17 +669,17 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
         if (
             settings.THUMBNAIL_IMAGES
             and (not already_thumbnailed)
-            and user_uploads_or_external(url)
+            and user_uploads_or_external(image_url)
         ):
-            # See docs/thumbnailing.md for some high-level documentation.
-            #
             # We strip leading '/' from relative URLs here to ensure
             # consistency in what gets passed to /thumbnail
-            url = url.lstrip("/")
-            img.set("src", "/thumbnail?" + urlencode({"url": url, "size": "thumbnail"}))
-            img.set("data-src-fullsize", "/thumbnail?" + urlencode({"url": url, "size": "full"}))
+            image_url = image_url.lstrip("/")
+            img.set("src", "/thumbnail?" + urlencode({"url": image_url, "size": "thumbnail"}))
+            img.set(
+                "data-src-fullsize", "/thumbnail?" + urlencode({"url": image_url, "size": "full"})
+            )
         else:
-            img.set("src", url)
+            img.set("src", image_url)
 
         if class_attr == "message_inline_ref":
             summary_div = SubElement(div, "div")
@@ -680,49 +689,44 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
             desc_div = SubElement(summary_div, "desc")
             desc_div.set("class", "message_inline_image_desc")
 
-    def add_oembed_data(self, root: Element, link: str, extracted_data: Dict[str, Any]) -> bool:
-        oembed_resource_type = extracted_data.get("type", "")
-        title = extracted_data.get("title")
-
-        if oembed_resource_type == "photo":
-            image = extracted_data.get("image")
-            if image:
-                self.add_a(root, image, link, title=title)
-                return True
-
-        elif oembed_resource_type == "video":
-            html = extracted_data["html"]
-            image = extracted_data["image"]
-            title = extracted_data.get("title")
-            description = extracted_data.get("description")
-            self.add_a(
-                root,
-                image,
-                link,
-                title,
-                description,
-                "embed-video message_inline_image",
-                html,
-                already_thumbnailed=True,
-            )
-            return True
-
-        return False
-
-    def add_embed(self, root: Element, link: str, extracted_data: Dict[str, Any]) -> None:
-        oembed = extracted_data.get("oembed", False)
-        if oembed and self.add_oembed_data(root, link, extracted_data):
+    def add_oembed_data(self, root: Element, link: str, extracted_data: UrlOEmbedData) -> None:
+        if extracted_data.image is None:
+            # Don't add an embed if an image is not found
             return
 
-        img_link = extracted_data.get("image")
-        if not img_link:
+        if extracted_data.type == "photo":
+            self.add_a(
+                root,
+                image_url=extracted_data.image,
+                link=link,
+                title=extracted_data.title,
+            )
+
+        elif extracted_data.type == "video":
+            self.add_a(
+                root,
+                image_url=extracted_data.image,
+                link=link,
+                title=extracted_data.title,
+                desc=extracted_data.description,
+                class_attr="embed-video message_inline_image",
+                data_id=extracted_data.html,
+                already_thumbnailed=True,
+            )
+
+    def add_embed(self, root: Element, link: str, extracted_data: UrlEmbedData) -> None:
+        if isinstance(extracted_data, UrlOEmbedData):
+            self.add_oembed_data(root, link, extracted_data)
+            return
+
+        if extracted_data.image is None:
             # Don't add an embed if an image is not found
             return
 
         container = SubElement(root, "div")
         container.set("class", "message_embed")
 
-        img_link = get_camo_url(img_link)
+        img_link = get_camo_url(extracted_data.image)
         img = SubElement(container, "a")
         img.set("style", "background-image: url(" + css_escape(img_link) + ")")
         img.set("href", link)
@@ -731,19 +735,17 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
         data_container = SubElement(container, "div")
         data_container.set("class", "data-container")
 
-        title = extracted_data.get("title")
-        if title:
+        if extracted_data.title:
             title_elm = SubElement(data_container, "div")
             title_elm.set("class", "message_embed_title")
             a = SubElement(title_elm, "a")
             a.set("href", link)
-            a.set("title", title)
-            a.text = title
-        description = extracted_data.get("description")
-        if description:
+            a.set("title", extracted_data.title)
+            a.text = extracted_data.title
+        if extracted_data.description:
             description_elm = SubElement(data_container, "div")
             description_elm.set("class", "message_embed_description")
-            description_elm.text = description
+            description_elm.text = extracted_data.description
 
     def get_actual_image_url(self, url: str) -> str:
         # Add specific per-site cases to convert image-preview URLs to image URLs.
@@ -761,7 +763,7 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
         return url
 
     def is_image(self, url: str) -> bool:
-        if not self.md.image_preview_enabled:
+        if not self.zmd.image_preview_enabled:
             return False
         parsed_url = urllib.parse.urlparse(url)
         # remove HTML URLs which end with image extensions that can not be shorted
@@ -836,7 +838,7 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
         return None
 
     def youtube_id(self, url: str) -> Optional[str]:
-        if not self.md.image_preview_enabled:
+        if not self.zmd.image_preview_enabled:
             return None
         # YouTube video id extraction regular expression from https://pastebin.com/KyKAFv1s
         # Slightly modified to support URLs of the forms
@@ -861,10 +863,9 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
             return None
         return match.group(2)
 
-    def youtube_title(self, extracted_data: Dict[str, Any]) -> Optional[str]:
-        title = extracted_data.get("title")
-        if title is not None:
-            return f"YouTube - {title}"
+    def youtube_title(self, extracted_data: UrlEmbedData) -> Optional[str]:
+        if extracted_data.title is not None:
+            return f"YouTube - {extracted_data.title}"
         return None
 
     def youtube_image(self, url: str) -> Optional[str]:
@@ -875,7 +876,7 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
         return None
 
     def vimeo_id(self, url: str) -> Optional[str]:
-        if not self.md.image_preview_enabled:
+        if not self.zmd.image_preview_enabled:
             return None
         # (http|https)?:\/\/(www\.)?vimeo.com\/(?:channels\/(?:\w+\/)?|groups\/([^\/]*)\/videos\/|)(\d+)(?:|\/\?)
         # If it matches, match.group('id') is the video id.
@@ -890,10 +891,9 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
             return None
         return match.group(5)
 
-    def vimeo_title(self, extracted_data: Dict[str, Any]) -> Optional[str]:
-        title = extracted_data.get("title")
-        if title is not None:
-            return f"Vimeo - {title}"
+    def vimeo_title(self, extracted_data: UrlEmbedData) -> Optional[str]:
+        if extracted_data.title is not None:
+            return f"Vimeo - {extracted_data.title}"
         return None
 
     def twitter_text(
@@ -995,7 +995,7 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
             else:
                 current_node.tail = text
 
-        db_data: Optional[DbData] = self.md.zulip_db_data
+        db_data: Optional[DbData] = self.zmd.zulip_db_data
         current_index = 0
         for item in to_process:
             # The text we want to link starts in already linked text skip it
@@ -1148,7 +1148,11 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
         (url, text) = found_url.result
         actual_url = self.get_actual_image_url(url)
         self.add_a(
-            info["parent"], actual_url, url, title=info["title"], insertion_index=info["index"]
+            info["parent"],
+            image_url=actual_url,
+            link=url,
+            title=info["title"],
+            insertion_index=info["index"],
         )
         if info["remove"] is not None:
             info["parent"].remove(info["remove"])
@@ -1181,12 +1185,10 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
         yt_id = self.youtube_id(url)
         self.add_a(
             info["parent"],
-            yt_image,
-            url,
-            None,
-            None,
-            "youtube-video message_inline_image",
-            yt_id,
+            image_url=yt_image,
+            link=url,
+            class_attr="youtube-video message_inline_image",
+            data_id=yt_id,
             insertion_index=info["index"],
             already_thumbnailed=True,
         )
@@ -1223,9 +1225,6 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
             if uncle_link not in parent_links:
                 return insertion_index
 
-    def is_absolute_url(self, url: str) -> bool:
-        return bool(urllib.parse.urlparse(url).netloc)
-
     def run(self, root: Element) -> None:
         # Get all URLs from the blob
         found_urls = walk_tree_with_family(root, self.get_url_data)
@@ -1237,9 +1236,9 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
         }
 
         # Set has_link and similar flags whenever a message is processed by Markdown
-        if self.md.zulip_message:
-            self.md.zulip_message.has_link = len(found_urls) > 0
-            self.md.zulip_message.has_image = False  # This is updated in self.add_a
+        if self.zmd.zulip_message:
+            self.zmd.zulip_message.has_link = len(found_urls) > 0
+            self.zmd.zulip_message.has_image = False  # This is updated in self.add_a
 
             for url in unique_urls:
                 # Due to rewrite_local_links_to_relative, we need to
@@ -1250,14 +1249,16 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
                 parsed_url = urllib.parse.urlsplit(urllib.parse.urljoin("/", url))
                 host = parsed_url.netloc
 
-                if host != "" and host != self.md.zulip_realm.host:
+                if host != "" and (
+                    self.zmd.zulip_realm is None or host != self.zmd.zulip_realm.host
+                ):
                     continue
 
                 if not parsed_url.path.startswith("/user_uploads/"):
                     continue
 
                 path_id = parsed_url.path[len("/user_uploads/") :]
-                self.md.zulip_rendering_result.potential_attachment_path_ids.append(path_id)
+                self.zmd.zulip_rendering_result.potential_attachment_path_ids.append(path_id)
 
         if len(found_urls) == 0:
             return
@@ -1276,12 +1277,6 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
             else:
                 continue
 
-            if not self.is_absolute_url(url):
-                if self.is_image(url):
-                    self.handle_image_inlining(root, found_url)
-                # We don't have a strong use case for doing URL preview for relative links.
-                continue
-
             dropbox_image = self.dropbox_image(url)
             if dropbox_image is not None:
                 class_attr = "message_inline_ref"
@@ -1291,8 +1286,8 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
                     # Not making use of title and description of images
                 self.add_a(
                     root,
-                    dropbox_image["image"],
-                    url,
+                    image_url=dropbox_image["image"],
+                    link=url,
                     title=dropbox_image.get("title"),
                     desc=dropbox_image.get("desc", ""),
                     class_attr=class_attr,
@@ -1308,6 +1303,13 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
                         result=(image_source, image_source),
                     )
                 self.handle_image_inlining(root, found_url)
+                continue
+
+            netloc = urlsplit(url).netloc
+            if netloc == "" or (
+                self.zmd.zulip_realm is not None and netloc == self.zmd.zulip_realm.host
+            ):
+                # We don't have a strong use case for doing URL preview for relative links.
                 continue
 
             if get_tweet_id(url) is not None:
@@ -1330,45 +1332,49 @@ class InlineInterestingLinkProcessor(markdown.treeprocessors.Treeprocessor):
                 # is enabled, but URL previews are a beta feature and YouTube
                 # previews are pretty stable.
 
-            db_data: Optional[DbData] = self.md.zulip_db_data
+            db_data: Optional[DbData] = self.zmd.zulip_db_data
             if db_data and db_data.sent_by_bot:
                 continue
 
-            if not self.md.url_embed_preview_enabled:
+            if not self.zmd.url_embed_preview_enabled:
                 continue
 
-            try:
-                extracted_data = link_preview.link_embed_data_from_cache(url)
-            except NotFoundInCache:
-                self.md.zulip_rendering_result.links_for_preview.add(url)
+            if self.zmd.url_embed_data is None or url not in self.zmd.url_embed_data:
+                self.zmd.zulip_rendering_result.links_for_preview.add(url)
                 continue
 
-            if extracted_data:
-                if youtube is not None:
-                    title = self.youtube_title(extracted_data)
-                    if title is not None:
-                        if url == text:
-                            found_url.family.child.text = title
-                        else:
-                            found_url.family.child.text = text
-                    continue
-                self.add_embed(root, url, extracted_data)
-                if self.vimeo_id(url):
-                    title = self.vimeo_title(extracted_data)
-                    if title:
-                        if url == text:
-                            found_url.family.child.text = title
-                        else:
-                            found_url.family.child.text = text
+            # Existing but being None means that we did process the
+            # URL, but it was not valid to preview.
+            extracted_data = self.zmd.url_embed_data[url]
+            if extracted_data is None:
+                continue
+
+            if youtube is not None:
+                title = self.youtube_title(extracted_data)
+                if title is not None:
+                    if url == text:
+                        found_url.family.child.text = title
+                    else:
+                        found_url.family.child.text = text
+                continue
+            self.add_embed(root, url, extracted_data)
+            if self.vimeo_id(url):
+                title = self.vimeo_title(extracted_data)
+                if title:
+                    if url == text:
+                        found_url.family.child.text = title
+                    else:
+                        found_url.family.child.text = text
 
 
 class CompiledInlineProcessor(markdown.inlinepatterns.InlineProcessor):
-    def __init__(self, compiled_re: Pattern[str], md: markdown.Markdown) -> None:
+    def __init__(self, compiled_re: Pattern[str], zmd: "ZulipMarkdown") -> None:
         # This is similar to the superclass's small __init__ function,
         # but we skip the compilation step and let the caller give us
         # a compiled regex.
         self.compiled_re = compiled_re
-        self.md = md
+        self.md = zmd
+        self.zmd = zmd
 
 
 class Timestamp(markdown.inlinepatterns.Pattern):
@@ -1404,12 +1410,13 @@ class Timestamp(markdown.inlinepatterns.Pattern):
         return time_element
 
 
-# All of our emojis(non ZWJ sequences) belong to one of these Unicode blocks:
+# All of our emojis (excluding ZWJ sequences) belong to one of these Unicode blocks:
 # \U0001f100-\U0001f1ff - Enclosed Alphanumeric Supplement
 # \U0001f200-\U0001f2ff - Enclosed Ideographic Supplement
 # \U0001f300-\U0001f5ff - Miscellaneous Symbols and Pictographs
 # \U0001f600-\U0001f64f - Emoticons (Emoji)
 # \U0001f680-\U0001f6ff - Transport and Map Symbols
+# \U0001f7e0-\U0001f7eb - Coloured Geometric Shapes (NOTE: Not Unicode standard category name)
 # \U0001f900-\U0001f9ff - Supplemental Symbols and Pictographs
 # \u2000-\u206f         - General Punctuation
 # \u2300-\u23ff         - Miscellaneous Technical
@@ -1429,6 +1436,7 @@ UNICODE_EMOJI_RE = (
     "(?P<syntax>["
     "\U0001F100-\U0001F64F"
     "\U0001F680-\U0001F6FF"
+    "\U0001F7E0-\U0001F7EB"
     "\U0001F900-\U0001F9FF"
     "\u2000-\u206F"
     "\u2300-\u27BF"
@@ -1474,19 +1482,19 @@ def make_realm_emoji(src: str, display_string: str) -> Element:
 
 
 def unicode_emoji_to_codepoint(unicode_emoji: str) -> str:
-    codepoint = hex(ord(unicode_emoji))[2:]
-    # Unicode codepoints are minimum of length 4, padded
-    # with zeroes if the length is less than zero.
-    while len(codepoint) < 4:
-        codepoint = "0" + codepoint
-    return codepoint
+    # Unicode codepoints are minimum of length 4, padded with zeroes
+    return f"{ord(unicode_emoji):04x}"
 
 
 class EmoticonTranslation(markdown.inlinepatterns.Pattern):
     """Translates emoticons like `:)` into emoji like `:smile:`."""
 
+    def __init__(self, pattern: str, zmd: "ZulipMarkdown") -> None:
+        super().__init__(pattern, zmd)
+        self.zmd = zmd
+
     def handleMatch(self, match: Match[str]) -> Optional[Element]:
-        db_data: Optional[DbData] = self.md.zulip_db_data
+        db_data: Optional[DbData] = self.zmd.zulip_db_data
         if db_data is None or not db_data.translate_emoticons:
             return None
 
@@ -1508,12 +1516,16 @@ class UnicodeEmoji(markdown.inlinepatterns.Pattern):
 
 
 class Emoji(markdown.inlinepatterns.Pattern):
+    def __init__(self, pattern: str, zmd: "ZulipMarkdown") -> None:
+        super().__init__(pattern, zmd)
+        self.zmd = zmd
+
     def handleMatch(self, match: Match[str]) -> Optional[Union[str, Element]]:
         orig_syntax = match.group("syntax")
         name = orig_syntax[1:-1]
 
         active_realm_emoji: Dict[str, EmojiInfo] = {}
-        db_data: Optional[DbData] = self.md.zulip_db_data
+        db_data: Optional[DbData] = self.zmd.zulip_db_data
         if db_data is not None:
             active_realm_emoji = db_data.active_realm_emoji
 
@@ -1534,7 +1546,7 @@ def content_has_emoji_syntax(content: str) -> bool:
 
 
 class Tex(markdown.inlinepatterns.Pattern):
-    def handleMatch(self, match: Match[str]) -> Element:
+    def handleMatch(self, match: Match[str]) -> Union[str, Element]:
         rendered = render_tex(match.group("body"), is_inline=True)
         if rendered is not None:
             return self.md.htmlStash.store(rendered)
@@ -1614,18 +1626,19 @@ def url_to_a(
 
 
 class CompiledPattern(markdown.inlinepatterns.Pattern):
-    def __init__(self, compiled_re: Pattern[str], md: markdown.Markdown) -> None:
+    def __init__(self, compiled_re: Pattern[str], zmd: "ZulipMarkdown") -> None:
         # This is similar to the superclass's small __init__ function,
         # but we skip the compilation step and let the caller give us
         # a compiled regex.
         self.compiled_re = compiled_re
-        self.md = md
+        self.md = zmd
+        self.zmd = zmd
 
 
 class AutoLink(CompiledPattern):
     def handleMatch(self, match: Match[str]) -> ElementStringNone:
         url = match.group("url")
-        db_data: Optional[DbData] = self.md.zulip_db_data
+        db_data: Optional[DbData] = self.zmd.zulip_db_data
         return url_to_a(db_data, url)
 
 
@@ -1699,7 +1712,7 @@ class BlockQuoteProcessor(markdown.blockprocessors.BlockQuoteProcessor):
         # a blank line intentionally.
         #
         # This is a new blockquote. Create a new parent element.
-        quote = etree.SubElement(parent, "blockquote")
+        quote = SubElement(parent, "blockquote")
 
         # Recursively parse block with blockquote as parent.
         # change parser state so blockquotes embedded in lists use p tags
@@ -1741,7 +1754,7 @@ class MarkdownListPreprocessor(markdown.preprocessors.Preprocessor):
         copy = lines[:]
         for i in range(len(lines) - 1):
             # Ignore anything that is inside a fenced code block but not quoted.
-            # We ignore all lines where some parent is a non quote code block.
+            # We ignore all lines where some parent is a non-quote code block.
             m = FENCE_RE.match(lines[i])
             if m:
                 fence_str = m.group("fence")
@@ -1787,7 +1800,7 @@ def prepare_linkifier_pattern(source: str) -> str:
     whitespace, or opening delimiters, won't match if there are word
     characters directly after, and saves what was matched as
     OUTER_CAPTURE_GROUP."""
-    return fr"""(?P<{BEFORE_CAPTURE_GROUP}>^|\s|['"\(,:<])(?P<{OUTER_CAPTURE_GROUP}>{source})(?P<{AFTER_CAPTURE_GROUP}>$|[^\pL\pN])"""
+    return rf"""(?P<{BEFORE_CAPTURE_GROUP}>^|\s|['"\(,:<])(?P<{OUTER_CAPTURE_GROUP}>{source})(?P<{AFTER_CAPTURE_GROUP}>$|[^\pL\pN])"""
 
 
 # Given a regular expression pattern, linkifies groups that match it
@@ -1799,35 +1812,21 @@ class LinkifierPattern(CompiledInlineProcessor):
         self,
         source_pattern: str,
         format_string: str,
-        md: markdown.Markdown,
+        zmd: "ZulipMarkdown",
     ) -> None:
         # Do not write errors to stderr (this still raises exceptions)
         options = re2.Options()
         options.log_errors = False
 
         compiled_re2 = re2.compile(prepare_linkifier_pattern(source_pattern), options=options)
+        self.format_string = percent_escape_format_string(format_string)
 
-        # Find percent-encoded bytes and escape them from the python
-        # interpolation.  That is:
-        #     %(foo)s -> %(foo)s
-        #     %%      -> %%
-        #     %ab     -> %%ab
-        #     %%ab    -> %%ab
-        #     %%%ab   -> %%%%ab
-        #
-        # We do this here, rather than before storing, to make edits
-        # to the underlying linkifier more straightforward, and
-        # because JS does not have a real formatter.
-        self.format_string = re.sub(
-            r"(?<!%)(%%)*%([a-fA-F0-9][a-fA-F0-9])", r"\1%%\2", format_string
-        )
+        super().__init__(compiled_re2, zmd)
 
-        super().__init__(compiled_re2, md)
-
-    def handleMatch(  # type: ignore[override] # supertype incompatible with supersupertype
+    def handleMatch(  # type: ignore[override] # https://github.com/python/mypy/issues/10197
         self, m: Match[str], data: str
     ) -> Union[Tuple[Element, int, int], Tuple[None, None, None]]:
-        db_data: Optional[DbData] = self.md.zulip_db_data
+        db_data: Optional[DbData] = self.zmd.zulip_db_data
         url = url_to_a(
             db_data,
             self.format_string % m.groupdict(),
@@ -1844,12 +1843,12 @@ class LinkifierPattern(CompiledInlineProcessor):
 
 
 class UserMentionPattern(CompiledInlineProcessor):
-    def handleMatch(  # type: ignore[override] # supertype incompatible with supersupertype
+    def handleMatch(  # type: ignore[override] # https://github.com/python/mypy/issues/10197
         self, m: Match[str], data: str
     ) -> Union[Tuple[None, None, None], Tuple[Element, int, int]]:
         name = m.group("match")
         silent = m.group("silent") == "_"
-        db_data: Optional[DbData] = self.md.zulip_db_data
+        db_data: Optional[DbData] = self.zmd.zulip_db_data
         if db_data is not None:
             wildcard = mention.user_mention_matches_wildcard(name)
 
@@ -1873,13 +1872,13 @@ class UserMentionPattern(CompiledInlineProcessor):
 
             if wildcard:
                 if not silent:
-                    self.md.zulip_rendering_result.mentions_wildcard = True
+                    self.zmd.zulip_rendering_result.mentions_wildcard = True
                 user_id = "*"
             elif user is not None:
                 assert isinstance(user, FullNameInfo)
 
                 if not silent:
-                    self.md.zulip_rendering_result.mentions_user_ids.add(user.id)
+                    self.zmd.zulip_rendering_result.mentions_user_ids.add(user.id)
                 name = user.full_name
                 user_id = str(user.id)
             else:
@@ -1900,18 +1899,18 @@ class UserMentionPattern(CompiledInlineProcessor):
 
 
 class UserGroupMentionPattern(CompiledInlineProcessor):
-    def handleMatch(  # type: ignore[override] # supertype incompatible with supersupertype
+    def handleMatch(  # type: ignore[override] # https://github.com/python/mypy/issues/10197
         self, m: Match[str], data: str
     ) -> Union[Tuple[None, None, None], Tuple[Element, int, int]]:
         name = m.group("match")
         silent = m.group("silent") == "_"
-        db_data: Optional[DbData] = self.md.zulip_db_data
+        db_data: Optional[DbData] = self.zmd.zulip_db_data
 
         if db_data is not None:
             user_group = db_data.mention_data.get_user_group(name)
             if user_group:
                 if not silent:
-                    self.md.zulip_rendering_result.mentions_user_group_ids.add(user_group.id)
+                    self.zmd.zulip_rendering_result.mentions_user_group_ids.add(user_group.id)
                 name = user_group.name
                 user_group_id = str(user_group.id)
             else:
@@ -1934,13 +1933,13 @@ class UserGroupMentionPattern(CompiledInlineProcessor):
 
 class StreamPattern(CompiledInlineProcessor):
     def find_stream_id(self, name: str) -> Optional[int]:
-        db_data: Optional[DbData] = self.md.zulip_db_data
+        db_data: Optional[DbData] = self.zmd.zulip_db_data
         if db_data is None:
             return None
         stream_id = db_data.stream_names.get(name)
         return stream_id
 
-    def handleMatch(  # type: ignore[override] # supertype incompatible with supersupertype
+    def handleMatch(  # type: ignore[override] # https://github.com/python/mypy/issues/10197
         self, m: Match[str], data: str
     ) -> Union[Tuple[None, None, None], Tuple[Element, int, int]]:
         name = m.group("stream_name")
@@ -1965,13 +1964,13 @@ class StreamPattern(CompiledInlineProcessor):
 
 class StreamTopicPattern(CompiledInlineProcessor):
     def find_stream_id(self, name: str) -> Optional[int]:
-        db_data: Optional[DbData] = self.md.zulip_db_data
+        db_data: Optional[DbData] = self.zmd.zulip_db_data
         if db_data is None:
             return None
         stream_id = db_data.stream_names.get(name)
         return stream_id
 
-    def handleMatch(  # type: ignore[override] # supertype incompatible with supersupertype
+    def handleMatch(  # type: ignore[override] # https://github.com/python/mypy/issues/10197
         self, m: Match[str], data: str
     ) -> Union[Tuple[None, None, None], Tuple[Element, int, int]]:
         stream_name = m.group("stream_name")
@@ -2019,6 +2018,10 @@ class AlertWordNotificationProcessor(markdown.preprocessors.Preprocessor):
         "`",
     }
 
+    def __init__(self, zmd: "ZulipMarkdown") -> None:
+        super().__init__(zmd)
+        self.zmd = zmd
+
     def check_valid_start_position(self, content: str, index: int) -> bool:
         if index <= 0 or content[index] in self.allowed_before_punctuation:
             return True
@@ -2030,14 +2033,14 @@ class AlertWordNotificationProcessor(markdown.preprocessors.Preprocessor):
         return False
 
     def run(self, lines: List[str]) -> List[str]:
-        db_data: Optional[DbData] = self.md.zulip_db_data
+        db_data: Optional[DbData] = self.zmd.zulip_db_data
         if db_data is not None:
             # We check for alert words here, the set of which are
             # dependent on which users may see this message.
             #
             # Our caller passes in the list of possible_words.  We
             # don't do any special rendering; we just append the alert words
-            # we find to the set self.md.zulip_rendering_result.user_ids_with_alert_words.
+            # we find to the set self.zmd.zulip_rendering_result.user_ids_with_alert_words.
 
             realm_alert_words_automaton = db_data.realm_alert_words_automaton
 
@@ -2049,11 +2052,15 @@ class AlertWordNotificationProcessor(markdown.preprocessors.Preprocessor):
                     if self.check_valid_start_position(
                         content, end_index - len(original_value)
                     ) and self.check_valid_end_position(content, end_index + 1):
-                        self.md.zulip_rendering_result.user_ids_with_alert_words.update(user_ids)
+                        self.zmd.zulip_rendering_result.user_ids_with_alert_words.update(user_ids)
         return lines
 
 
 class LinkInlineProcessor(markdown.inlinepatterns.LinkInlineProcessor):
+    def __init__(self, pattern: str, zmd: "ZulipMarkdown") -> None:
+        super().__init__(pattern, zmd)
+        self.zmd = zmd
+
     def zulip_specific_link_changes(self, el: Element) -> Union[None, Element]:
         href = el.get("href")
         assert href is not None
@@ -2064,7 +2071,7 @@ class LinkInlineProcessor(markdown.inlinepatterns.LinkInlineProcessor):
             return None  # no-op; the link is not processed.
 
         # Rewrite local links to be relative
-        db_data: Optional[DbData] = self.md.zulip_db_data
+        db_data: Optional[DbData] = self.zmd.zulip_db_data
         href = rewrite_local_links_to_relative(db_data, href)
 
         # Make changes to <a> tag attributes
@@ -2080,7 +2087,7 @@ class LinkInlineProcessor(markdown.inlinepatterns.LinkInlineProcessor):
 
         return el
 
-    def handleMatch(  # type: ignore[override] # supertype incompatible with supersupertype
+    def handleMatch(  # type: ignore[override] # https://github.com/python/mypy/issues/10197
         self, m: Match[str], data: str
     ) -> Union[Tuple[None, None, None], Tuple[Element, int, int]]:
         ret = super().handleMatch(m, data)
@@ -2109,13 +2116,14 @@ DEFAULT_MARKDOWN_KEY = -1
 ZEPHYR_MIRROR_MARKDOWN_KEY = -2
 
 
-class Markdown(markdown.Markdown):
+class ZulipMarkdown(markdown.Markdown):
     zulip_message: Optional[Message]
     zulip_realm: Optional[Realm]
     zulip_db_data: Optional[DbData]
-    zulip_rendering_result: Optional[MessageRenderingResult]
+    zulip_rendering_result: MessageRenderingResult
     image_preview_enabled: bool
     url_embed_preview_enabled: bool
+    url_embed_data: Optional[Dict[str, Optional[UrlEmbedData]]]
 
     def __init__(
         self,
@@ -2194,6 +2202,7 @@ class Markdown(markdown.Markdown):
         parser.blockprocessors.register(OListProcessor(parser), "olist", 65)
         parser.blockprocessors.register(UListProcessor(parser), "ulist", 60)
         parser.blockprocessors.register(BlockQuoteProcessor(parser), "quote", 55)
+        # We get priority 51 from our 'include' extension
         parser.blockprocessors.register(
             markdown.blockprocessors.ParagraphProcessor(parser), "paragraph", 50
         )
@@ -2272,15 +2281,15 @@ class Markdown(markdown.Markdown):
         reg.register(UnicodeEmoji(UNICODE_EMOJI_RE), "unicodeemoji", 0)
         return reg
 
-    def register_linkifiers(self, inlinePatterns: markdown.util.Registry) -> markdown.util.Registry:
+    def register_linkifiers(self, registry: markdown.util.Registry) -> markdown.util.Registry:
         for linkifier in self.linkifiers:
             pattern = linkifier["pattern"]
-            inlinePatterns.register(
+            registry.register(
                 LinkifierPattern(pattern, linkifier["url_format"], self),
                 f"linkifiers/{pattern}",
                 45,
             )
-        return inlinePatterns
+        return registry
 
     def build_treeprocessors(self) -> markdown.util.Registry:
         # Here we build all the processors from upstream, plus a few of our own.
@@ -2326,7 +2335,7 @@ class Markdown(markdown.Markdown):
             )
 
 
-md_engines: Dict[Tuple[int, bool], Markdown] = {}
+md_engines: Dict[Tuple[int, bool], ZulipMarkdown] = {}
 linkifier_data: Dict[int, List[LinkifierDict]] = {}
 
 
@@ -2336,7 +2345,7 @@ def make_md_engine(linkifiers_key: int, email_gateway: bool) -> None:
         del md_engines[md_engine_key]
 
     linkifiers = linkifier_data[linkifiers_key]
-    md_engines[md_engine_key] = Markdown(
+    md_engines[md_engine_key] = ZulipMarkdown(
         linkifiers=linkifiers,
         linkifiers_key=linkifiers_key,
         email_gateway=email_gateway,
@@ -2346,6 +2355,22 @@ def make_md_engine(linkifiers_key: int, email_gateway: bool) -> None:
 # Split the topic name into multiple sections so that we can easily use
 # our common single link matching regex on it.
 basic_link_splitter = re.compile(r"[ !;\?\),\'\"]")
+
+
+def percent_escape_format_string(format_string: str) -> str:
+    # Find percent-encoded bytes and escape them from the python
+    # interpolation.  That is:
+    #     %(foo)s -> %(foo)s
+    #     %%      -> %%
+    #     %ab     -> %%ab
+    #     %%ab    -> %%ab
+    #     %%%ab   -> %%%%ab
+    #
+    # We do this here, rather than before storing, to make edits
+    # to the underlying linkifier more straightforward, and
+    # because JS does not have a real formatter.
+    return re.sub(r"(?<!%)(%%)*%([a-fA-F0-9][a-fA-F0-9])", r"\1%%\2", format_string)
+
 
 # Security note: We don't do any HTML escaping in this
 # function on the URLs; they are expected to be HTML-escaped when
@@ -2359,7 +2384,7 @@ def topic_links(linkifiers_key: int, topic_name: str) -> List[Dict[str, str]]:
     options.log_errors = False
     for linkifier in linkifiers:
         raw_pattern = linkifier["pattern"]
-        url_format_string = linkifier["url_format"]
+        url_format_string = percent_escape_format_string(linkifier["url_format"])
         try:
             pattern = re2.compile(prepare_linkifier_pattern(raw_pattern), options=options)
         except re2.error:
@@ -2367,9 +2392,21 @@ def topic_links(linkifiers_key: int, topic_name: str) -> List[Dict[str, str]]:
             # here on an invalid regex would spam the logs with every
             # message sent; simply move on.
             continue
-        for m in pattern.finditer(topic_name):
+        pos = 0
+        while pos < len(topic_name):
+            m = pattern.search(topic_name, pos)
+            if m is None:
+                break
+
             match_details = m.groupdict()
             match_text = match_details[OUTER_CAPTURE_GROUP]
+
+            # Adjust the start point of the match for the next
+            # iteration -- we rewind the non-word character at the
+            # end, if there was one, so a potential next match can
+            # also use it.
+            pos = m.end() - len(match_details[AFTER_CAPTURE_GROUP])
+
             # We format the linkifier's url string using the matched text.
             # Also, we include the matched text in the response, so that our clients
             # don't have to implement any logic of their own to get back the text.
@@ -2442,6 +2479,7 @@ def do_convert(
     message_realm: Optional[Realm] = None,
     sent_by_bot: bool = False,
     translate_emoticons: bool = False,
+    url_embed_data: Optional[Dict[str, Optional[UrlEmbedData]]] = None,
     mention_data: Optional[MentionData] = None,
     email_gateway: bool = False,
     no_previews: bool = False,
@@ -2497,6 +2535,7 @@ def do_convert(
     _md_engine.url_embed_preview_enabled = url_embed_preview_enabled(
         message, message_realm, no_previews
     )
+    _md_engine.url_embed_data = url_embed_data
 
     # Pre-fetch data from the DB that is used in the Markdown thread
     if message_realm is not None:
@@ -2600,6 +2639,7 @@ def markdown_convert(
     message_realm: Optional[Realm] = None,
     sent_by_bot: bool = False,
     translate_emoticons: bool = False,
+    url_embed_data: Optional[Dict[str, Optional[UrlEmbedData]]] = None,
     mention_data: Optional[MentionData] = None,
     email_gateway: bool = False,
     no_previews: bool = False,
@@ -2612,6 +2652,7 @@ def markdown_convert(
         message_realm,
         sent_by_bot,
         translate_emoticons,
+        url_embed_data,
         mention_data,
         email_gateway,
         no_previews=no_previews,

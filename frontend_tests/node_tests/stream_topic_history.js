@@ -2,7 +2,7 @@
 
 const {strict: assert} = require("assert");
 
-const {mock_esm, with_field_rewire, zrequire} = require("../zjsunit/namespace");
+const {mock_esm, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 
 const channel = mock_esm("../../static/js/channel");
@@ -10,15 +10,16 @@ const message_util = mock_esm("../../static/js/message_util");
 
 const all_messages_data = zrequire("all_messages_data");
 const unread = zrequire("unread");
+const message_store = zrequire("message_store");
 const stream_data = zrequire("stream_data");
 const stream_topic_history = zrequire("stream_topic_history");
 const stream_topic_history_util = zrequire("stream_topic_history_util");
 
 function test(label, f) {
-    run_test(label, ({override}) => {
+    run_test(label, (helpers) => {
         unread.declare_bankruptcy();
         stream_topic_history.reset();
-        f({override});
+        f(helpers);
     });
 }
 
@@ -81,7 +82,7 @@ test("basics", () => {
     max_message_id = stream_topic_history.get_max_message_id(stream_id);
     assert.deepEqual(max_message_id, 103);
 
-    message_util.get_messages_in_topic = () => [{id: 102}];
+    delete message_util.get_messages_in_topic;
     // Removing first topic1 message has no effect.
     stream_topic_history.remove_messages({
         stream_id,
@@ -121,7 +122,7 @@ test("basics", () => {
     });
 });
 
-test("is_complete_for_stream_id", () => {
+test("is_complete_for_stream_id", ({override_rewire}) => {
     const sub = {
         name: "devel",
         stream_id: 444,
@@ -129,30 +130,28 @@ test("is_complete_for_stream_id", () => {
     };
     stream_data.add_sub(sub);
 
-    const all_messages_data_stub = {
+    override_rewire(all_messages_data, "all_messages_data", {
         empty: () => false,
         fetch_status: {
             has_found_newest: () => true,
         },
         first: () => ({id: 5}),
-    };
-
-    with_field_rewire(all_messages_data, "all_messages_data", all_messages_data_stub, () => {
-        assert.equal(stream_topic_history.is_complete_for_stream_id(sub.stream_id), true);
-
-        // Now simulate a more recent message id.
-        all_messages_data.all_messages_data.first = () => ({id: sub.first_message_id + 1});
-
-        // Note that we'll return `true` here due to
-        // fetched_stream_ids having the stream_id now.
-        assert.equal(stream_topic_history.is_complete_for_stream_id(sub.stream_id), true);
-
-        // But now clear the data to see what we'd have without
-        // the previous call.
-        stream_topic_history.reset();
-
-        assert.equal(stream_topic_history.is_complete_for_stream_id(sub.stream_id), false);
     });
+
+    assert.equal(stream_topic_history.is_complete_for_stream_id(sub.stream_id), true);
+
+    // Now simulate a more recent message id.
+    all_messages_data.all_messages_data.first = () => ({id: sub.first_message_id + 1});
+
+    // Note that we'll return `true` here due to
+    // fetched_stream_ids having the stream_id now.
+    assert.equal(stream_topic_history.is_complete_for_stream_id(sub.stream_id), true);
+
+    // But now clear the data to see what we'd have without
+    // the previous call.
+    stream_topic_history.reset();
+
+    assert.equal(stream_topic_history.is_complete_for_stream_id(sub.stream_id), false);
 });
 
 test("server_history", () => {
@@ -162,8 +161,6 @@ test("server_history", () => {
     };
     const stream_id = sub.stream_id;
     stream_data.add_sub(sub);
-
-    all_messages_data.all_messages_data.fetch_status.has_found_newest = () => false;
 
     assert.equal(stream_topic_history.is_complete_for_stream_id(stream_id), false);
 
@@ -270,6 +267,7 @@ test("test_unread_logic", () => {
         msg.type = "stream";
         msg.stream_id = stream_id;
         msg.unread = true;
+        message_store.update_message_cache(msg);
     }
 
     unread.process_loaded_messages(msgs);
@@ -332,6 +330,7 @@ test("server_history_end_to_end", () => {
 
     // Try getting server history for a second time.
 
+    /* istanbul ignore next */
     channel.get = () => {
         throw new Error("We should not get more data.");
     };

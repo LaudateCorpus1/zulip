@@ -1,4 +1,4 @@
-import Uppy from "@uppy/core";
+import {Uppy} from "@uppy/core";
 import ProgressBar from "@uppy/progress-bar";
 import XHRUpload from "@uppy/xhr-upload";
 import $ from "jquery";
@@ -11,9 +11,9 @@ import {$t} from "./i18n";
 import {page_params} from "./page_params";
 
 // Show the upload button only if the browser supports it.
-export function feature_check(upload_button) {
+export function feature_check($upload_button) {
     if (window.XMLHttpRequest && new window.XMLHttpRequest().upload) {
-        upload_button.removeClass("notdisplayed");
+        $upload_button.removeClass("notdisplayed");
     }
 }
 
@@ -175,7 +175,13 @@ export function setup_upload(config) {
         },
         locale: {
             strings: {
-                exceedsSize: $t({defaultMessage: "This file exceeds maximum allowed size of"}),
+                exceedsSize: $t(
+                    {
+                        defaultMessage:
+                            "%'{file}' exceeds the maximum file size for attachments ({variable} MB).",
+                    },
+                    {variable: `${page_params.max_file_upload_size_mib}`},
+                ),
                 failedToUpload: $t({defaultMessage: "Failed to upload %'{file}'"}),
             },
         },
@@ -209,17 +215,17 @@ export function setup_upload(config) {
         event.target.value = "";
     });
 
-    const drag_drop_container = get_item("drag_drop_container", config);
-    drag_drop_container.on("dragover", (event) => event.preventDefault());
-    drag_drop_container.on("dragenter", (event) => event.preventDefault());
+    const $drag_drop_container = get_item("drag_drop_container", config);
+    $drag_drop_container.on("dragover", (event) => event.preventDefault());
+    $drag_drop_container.on("dragenter", (event) => event.preventDefault());
 
-    drag_drop_container.on("drop", (event) => {
+    $drag_drop_container.on("drop", (event) => {
         event.preventDefault();
         const files = event.originalEvent.dataTransfer.files;
         upload_files(uppy, config, files);
     });
 
-    drag_drop_container.on("paste", (event) => {
+    $drag_drop_container.on("paste", (event) => {
         const clipboard_data = event.clipboardData || event.originalEvent.clipboardData;
         if (!clipboard_data) {
             return;
@@ -279,7 +285,14 @@ export function setup_upload(config) {
     });
 
     uppy.on("info-visible", () => {
-        const info = uppy.getState().info;
+        // Uppy's `info-visible` event is issued after prepending the
+        // notice details into the list of event events accessed via
+        // uppy.getState().info. Extract the notice details so that we
+        // can potentially act on the error.
+        //
+        // TODO: Ideally, we'd be using the `.error()` hook or
+        // something, not parsing error message strings.
+        const info = uppy.getState().info[0];
         if (info.type === "error" && info.message === "No Internet connection") {
             // server_events already handles the case of no internet.
             return;

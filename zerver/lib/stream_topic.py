@@ -7,7 +7,7 @@ class StreamTopicTarget:
     """
     This class is designed to help us move to a
     StreamTopic table or something similar.  It isolates
-    places where we are are still using `topic_name` as
+    places where we are still using `topic_name` as
     a key into tables.
     """
 
@@ -15,11 +15,11 @@ class StreamTopicTarget:
         self.stream_id = stream_id
         self.topic_name = topic_name
 
-    def user_ids_muting_topic(self) -> Set[int]:
+    def user_ids_with_visibility_policy(self, visibility_policy: int) -> Set[int]:
         query = UserTopic.objects.filter(
             stream_id=self.stream_id,
             topic_name__iexact=self.topic_name,
-            visibility_policy=UserTopic.MUTED,
+            visibility_policy=visibility_policy,
         ).values(
             "user_profile_id",
         )

@@ -16,6 +16,7 @@ mock_esm("tippy.js", {
 });
 
 set_global("document", {});
+const navigator = set_global("navigator", {});
 
 const common = zrequire("common");
 
@@ -39,48 +40,48 @@ run_test("phrase_match", () => {
 run_test("copy_data_attribute_value", ({override}) => {
     const admin_emails_val = "iago@zulip.com";
 
-    const input = $.create("input");
+    const $input = $.create("input");
 
     let removed;
-    input.remove = () => {
+    $input.remove = () => {
         removed = true;
     };
 
-    override(document, "createElement", () => input);
+    override(document, "createElement", () => $input);
     override(document, "execCommand", noop);
 
     $("body").append = noop;
-    $(input).val = (arg) => {
+    $input.val = (arg) => {
         assert.equal(arg, admin_emails_val);
         return {
             trigger: noop,
         };
     };
 
-    const elem = {};
+    const $elem = {};
     let faded_in = false;
     let faded_out = false;
 
-    elem.data = (key) => {
+    $elem.data = (key) => {
         assert.equal(key, "admin-emails");
         return admin_emails_val;
     };
-    elem.fadeOut = (val) => {
+    $elem.fadeOut = (val) => {
         assert.equal(val, 250);
         faded_out = true;
     };
-    elem.fadeIn = (val) => {
+    $elem.fadeIn = (val) => {
         assert.equal(val, 1000);
         faded_in = true;
     };
-    common.copy_data_attribute_value(elem, "admin-emails");
+    common.copy_data_attribute_value($elem, "admin-emails");
     assert.ok(removed);
     assert.ok(faded_in);
     assert.ok(faded_out);
 });
 
-run_test("adjust_mac_shortcuts non-mac", ({override_rewire}) => {
-    override_rewire(common, "has_mac_keyboard", () => false);
+run_test("adjust_mac_shortcuts non-mac", ({override}) => {
+    override(navigator, "platform", "Windows");
 
     // The adjust_mac_shortcuts has a really simple guard
     // at the top, and we just test the early-return behavior
@@ -88,49 +89,56 @@ run_test("adjust_mac_shortcuts non-mac", ({override_rewire}) => {
     common.adjust_mac_shortcuts("selector-that-does-not-exist");
 });
 
-run_test("adjust_mac_shortcuts mac", ({override_rewire}) => {
+run_test("adjust_mac_shortcuts mac", ({override}) => {
     const keys_to_test_mac = new Map([
         ["Backspace", "Delete"],
         ["Enter", "Return"],
-        ["Home", "Fn + ←"],
-        ["End", "Fn + →"],
-        ["PgUp", "Fn + ↑"],
-        ["PgDn", "Fn + ↓"],
-        ["X + Shift", "X + Shift"],
-        ["⌘ + Return", "⌘ + Return"],
-        ["Enter or Backspace", "Return or Delete"],
+        ["Home", "←"],
+        ["End", "→"],
+        ["PgUp", "↑"],
+        ["PgDn", "↓"],
         ["Ctrl", "⌘"],
-        ["Ctrl + Shift", "⌘ + Shift"],
-        ["Ctrl + Backspace + End", "⌘ + Delete + Fn + →"],
+        ["Alt", "⌘"],
+        ["#stream_name", "#stream_name"],
+        ["Ctrl+K", "Ctrl+K"],
+        ["[", "["],
+        ["X", "X"],
     ]);
 
-    override_rewire(common, "has_mac_keyboard", () => true);
+    const fn_shortcuts = new Set(["Home", "End", "PgUp", "PgDn"]);
+    const inserted_fn_key = "<kbd>Fn</kbd> + ";
+
+    override(navigator, "platform", "MacIntel");
 
     const test_items = [];
     let key_no = 1;
 
     for (const [old_key, mac_key] of keys_to_test_mac) {
         const test_item = {};
-        const stub = $.create("hotkey_" + key_no);
-        stub.text(old_key);
-        assert.equal(stub.hasClass("mac-cmd-key"), false);
-        test_item.stub = stub;
+        const $stub = $.create("hotkey_" + key_no);
+        $stub.text(old_key);
+        assert.equal($stub.hasClass("arrow-key"), false);
+        if (fn_shortcuts.has(old_key)) {
+            $stub.before = ($elem) => {
+                assert.equal($elem, inserted_fn_key);
+            };
+        }
+        test_item.$stub = $stub;
         test_item.mac_key = mac_key;
-        test_item.is_cmd_key = old_key.includes("Ctrl");
+        test_item.adds_arrow_key = fn_shortcuts.has(old_key);
         test_items.push(test_item);
         key_no += 1;
     }
 
-    const children = test_items.map((test_item) => ({to_$: () => test_item.stub}));
+    const children = test_items.map((test_item) => ({to_$: () => test_item.$stub}));
 
-    $.create(".markdown_content", {children});
+    $.create(".markdown kbd", {children});
 
-    const require_cmd = true;
-    common.adjust_mac_shortcuts(".markdown_content", require_cmd);
+    common.adjust_mac_shortcuts(".markdown kbd");
 
     for (const test_item of test_items) {
-        assert.equal(test_item.stub.hasClass("mac-cmd-key"), test_item.is_cmd_key);
-        assert.equal(test_item.stub.text(), test_item.mac_key);
+        assert.equal(test_item.$stub.text(), test_item.mac_key);
+        assert.equal(test_item.$stub.hasClass("arrow-key"), test_item.adds_arrow_key);
     }
 });
 

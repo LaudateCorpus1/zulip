@@ -1,11 +1,5 @@
 "use strict";
 
-// This test is known to be nondeterministically broken because our
-// test runner has no real support for asynchronous tests. Skip it for
-// now.
-/* eslint-disable no-unreachable */
-return;
-
 const {strict: assert} = require("assert");
 
 const {set_global, zrequire, mock_esm} = require("../zjsunit/namespace");
@@ -153,7 +147,7 @@ run_test("check_status", async ({override}) => {
     assert.ok(completed);
     assert.equal(
         $("#webhook-success").text(),
-        "Your free trial of Zulip Standard has been activated. You would be redirected to the billing page soon.",
+        "Your free trial of Zulip Cloud Standard has been activated. You would be redirected to the billing page soon.",
     );
 
     override($, "get", async (url, data) => {
@@ -180,7 +174,7 @@ run_test("check_status", async ({override}) => {
     assert.ok(completed);
     assert.equal(
         $("#webhook-success").text(),
-        "Your free trial of Zulip Standard has been activated. You would be redirected to the billing page soon.",
+        "Your free trial of Zulip Cloud Standard has been activated. You would be redirected to the billing page soon.",
     );
 
     override($, "get", async (url, data) => {

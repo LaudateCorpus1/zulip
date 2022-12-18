@@ -12,6 +12,10 @@ export function get_message_type() {
     return message_type;
 }
 
+export function recipient_has_topics() {
+    return message_type !== "stream";
+}
+
 export function composing() {
     // This is very similar to get_message_type(), but it returns
     // a boolean.
@@ -19,14 +23,14 @@ export function composing() {
 }
 
 function get_or_set(fieldname, keep_leading_whitespace) {
-    // We can't hoist the assignment of 'elem' out of this lambda,
+    // We can't hoist the assignment of '$elem' out of this lambda,
     // because the DOM element might not exist yet when get_or_set
     // is called.
     return function (newval) {
-        const elem = $(`#${CSS.escape(fieldname)}`);
-        const oldval = elem.val();
+        const $elem = $(`#${CSS.escape(fieldname)}`);
+        const oldval = $elem.val();
         if (newval !== undefined) {
-            elem.val(newval);
+            $elem.val(newval);
         }
         return keep_leading_whitespace ? oldval.trimEnd() : oldval.trim();
     };
@@ -83,4 +87,11 @@ export function private_message_recipient(value) {
 
 export function has_message_content() {
     return message_content() !== "";
+}
+
+export function has_full_recipient() {
+    if (message_type === "stream") {
+        return stream_name() !== "" && topic() !== "";
+    }
+    return private_message_recipient() !== "";
 }

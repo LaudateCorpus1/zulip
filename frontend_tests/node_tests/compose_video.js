@@ -2,7 +2,7 @@
 
 const {strict: assert} = require("assert");
 
-const {mock_esm, zrequire, set_global} = require("../zjsunit/namespace");
+const {mock_esm, set_global, with_overrides, zrequire} = require("../zjsunit/namespace");
 const {run_test} = require("../zjsunit/test");
 const $ = require("../zjsunit/zjquery");
 const {page_params} = require("../zjsunit/zpage_params");
@@ -10,25 +10,33 @@ const {page_params} = require("../zjsunit/zpage_params");
 const events = require("./lib/events");
 
 const channel = mock_esm("../../static/js/channel");
+const compose_ui = mock_esm("../../static/js/compose_ui");
 const upload = mock_esm("../../static/js/upload");
-mock_esm("../../static/js/giphy", {
-    is_giphy_enabled: () => true,
-});
 mock_esm("../../static/js/resize", {
     watch_manual_resize() {},
 });
+set_global("document", {
+    querySelector: () => {},
+});
 set_global("navigator", {});
+set_global(
+    "ResizeObserver",
+    class ResizeObserver {
+        observe() {}
+    },
+);
 
 const server_events_dispatch = zrequire("server_events_dispatch");
-const compose_ui = zrequire("compose_ui");
+const compose_closed = zrequire("compose_closed_ui");
 const compose = zrequire("compose");
 function stub_out_video_calls() {
-    const elem = $("#below-compose-content .video_link");
-    elem.toggle = (show) => {
+    const $elem = $("#below-compose-content .video_link");
+    $elem.toggle = (show) => {
+        /* istanbul ignore if */
         if (show) {
-            elem.show();
+            $elem.show();
         } else {
-            elem.hide();
+            $elem.hide();
         }
     };
 }
@@ -53,13 +61,13 @@ const realm_available_video_chat_providers = {
 };
 
 function test(label, f) {
-    run_test(label, ({override, override_rewire, mock_template}) => {
+    run_test(label, (helpers) => {
         page_params.realm_available_video_chat_providers = realm_available_video_chat_providers;
-        f({override, override_rewire, mock_template});
+        f(helpers);
     });
 }
 
-test("videos", ({override, override_rewire, mock_template}) => {
+test("videos", ({override}) => {
     page_params.realm_video_chat_provider = realm_available_video_chat_providers.disabled.id;
 
     override(upload, "setup_upload", () => {});
@@ -67,50 +75,45 @@ test("videos", ({override, override_rewire, mock_template}) => {
 
     stub_out_video_calls();
 
-    mock_template("compose.hbs", false, () => "fake-compose-template");
     compose.initialize();
 
     (function test_no_provider_video_link_compose_clicked() {
-        let called = false;
-
-        const textarea = $.create("target-stub");
-        textarea.set_parents_result(".message_edit_form", []);
+        const $textarea = $.create("target-stub");
+        $textarea.set_parents_result(".message_edit_form", []);
 
         const ev = {
             preventDefault: () => {},
             stopPropagation: () => {},
             target: {
-                to_$: () => textarea,
+                to_$: () => $textarea,
             },
         };
-
-        override_rewire(compose_ui, "insert_syntax_and_focus", () => {
-            called = true;
-        });
 
         const handler = $("body").get_on_handler("click", ".video_link");
         $("#compose-textarea").val("");
 
-        handler(ev);
-        assert.ok(!called);
+        with_overrides(({disallow}) => {
+            disallow(compose_ui, "insert_syntax_and_focus");
+            handler(ev);
+        });
     })();
 
     (function test_jitsi_video_link_compose_clicked() {
         let syntax_to_insert;
         let called = false;
 
-        const textarea = $.create("jitsi-target-stub");
-        textarea.set_parents_result(".message_edit_form", []);
+        const $textarea = $.create("jitsi-target-stub");
+        $textarea.set_parents_result(".message_edit_form", []);
 
         const ev = {
             preventDefault: () => {},
             stopPropagation: () => {},
             target: {
-                to_$: () => textarea,
+                to_$: () => $textarea,
             },
         };
 
-        override_rewire(compose_ui, "insert_syntax_and_focus", (syntax) => {
+        override(compose_ui, "insert_syntax_and_focus", (syntax) => {
             syntax_to_insert = syntax;
             called = true;
         });
@@ -137,18 +140,18 @@ test("videos", ({override, override_rewire, mock_template}) => {
         let syntax_to_insert;
         let called = false;
 
-        const textarea = $.create("zoom-target-stub");
-        textarea.set_parents_result(".message_edit_form", []);
+        const $textarea = $.create("zoom-target-stub");
+        $textarea.set_parents_result(".message_edit_form", []);
 
         const ev = {
             preventDefault: () => {},
             stopPropagation: () => {},
             target: {
-                to_$: () => textarea,
+                to_$: () => $textarea,
             },
         };
 
-        override_rewire(compose_ui, "insert_syntax_and_focus", (syntax) => {
+        override(compose_ui, "insert_syntax_and_focus", (syntax) => {
             syntax_to_insert = syntax;
             called = true;
         });
@@ -183,18 +186,18 @@ test("videos", ({override, override_rewire, mock_template}) => {
         let syntax_to_insert;
         let called = false;
 
-        const textarea = $.create("bbb-target-stub");
-        textarea.set_parents_result(".message_edit_form", []);
+        const $textarea = $.create("bbb-target-stub");
+        $textarea.set_parents_result(".message_edit_form", []);
 
         const ev = {
             preventDefault: () => {},
             stopPropagation: () => {},
             target: {
-                to_$: () => textarea,
+                to_$: () => $textarea,
             },
         };
 
-        override_rewire(compose_ui, "insert_syntax_and_focus", (syntax) => {
+        override(compose_ui, "insert_syntax_and_focus", (syntax) => {
             syntax_to_insert = syntax;
             called = true;
         });
@@ -205,8 +208,11 @@ test("videos", ({override, override_rewire, mock_template}) => {
         page_params.realm_video_chat_provider =
             realm_available_video_chat_providers.big_blue_button.id;
 
+        compose_closed.get_recipient_label = () => "a";
+
         channel.get = (options) => {
             assert.equal(options.url, "/json/calls/bigbluebutton/create");
+            assert.equal(options.data.meeting_name, "a meeting");
             options.success({
                 url: "/calls/bigbluebutton/join?meeting_id=%22zulip-1%22&password=%22AAAAAAAAAA%22&checksum=%2232702220bff2a22a44aee72e96cfdb4c4091752e%22",
             });
@@ -220,20 +226,18 @@ test("videos", ({override, override_rewire, mock_template}) => {
     })();
 });
 
-test("test_video_chat_button_toggle disabled", ({override, mock_template}) => {
+test("test_video_chat_button_toggle disabled", ({override}) => {
     override(upload, "setup_upload", () => {});
     override(upload, "feature_check", () => {});
-    mock_template("compose.hbs", false, () => "fake-compose-template");
 
     page_params.realm_video_chat_provider = realm_available_video_chat_providers.disabled.id;
     compose.initialize();
     assert.equal($("#below-compose-content .video_link").visible(), false);
 });
 
-test("test_video_chat_button_toggle no url", ({override, mock_template}) => {
+test("test_video_chat_button_toggle no url", ({override}) => {
     override(upload, "setup_upload", () => {});
     override(upload, "feature_check", () => {});
-    mock_template("compose.hbs", false, () => "fake-compose-template");
 
     page_params.realm_video_chat_provider = realm_available_video_chat_providers.jitsi_meet.id;
     page_params.jitsi_server_url = null;
@@ -241,10 +245,9 @@ test("test_video_chat_button_toggle no url", ({override, mock_template}) => {
     assert.equal($("#below-compose-content .video_link").visible(), false);
 });
 
-test("test_video_chat_button_toggle enabled", ({override, mock_template}) => {
+test("test_video_chat_button_toggle enabled", ({override}) => {
     override(upload, "setup_upload", () => {});
     override(upload, "feature_check", () => {});
-    mock_template("compose.hbs", false, () => "fake-compose-template");
 
     page_params.realm_video_chat_provider = realm_available_video_chat_providers.jitsi_meet.id;
     page_params.jitsi_server_url = "https://meet.jit.si";

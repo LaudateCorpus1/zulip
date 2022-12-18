@@ -25,14 +25,14 @@ realms used for testing; consider using deactivate_realm instead."""
             is_bot=False,
         ).count()
 
-        message_count = Message.objects.filter(sender__realm=realm).count()
+        message_count = Message.objects.filter(realm=realm).count()
 
         print(f"This realm has {user_count} users and {message_count} messages.\n")
 
         if settings.BILLING_ENABLED:
             # Deleting a Realm object also deletes associating billing
             # metadata in an invariant-violating way, so we should
-            # never use this tool for a realm with billing setup.
+            # never use this tool for a realm with billing set up.
             from corporate.models import CustomerPlan, get_customer_by_realm
 
             customer = get_customer_by_realm(realm)

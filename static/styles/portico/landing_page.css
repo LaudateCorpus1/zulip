@@ -51,7 +51,8 @@ a {
         color: hsl(170, 47%, 33%);
     }
 
-    &:hover {
+    &:hover,
+    &:focus {
         text-decoration: none;
     }
 
@@ -385,8 +386,7 @@ nav {
     padding: 0 !important;
 }
 
-.header,
-.portico-os-announcement {
+.header {
     display: none;
 }
 
@@ -619,7 +619,7 @@ nav {
                 );
                 border-radius: 4px;
 
-                background-image: url("../../images/landing-page/notifications.jpg");
+                background-image: url("../../images/landing-page/features/notifications.jpg");
                 background-size: contain;
                 background-position: center;
                 background-repeat: no-repeat;
@@ -631,13 +631,6 @@ nav {
         .feature-block {
             display: inline-block;
             vertical-align: top;
-        }
-
-        .headliner {
-            .feature-block {
-                margin: 0 10px;
-                width: calc(100% - 250px - 20px);
-            }
         }
 
         h2 {
@@ -716,51 +709,6 @@ nav {
 
     overflow: hidden;
 
-    .waves {
-        position: absolute;
-
-        width: 150vw;
-        height: 150vw;
-
-        top: 650px;
-        left: -25vw;
-
-        z-index: 0;
-        opacity: 0.3;
-
-        .wave {
-            position: absolute;
-
-            width: 100%;
-            height: 100%;
-
-            background-color: hsl(0, 0%, 100%);
-            border-radius: 35%;
-
-            opacity: 0.3;
-
-            animation-name: waves;
-            animation-duration: 15s;
-            animation-iteration-count: infinite;
-            animation-timing-function: linear;
-
-            &.dark-blue {
-                background-color: hsl(219, 39%, 13%);
-            }
-
-            &.light-blue {
-                background-color: hsla(0, 67%, 57%, 0.9);
-                animation-duration: 18s;
-            }
-
-            &.light-green {
-                background-color: hsla(187, 98%, 75%, 0.75);
-                animation-name: wavesBackward;
-                animation-duration: 21s;
-            }
-        }
-    }
-
     .content {
         position: relative;
         z-index: 1;
@@ -823,17 +771,6 @@ nav {
             &:active {
                 box-shadow: 0 3px 20px hsla(0, 0%, 100%, 0.5);
             }
-        }
-
-        .download-button {
-            margin-top: 10px;
-        }
-
-        #see_all_apps {
-            display: inline-block;
-            margin-top: 10px;
-
-            font-weight: normal;
         }
     }
 }
@@ -911,30 +848,6 @@ nav {
     100% {
         transform: rotate(-360deg);
     }
-}
-
-.portico-landing.hello .col-3-5,
-.portico-landing.hello .col-2,
-.portico-landing.hello .col-4 {
-    margin-right: -4px;
-    display: inline-block;
-    vertical-align: top;
-}
-
-.portico-landing.hello .col-3-5 {
-    width: 60%;
-}
-
-.portico-landing.hello .col-2 {
-    width: 49.9%;
-}
-
-.portico-landing.hello .col-3 {
-    width: 33.3%;
-}
-
-.portico-landing.hello .col-4 {
-    width: 20%;
 }
 
 /* -- compare css -- */
@@ -1196,10 +1109,6 @@ nav {
             width: 15%;
         }
 
-        &.darker {
-            background-color: hsl(0, 0%, 73%);
-        }
-
         &.nano {
             display: inline-block;
             vertical-align: top;
@@ -1225,14 +1134,6 @@ nav {
 
         &.orange {
             background-color: hsl(30, 42%, 77%);
-        }
-    }
-
-    .col-4 .action-block {
-        margin: 20px;
-
-        .sub-block {
-            margin: 0 10px;
         }
     }
 
@@ -1312,28 +1213,6 @@ nav {
 
     z-index: 1;
 
-    &.hero-screen {
-        padding: 95px 170px;
-        height: 385px;
-
-        background-image: url("../../images/landing-page/macbook-empty.png");
-        background-size: 100% auto;
-
-        background-color: transparent;
-        box-shadow: none;
-
-        &::before,
-        &::after {
-            content: "";
-            display: none;
-        }
-
-        .main-page {
-            transform: translateY(-12px) translateX(3px);
-            border: 5px solid hsl(0, 0%, 0%);
-        }
-    }
-
     &::before {
         content: " ";
         position: absolute;
@@ -1378,29 +1257,6 @@ nav {
     padding: 50px 0 100px;
 
     background-color: hsl(0, 0%, 100%);
-
-    .col-2 {
-        text-align: center;
-
-        position: relative;
-        z-index: 1;
-
-        img {
-            margin-bottom: 20px;
-            width: 100%;
-            max-width: 300px;
-        }
-
-        .il-block {
-            display: inline-block;
-            width: 75%;
-            text-align: left;
-        }
-
-        h2 {
-            font-weight: normal;
-        }
-    }
 }
 
 .portico-landing.hello .open-source {
@@ -1638,11 +1494,6 @@ nav {
 
 .tour .carousel-inner .comparison-slack img {
     margin: 0;
-
-    &.slack-unreads {
-        width: 250px;
-        margin: 15px 0 0 -10px;
-    }
 }
 
 .tour .carousel-inner .other-resources {
@@ -1763,11 +1614,6 @@ nav {
 
 .portico-landing .testimonials .text-header .text-content {
     float: left;
-}
-
-.portico-landing .testimonials .text-header .action-content {
-    float: right;
-    margin-top: 18px;
 }
 
 .portico-landing .testimonials .quote-container {
@@ -1906,16 +1752,6 @@ nav {
     background-color: transparent;
 }
 
-.portico-landing .testimonials .company-box .company.solano {
-    background-image: url("../../images/landing-page/logos/solano.png");
-    background-color: transparent;
-}
-
-.portico-landing .testimonials .company-box .company.veelo {
-    background-image: url("../../images/landing-page/logos/veelo.png");
-    background-color: transparent;
-}
-
 .portico-landing .testimonials .company-box .company.panjiva {
     background-image: url("../../images/landing-page/logos/panjiva.png");
     background-color: transparent;
@@ -1931,44 +1767,13 @@ nav {
     background-color: transparent;
 }
 
-.portico-landing .testimonials .company-box .company.wildfly {
-    background-image: url("../../images/landing-page/logos/wildfly.png");
-    background-color: transparent;
-}
-
 .portico-landing .testimonials .company-box .company.mariadb {
     background-image: url("../../images/landing-page/logos/mariadb.png");
     background-color: transparent;
 }
 
-.portico-landing .testimonials .company-box .company.infinispan {
-    background-image: url("../../images/landing-page/logos/infinispan.png");
-    background-color: transparent;
-    height: 50px;
-}
-
-.portico-landing .testimonials .company-box .company.hail {
-    background-image: url("../../images/landing-page/logos/hail.png");
-    background-color: transparent;
-}
-
-.portico-landing .testimonials .company-box .company.inspire-hep {
-    background-image: url("../../images/landing-page/logos/inspire-hep.png");
-    background-color: transparent;
-}
-
 .portico-landing .testimonials .company-box .company.wikimedia-outreach {
     background-image: url("../../images/landing-page/logos/wikimedia-outreach.png");
-    background-color: transparent;
-}
-
-.portico-landing .testimonials .company-box .company.fhir {
-    background-image: url("../../images/landing-page/logos/fhir.png");
-    background-color: transparent;
-}
-
-.portico-landing .testimonials .company-box .company.openshot {
-    background-image: url("../../images/landing-page/logos/openshot.png");
     background-color: transparent;
 }
 
@@ -2194,7 +1999,7 @@ nav {
     width: 100%;
     height: 100%;
 
-    background-image: url("../../images/waves.svg");
+    background-image: url("../../images/landing-page/apps/waves.svg");
     background-size: cover;
     background-repeat: no-repeat;
 }
@@ -2217,13 +2022,6 @@ nav {
 .portico-landing.apps .hero .info .cta {
     text-shadow: 0 0 60px hsla(0, 0%, 0%, 0.3);
     max-width: 600px;
-}
-
-.portico-landing.apps
-    .hero
-    .image
-    img[src="/static/images/landing-page/tar.gz.svg"] {
-    width: 50%;
 }
 
 .portico-landing.apps
@@ -2371,7 +2169,7 @@ nav {
     font-size: 1.3em;
     text-align: center;
 
-    opacity: 0.7;
+    opacity: 0.9;
 }
 
 .portico-landing.why-page .markdown {
@@ -2435,7 +2233,7 @@ nav {
 .portico-landing.why-page .bg-events {
     position: relative;
 
-    background-image: url("../../images/landing-page/for-events.jpg");
+    background-image: url("../../images/landing-page/events/for-events.jpg");
     background-size: cover;
     background-position: center;
 }
@@ -2481,7 +2279,7 @@ nav {
 }
 
 .portico-landing.why-page .bg-pycon.why-zulip {
-    background-image: url("../../images/landing-page/why-zulip-threads.jpg");
+    background-image: url("../../images/landing-page/why-zulip/why-zulip-threads.jpg");
 }
 
 .portico-landing.why-page .bg-dimmer {
@@ -2689,7 +2487,7 @@ nav {
 .gradients .gradient.white-fade {
     background: linear-gradient(
         0deg,
-        hsl(0, 0%, 98%) 0%,
+        hsl(0, 0%, 100%) 0%,
         hsla(0, 0%, 98%, 0) 40%
     );
 }
@@ -2892,94 +2690,39 @@ nav {
     top: 6px;
 }
 
-/* while the overlay is showing, the transform properties should stay fixed
-   for the container that sits inline in the page. */
+.plans_faq_questions {
+    background: transparent;
+    padding: 20px 0;
+    margin: auto;
 
-.pricing-overlay.pricing-model {
-    position: fixed;
-    top: -140px;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
+    &.plans_top_faq {
+        font-size: 17px;
+        font-weight: 400;
+        color: hsl(0, 0%, 53%);
+        padding-top: 0;
 
-    opacity: 0;
-    pointer-events: none;
+        p {
+            padding: 10px;
+        }
 
-    z-index: 10;
-    transition: all 0.3s ease;
-}
+        p:first-child {
+            margin-top: -20px;
+        }
 
-.portico-landing.plans .pricing-overlay.pricing-model {
-    top: -220px;
-}
+        p:last-child {
+            margin-bottom: 30px;
+        }
+    }
 
-.pricing-overlay.pricing-model .pricing-container {
-    padding: 50px;
-    text-align: left;
-}
+    p {
+        width: 80%;
+        margin: auto;
+        text-align: center;
 
-.pricing-overlay.pricing-model.active {
-    opacity: 1;
-    pointer-events: all;
-    background-color: hsla(0, 0%, 0%, 0.6);
-}
-
-.pricing-overlay.pricing-model .price-box {
-    vertical-align: top;
-}
-
-.pricing-overlay.pricing-model .info-box {
-    position: relative;
-    display: inline-block;
-    vertical-align: top;
-    margin-left: 50px;
-    margin-top: -2px;
-    width: calc(100% - 300px - 50px);
-
-    background-color: hsl(0, 0%, 100%);
-    opacity: 0;
-    transform: translateY(300px);
-
-    transition: all 0.3s ease;
-}
-
-.pricing-overlay.pricing-model .info-box.show {
-    opacity: 1;
-    transform: translateY(0);
-}
-
-.pricing-overlay.pricing-model .info-box .text-content {
-    position: relative;
-    display: inline-block;
-    height: calc(100% - 40px);
-    width: calc(100% - 300px - 40px);
-}
-
-.pricing-overlay.pricing-model .info-box .text-content h1 {
-    margin-top: 0;
-}
-
-.pricing-overlay.pricing-model .info-box .text-content p {
-    color: hsl(0, 0%, 53%);
-}
-
-.pricing-overlay.pricing-model .info-box .text-content .feature-detail-box {
-    position: absolute;
-    width: 100%;
-    bottom: 0;
-    text-align: center;
-}
-
-.pricing-overlay.pricing-model
-    .info-box
-    .text-content
-    .feature-detail-box
-    .feature {
-    display: inline-block;
-    width: calc(33% - 21px);
-    height: 200px;
-    background-color: hsl(0, 0%, 93%);
-    margin: 10px;
+        @media (width <= 1100px) {
+            text-align: left;
+        }
+    }
 }
 
 .text-content .pricing-details {
@@ -2994,15 +2737,6 @@ nav {
     &.multi-line {
         padding: 5px 0 25px;
     }
-}
-
-.pricing-overlay.pricing-model .info-box .image {
-    width: 300px;
-    height: 100%;
-
-    float: right;
-
-    background-color: hsl(169, 45%, 43%);
 }
 
 .portico-landing.jobs h2 {
@@ -3068,40 +2802,6 @@ nav {
 @media (width <= 1376px) {
     .portico-landing.plans .price-box {
         margin: 20px;
-    }
-
-    .portico-landing.apps .main .details-container {
-        height: auto;
-    }
-
-    .portico-landing.apps .main .details-container .details-box {
-        display: none;
-        position: static;
-        height: auto;
-    }
-
-    .portico-landing.apps .main .details-container .details-box h1 {
-        margin-top: 0;
-        padding-top: 20px;
-    }
-
-    .portico-landing.apps .main .details-container .details-box.show {
-        display: block;
-    }
-
-    .portico-landing.apps .main .details-box[data-name="linux"] .image {
-        display: block;
-        height: auto;
-    }
-
-    .portico-landing.apps
-        .main
-        .details-box[data-name="linux"]
-        .image
-        .platform,
-    .portico-landing.apps .main .details-box[data-name="linux"] .instructions {
-        text-align: center;
-        width: calc(100% - 40px);
     }
 }
 
@@ -3215,17 +2915,6 @@ nav {
 
     .portico-landing.features-app {
         section {
-            .headliner {
-                .image {
-                    width: 200px;
-                    height: 200px;
-                }
-
-                .feature-box {
-                    width: calc(100% - 200px - 20px);
-                }
-            }
-
             &.messages {
                 display: block;
                 text-align: center;
@@ -3270,21 +2959,6 @@ nav {
         margin: 0;
     }
 
-    .portico-landing.hello .screen.hero-screen {
-        width: 420px;
-        height: 282px;
-        padding: 65px 117px;
-
-        .main-page {
-            overflow: hidden;
-            transform: translateY(-12px) translateX(2px);
-        }
-    }
-
-    .screen.hero-screen .col-4 .action-block {
-        margin: 10px;
-    }
-
     .portico-landing .testimonials .carousel-quotes {
         width: 100%;
     }
@@ -3295,11 +2969,6 @@ nav {
 
     .portico-landing .testimonials .fa-chevron-left {
         left: -40px;
-    }
-
-    .screen.hero-screen .line {
-        height: 4px;
-        margin: 4px 0;
     }
 
     .screen .message-feed .message .content {
@@ -3350,10 +3019,6 @@ nav {
 }
 
 @media (width <= 906px) {
-    .portico-landing.why-page .hero p br {
-        display: none;
-    }
-
     .portico-landing.features-app {
         section {
             &.notifications {
@@ -3377,22 +3042,6 @@ nav {
 }
 
 @media (width <= 830px) {
-    .portico-landing.features-app {
-        section {
-            .headliner {
-                display: inline-flex;
-
-                width: auto;
-                height: 250px;
-
-                margin: 50px;
-
-                justify-content: center;
-                align-items: center;
-            }
-        }
-    }
-
     .portico-landing.hello .apps .left-side .platform-icons .group {
         margin: 50px 30px;
         display: block;
@@ -3424,10 +3073,6 @@ nav {
         .comparison-slack {
             width: 35%;
         }
-    }
-
-    .tour .carousel-inner .comparison-slack img.slack-unreads {
-        margin-left: 0;
     }
 
     .tour .carousel-inner .tour-item-header {
@@ -3516,16 +3161,6 @@ nav {
 
     .portico-landing.hello .apps .left-side .content {
         width: auto;
-    }
-
-    .portico-landing.hello .screen.hero-screen {
-        width: 300px;
-        height: 201px;
-        padding: 43px 73px;
-    }
-
-    .portico-landing.hello .features .col-2 {
-        width: 100%;
     }
 
     .portico-landing.features-app {
@@ -3626,10 +3261,6 @@ nav {
         header {
             width: auto;
         }
-    }
-
-    .portico-landing.hello .screen.hero-screen {
-        display: none;
     }
 
     nav {
@@ -3791,10 +3422,6 @@ nav {
         width: 80px;
         text-align: center;
         border-radius: 4px;
-    }
-
-    .portico-landing.apps .main .details-container {
-        width: 100%;
     }
 
     .portico-landing .testimonials .company-box .company {
@@ -4201,12 +3828,15 @@ nav {
         }
     }
 
-    .topics-image {
-        border: solid 2px hsl(0, 0%, 60%);
+    .feature-icon {
+        img,
+        div.quote {
+            width: 100px;
+        }
     }
 
-    .feature-buttons {
-        margin: 0 auto;
+    .topics-image {
+        border: solid 2px hsl(0, 0%, 60%);
     }
 }
 
@@ -4282,6 +3912,8 @@ nav {
     border-radius: 1em;
     font-weight: 400;
     margin: 40px 5px;
+    display: flex;
+    flex-direction: column;
 
     a {
         color: hsl(0, 0%, 100%);
@@ -4332,6 +3964,7 @@ nav {
     }
 }
 
+.case-study-page,
 .solutions-page {
     .hero-text {
         position: relative;
@@ -4421,7 +4054,7 @@ nav {
     }
 }
 
-.for-education.pricing-model {
+.solutions-page .pricing-model {
     .padded-content {
         padding-bottom: 10px;
     }
@@ -4430,52 +4063,57 @@ nav {
         display: flex;
         flex-flow: row wrap;
         justify-content: center;
+    }
 
-        .pricing-details {
-            color: inherit;
-            font-style: inherit;
-        }
+    .price-box {
+        margin: 10px;
+    }
+}
 
-        .price-box {
-            margin: 10px;
-            height: 625px;
+.for-education.pricing-model {
+    .pricing-details {
+        color: inherit;
+        font-style: inherit;
+    }
 
-            .bottom {
-                height: 275px;
+    .price-box {
+        height: 625px;
 
-                .standard-register-button {
-                    margin-top: 10px;
+        .bottom {
+            height: 275px;
+
+            .standard-register-button {
+                margin-top: 10px;
+            }
+
+            .free-text {
+                margin-top: 90px;
+
+                .pricing-details {
+                    font-size: 34px;
                 }
 
-                .free-text {
-                    margin-top: 90px;
+                a {
+                    margin-top: 76px;
+                }
+            }
 
-                    .pricing-details {
-                        font-size: 34px;
-                    }
+            .standard-price-box {
+                flex-flow: row wrap;
+                height: 90px;
+                font-size: 15px;
 
-                    a {
-                        margin-top: 76px;
-                    }
+                &:first-child {
+                    padding-bottom: 10px;
                 }
 
-                .standard-price-box {
-                    flex-flow: row wrap;
-                    height: 90px;
-                    font-size: 15px;
-
-                    &:first-child {
-                        padding-bottom: 10px;
-                    }
-
-                    p {
-                        padding: 0;
-                        margin: 0 0 -10px;
-                        width: 100%;
-                        text-align: center;
-                        font-weight: 550;
-                        color: hsl(169, 46%, 33%);
-                    }
+                p {
+                    padding: 0;
+                    margin: 0 0 -10px;
+                    width: 100%;
+                    text-align: center;
+                    font-weight: 550;
+                    color: hsl(169, 46%, 33%);
                 }
             }
         }
@@ -4485,13 +4123,6 @@ nav {
 .portico-landing.why-page.case-study-page {
     .bg-dimmer {
         background-color: hsl(224, 52%, 12%, 0.86);
-    }
-
-    .hero-text {
-        margin: 0 auto;
-        font-size: 25px;
-        font-weight: 500;
-        opacity: 0.8;
     }
 }
 
@@ -4602,6 +4233,162 @@ nav {
                 margin: 10px calc(5vw - 10px);
                 width: clamp(130px, 40vw, 200px);
                 font-size: 13px;
+            }
+        }
+    }
+}
+
+.self-hosting-page {
+    p {
+        font-size: 18px !important;
+    }
+
+    .hero-buttons {
+        margin-top: 30px;
+    }
+
+    .alternative-features {
+        .feature-container {
+            padding: 30px;
+
+            &:nth-child(even) {
+                background: hsl(171, 49%, 39%, 0.21);
+                border-radius: 10px;
+            }
+        }
+
+        .feature-icon img {
+            width: 100%;
+        }
+    }
+
+    .triangle {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 0;
+        height: 0;
+        border-style: solid;
+        border-width: 150px 100vw 0 0;
+        border-color: hsl(0, 0%, 100%) transparent transparent transparent;
+    }
+
+    .quote {
+        position: relative;
+        margin: 0;
+        margin-top: 50px;
+        padding: 50px;
+        padding-top: 200px;
+        border-radius: 0;
+        background: linear-gradient(
+            145deg,
+            hsl(191, 56%, 55%),
+            hsl(169, 65%, 42%)
+        );
+
+        blockquote {
+            max-width: 700px;
+            margin: auto;
+            font-size: 24px;
+
+            .author {
+                font-size: 18px;
+            }
+        }
+    }
+
+    .feature-grid {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        margin: 0;
+        background: hsl(171, 49%, 39%, 0.21);
+        padding: 50px 0;
+
+        .feature-row {
+            display: flex;
+            flex-direction: row;
+            max-width: 1000px;
+            margin: auto;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+
+            .feature-box {
+                display: flex;
+                justify-content: flex-start;
+                align-items: flex-start;
+                flex-direction: column;
+                width: 40vw;
+                height: 350px;
+                box-shadow: 0 1px 1px 0 hsla(193, 100%, 7.1%, 0.3),
+                    1px 1px 1px 0 hsla(193, 100%, 7.1%, 0.15),
+                    -1px 1px 1px 0 hsla(193, 100%, 7.1%, 0.15);
+
+                background: hsl(0, 0%, 100%);
+                text-align: left;
+                margin: 10px 0;
+                padding: 50px 30px 0;
+                border-top: 5px solid hsl(171, 49%, 39%);
+
+                @media (width < 1000px) {
+                    height: 400px;
+                }
+
+                h1 {
+                    font-weight: 550;
+                    font-size: clamp(24px, 2.5vw, 32px);
+                }
+
+                .feature-icon {
+                    align-self: center;
+
+                    img {
+                        max-width: 100px;
+                    }
+                }
+            }
+
+            @media (width < 768px) {
+                flex-direction: column;
+
+                .feature-box {
+                    width: 75vw !important;
+                    height: calc(600px - 35vw);
+                }
+            }
+        }
+    }
+
+    .for-education.pricing-model .pricing-container .price-box {
+        height: 525px;
+
+        .bottom {
+            height: 150px;
+        }
+    }
+
+    .feature-end {
+        margin: 0;
+
+        .feature-pricing {
+            padding: 50px;
+            background: linear-gradient(
+                180deg,
+                hsl(191, 56%, 55%),
+                hsl(169, 65%, 42%)
+            );
+
+            @media (width <= 540px) {
+                padding: 50px 0;
+
+                .price-box {
+                    padding-bottom: 50px;
+                }
+            }
+
+            h1 {
+                color: hsl(0, 0%, 100%);
             }
         }
     }

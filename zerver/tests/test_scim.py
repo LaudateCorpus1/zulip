@@ -1,26 +1,29 @@
 import copy
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, Mapping
+from typing import TYPE_CHECKING, Any, Dict, Iterator, TypedDict
 from unittest import mock
 
 import orjson
 from django.conf import settings
-from django.http import HttpResponse
 
-from zerver.lib.actions import do_change_full_name
+from zerver.actions.user_settings import do_change_full_name
 from zerver.lib.test_classes import ZulipTestCase
-from zerver.models import SCIMClient, UserProfile, get_realm
+from zerver.models import UserProfile, get_realm
+
+if TYPE_CHECKING:
+    from django.test.client import _MonkeyPatchedWSGIResponse as TestHttpResponse
+
+
+class SCIMHeadersDict(TypedDict):
+    HTTP_AUTHORIZATION: str
 
 
 class SCIMTestCase(ZulipTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.realm = get_realm("zulip")
-        self.scim_client = SCIMClient.objects.create(
-            realm=self.realm, name=settings.SCIM_CONFIG["zulip"]["scim_client_name"]
-        )
 
-    def scim_headers(self) -> Mapping[str, str]:
+    def scim_headers(self) -> SCIMHeadersDict:
         return {"HTTP_AUTHORIZATION": f"Bearer {settings.SCIM_CONFIG['zulip']['bearer_token']}"}
 
     def generate_user_schema(self, user_profile: UserProfile) -> Dict[str, Any]:
@@ -39,7 +42,7 @@ class SCIMTestCase(ZulipTestCase):
             },
         }
 
-    def assert_uniqueness_error(self, result: HttpResponse, extra_message: str) -> None:
+    def assert_uniqueness_error(self, result: "TestHttpResponse", extra_message: str) -> None:
         self.assertEqual(result.status_code, 409)
         output_data = orjson.loads(result.content)
 
@@ -98,10 +101,10 @@ class TestExceptionDetailsNotRevealedToClient(SCIMTestCase):
             result = self.client_get("/scim/v2/Users", {}, **self.scim_headers())
             # Only a generic error message is returned:
             self.assertEqual(
-                result.json(),
+                orjson.loads(result.content),
                 {
                     "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
-                    "detail": "Exception while processing SCIM request.",
+                    "detail": "Exception occurred while processing the SCIM request",
                     "status": 500,
                 },
             )
@@ -111,6 +114,19 @@ class TestExceptionDetailsNotRevealedToClient(SCIMTestCase):
 
 
 class TestSCIMUser(SCIMTestCase):
+    def test_bad_authentication(self) -> None:
+        hamlet = self.example_user("hamlet")
+
+        result = self.client_get(f"/scim/v2/Users/{hamlet.id}", {})
+        self.assertEqual(result.status_code, 401)
+        self.assertEqual(result.headers["WWW-Authenticate"], 'Basic realm="django-scim2"')
+
+        result = self.client_get(
+            f"/scim/v2/Users/{hamlet.id}", {"HTTP_AUTHORIZATION": "Bearer wrong"}
+        )
+        self.assertEqual(result.status_code, 401)
+        self.assertEqual(result.headers["WWW-Authenticate"], 'Basic realm="django-scim2"')
+
     def test_get_by_id(self) -> None:
         hamlet = self.example_user("hamlet")
         expected_response_schema = self.generate_user_schema(hamlet)
@@ -164,6 +180,33 @@ class TestSCIMUser(SCIMTestCase):
 
         self.assertEqual(output_data, expected_empty_results_response_schema)
 
+    def test_get_basic_filter_by_username_case_insensitive(self) -> None:
+        """
+        Verifies that the "userName eq XXXX" syntax is case-insensitive.
+        """
+
+        hamlet = self.example_user("hamlet")
+
+        # The assumption for the test to make sense is that these two are not the same:
+        self.assertNotEqual(hamlet.delivery_email.upper(), hamlet.delivery_email)
+
+        expected_response_schema = {
+            "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+            "totalResults": 1,
+            "itemsPerPage": 50,
+            "startIndex": 1,
+            "Resources": [self.generate_user_schema(hamlet)],
+        }
+
+        result = self.client_get(
+            f'/scim/v2/Users?filter=userName eq "{hamlet.delivery_email.upper()}"',
+            {},
+            **self.scim_headers(),
+        )
+        self.assertEqual(result.status_code, 200)
+        output_data = orjson.loads(result.content)
+        self.assertEqual(output_data, expected_response_schema)
+
     def test_get_all_with_pagination(self) -> None:
         realm = get_realm("zulip")
 
@@ -176,11 +219,13 @@ class TestSCIMUser(SCIMTestCase):
             "totalResults": UserProfile.objects.filter(realm=realm, is_bot=False).count(),
             "itemsPerPage": 50,
             "startIndex": 1,
-            "Resources": [],
+            "Resources": [
+                self.generate_user_schema(user_profile)
+                for user_profile in UserProfile.objects.filter(realm=realm, is_bot=False).order_by(
+                    "id"
+                )
+            ],
         }
-        for user_profile in UserProfile.objects.filter(realm=realm, is_bot=False).order_by("id"):
-            user_schema = self.generate_user_schema(user_profile)
-            expected_response_schema["Resources"].append(user_schema)
 
         self.assertEqual(output_data_all, expected_response_schema)
 
@@ -258,11 +303,13 @@ class TestSCIMUser(SCIMTestCase):
             "totalResults": user_query.count(),
             "itemsPerPage": 50,
             "startIndex": 1,
-            "Resources": [],
+            "Resources": [
+                self.generate_user_schema(user_profile)
+                for user_profile in UserProfile.objects.filter(realm=realm, is_bot=False).order_by(
+                    "id"
+                )
+            ],
         }
-        for user_profile in user_query.order_by("id"):
-            user_schema = self.generate_user_schema(user_profile)
-            expected_response_schema["Resources"].append(user_schema)
 
         self.assertEqual(output_data, expected_response_schema)
 
@@ -287,6 +334,7 @@ class TestSCIMUser(SCIMTestCase):
         self.assertEqual(new_user_count, original_user_count + 1)
 
         new_user = UserProfile.objects.last()
+        assert new_user is not None
         self.assertEqual(new_user.delivery_email, "newuser@zulip.com")
         self.assertEqual(new_user.full_name, "New User")
 
@@ -315,6 +363,7 @@ class TestSCIMUser(SCIMTestCase):
         self.assertEqual(new_user_count, original_user_count + 1)
 
         new_user = UserProfile.objects.last()
+        assert new_user is not None
         self.assertEqual(new_user.delivery_email, "newuser@zulip.com")
         self.assertEqual(new_user.full_name, "New User")
 
@@ -349,9 +398,8 @@ class TestSCIMUser(SCIMTestCase):
         result = self.client_post(
             "/scim/v2/Users", payload, content_type="application/json", **self.scim_headers()
         )
-        response_dict = result.json()
         self.assertEqual(
-            response_dict,
+            orjson.loads(result.content),
             {
                 "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
                 "detail": "Must specify name.formatted, name.givenName or name.familyName when creating a new user",
@@ -371,9 +419,8 @@ class TestSCIMUser(SCIMTestCase):
         result = self.client_post(
             "/scim/v2/Users", payload, content_type="application/json", **self.scim_headers()
         )
-        response_dict = result.json()
         self.assertEqual(
-            response_dict,
+            orjson.loads(result.content),
             {
                 "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
                 "detail": "New user must have active=True",
@@ -397,9 +444,8 @@ class TestSCIMUser(SCIMTestCase):
         result = self.client_post(
             "/scim/v2/Users", payload, content_type="application/json", **self.scim_headers()
         )
-        response_dict = result.json()
         self.assertEqual(
-            response_dict,
+            orjson.loads(result.content),
             {
                 "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
                 "detail": "This email domain isn't allowed in this organization.",
@@ -499,7 +545,7 @@ class TestSCIMUser(SCIMTestCase):
         hamlet = self.example_user("hamlet")
         cordelia = self.example_user("cordelia")
         # This payload will attempt to change hamlet's email to cordelia's email.
-        # That would would violate email uniqueness of course, so should fail.
+        # That would violate email uniqueness of course, so should fail.
         payload = {
             "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
             "id": hamlet.id,
@@ -636,7 +682,7 @@ class TestSCIMUser(SCIMTestCase):
         with self.assertLogs("django.request", "ERROR") as m:
             result = self.json_patch(f"/scim/v2/Users/{hamlet.id}", payload, **self.scim_headers())
             self.assertEqual(
-                result.json(),
+                orjson.loads(result.content),
                 {
                     "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
                     "detail": "Not Implemented",
@@ -646,6 +692,16 @@ class TestSCIMUser(SCIMTestCase):
             self.assertEqual(
                 m.output, [f"ERROR:django.request:Not Implemented: /scim/v2/Users/{hamlet.id}"]
             )
+
+    def test_scim_client_requestor_for_logs(self) -> None:
+        hamlet = self.example_user("hamlet")
+        with self.assertLogs("zulip.requests", level="INFO") as m:
+            result = self.client_get(f"/scim/v2/Users/{hamlet.id}", {}, **self.scim_headers())
+        self.assertIn(
+            f"scim-client:{settings.SCIM_CONFIG['zulip']['scim_client_name']}:realm:{hamlet.realm.id}",
+            m.output[0],
+        )
+        self.assertEqual(result.status_code, 200)
 
 
 class TestSCIMGroup(SCIMTestCase):

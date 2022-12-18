@@ -29,11 +29,26 @@ const message_store = mock_esm("../../static/js/message_store", {
     get: () => ({failed_request: true}),
 
     update_booleans: () => {},
+
+    set_message_booleans: () => {},
 });
 
-mock_esm("../../static/js/message_list");
-message_lists.current = "";
-message_lists.home = {view: {}};
+const noop = () => {};
+message_lists.current = {
+    view: {
+        rerender_messages: noop,
+        change_message_id: noop,
+    },
+    change_message_id: noop,
+};
+message_lists.home = {
+    view: {
+        rerender_messages: noop,
+        change_message_id: noop,
+    },
+    change_message_id: noop,
+};
+message_lists.all_rendered_message_lists = () => [message_lists.home, message_lists.current];
 
 const drafts = zrequire("drafts");
 const echo = zrequire("echo");
@@ -322,4 +337,6 @@ run_test("test reify_message_id", ({override, override_rewire}) => {
     assert.ok(draft_deleted);
 });
 
-MockDate.reset();
+run_test("reset MockDate", () => {
+    MockDate.reset();
+});

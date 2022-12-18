@@ -12,21 +12,21 @@
         <span class="hidden-email">{{t "(hidden)"}}</span>
     </td>
     {{/if}}
+    {{#unless is_bot}}
     <td>
         <span class="user_id">{{user_id}}</span>
     </td>
-    {{#unless is_bot}}
+    {{/unless}}
     <td>
         <span class="user_role">{{user_role_text}}</span>
     </td>
-    {{/unless}}
     {{#if is_bot}}
-    <td>
+    <td class="user_role">
         <span class="owner">
             {{#if no_owner }}
             {{bot_owner_full_name}}
             {{else}}
-            <a data-user-id="{{bot_owner_id}}" href="#" class="view_user_profile">{{bot_owner_full_name}}</a>
+            <a data-user-id="{{bot_owner_id}}" class="view_user_profile" tabindex="0">{{bot_owner_full_name}}</a>
             {{/if}}
         </span>
     </td>
@@ -41,7 +41,7 @@
     {{#if can_modify}}
     <td class="actions">
         <span class="user-status-settings">
-            <button class="button rounded small btn-warning open-user-form" {{#unless is_active}}style="display: none;"{{/unless}} title="{{t 'Edit user' }}" data-user-id="{{user_id}}">
+            <button class="button rounded small btn-warning open-user-form" {{#unless is_active}}style="display: none;"{{/unless}} title="{{#if is_bot}}{{t 'Edit bot' }}{{else}}{{t 'Edit user' }}{{/if}}" data-user-id="{{user_id}}">
                 <i class="fa fa-pencil" aria-hidden="true"></i>
             </button>
             {{#if is_active}}

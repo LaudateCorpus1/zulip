@@ -1,6 +1,6 @@
 import type {Page} from "puppeteer";
 
-import common from "../puppeteer_lib/common";
+import * as common from "../puppeteer_lib/common";
 
 async function open_set_user_status_modal(page: Page): Promise<void> {
     const menu_icon_selector = ".user_sidebar_entry:first-child .user-list-sidebar-menu-icon";
@@ -31,7 +31,7 @@ async function open_set_user_status_modal(page: Page): Promise<void> {
 async function test_user_status(page: Page): Promise<void> {
     await open_set_user_status_modal(page);
     // Check by clicking on common statues.
-    await page.click(".user-status-value");
+    await page.click(".user-status-value:nth-child(2)");
     await page.waitForFunction(
         () => (document.querySelector(".user_status") as HTMLInputElement).value === "In a meeting",
     );

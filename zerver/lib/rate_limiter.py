@@ -2,12 +2,15 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple, Type, cast
+from typing import Dict, List, Optional, Set, Tuple, Type, cast
 
+import orjson
 import redis
+from circuitbreaker import CircuitBreakerError, circuit
 from django.conf import settings
 from django.http import HttpRequest
 
+from zerver.lib.cache import cache_with_key
 from zerver.lib.exceptions import RateLimited
 from zerver.lib.redis_utils import get_redis_client
 from zerver.lib.utils import statsd
@@ -516,3 +519,110 @@ class RateLimitResult:
         self.secs_to_freedom = secs_to_freedom
         self.over_limit = over_limit
         self.remaining = remaining
+
+
+class RateLimitedSpectatorAttachmentAccessByFile(RateLimitedObject):
+    def __init__(self, path_id: str) -> None:
+        self.path_id = path_id
+        super().__init__()
+
+    def key(self) -> str:
+        return f"{type(self).__name__}:{self.path_id}"
+
+    def rules(self) -> List[Tuple[int, int]]:
+        return settings.RATE_LIMITING_RULES["spectator_attachment_access_by_file"]
+
+
+def rate_limit_spectator_attachment_access_by_file(path_id: str) -> None:
+    ratelimited, _ = RateLimitedSpectatorAttachmentAccessByFile(path_id).rate_limit()
+    if ratelimited:
+        raise RateLimited
+
+
+def is_local_addr(addr: str) -> bool:
+    return addr in ("127.0.0.1", "::1")
+
+
+@cache_with_key(lambda: "tor_ip_addresses:", timeout=60 * 60)
+@circuit(failure_threshold=2, recovery_timeout=60 * 10)
+def get_tor_ips() -> Set[str]:
+    if not settings.RATE_LIMIT_TOR_TOGETHER:
+        return set()
+
+    # Cron job in /etc/cron.d/fetch-tor-exit-nodes fetches this
+    # hourly; we cache it in memcached to prevent going to disk on
+    # every unauth'd request.  In case of failures to read, we
+    # circuit-break so 2 failures cause a 10-minute backoff.
+
+    with open(settings.TOR_EXIT_NODE_FILE_PATH, "rb") as f:
+        exit_node_list = orjson.loads(f.read())
+
+    # This should always be non-empty; if it's empty, assume something
+    # went wrong with writing and treat it as a non-existent file.
+    # Circuit-breaking will ensure that we back off on re-reading the
+    # file.
+    if len(exit_node_list) == 0:
+        raise OSError("File is empty")
+
+    return set(exit_node_list)
+
+
+def client_is_exempt_from_rate_limiting(request: HttpRequest) -> bool:
+    from zerver.lib.request import RequestNotes
+
+    # Don't rate limit requests from Django that come from our own servers,
+    # and don't rate-limit dev instances
+    client = RequestNotes.get_notes(request).client
+    return (client is not None and client.name.lower() == "internal") and (
+        is_local_addr(request.META["REMOTE_ADDR"]) or settings.DEBUG_RATE_LIMITING
+    )
+
+
+def rate_limit_user(request: HttpRequest, user: UserProfile, domain: str) -> None:
+    """Returns whether or not a user was rate limited. Will raise a RateLimited exception
+    if the user has been rate limited, otherwise returns and modifies request to contain
+    the rate limit information"""
+    if not should_rate_limit(request):
+        return
+
+    RateLimitedUser(user, domain=domain).rate_limit_request(request)
+
+
+def rate_limit_request_by_ip(request: HttpRequest, domain: str) -> None:
+    if not should_rate_limit(request):
+        return
+
+    # REMOTE_ADDR is set by SetRemoteAddrFromRealIpHeader in conjunction
+    # with the nginx configuration to guarantee this to be *the* correct
+    # IP address to use - without worrying we'll grab the IP of a proxy.
+    ip_addr = request.META["REMOTE_ADDR"]
+    assert ip_addr
+
+    try:
+        # We lump all TOR exit nodes into one bucket; this prevents
+        # abuse from TOR, while still allowing some access to these
+        # endpoints for legitimate users.  Checking for local
+        # addresses is a shortcut somewhat for ease of testing without
+        # mocking the TOR endpoint in every test.
+        if is_local_addr(ip_addr):
+            pass
+        elif ip_addr in get_tor_ips():
+            ip_addr = "tor-exit-node"
+    except (OSError, CircuitBreakerError) as err:
+        # In the event that we can't get an updated list of TOR exit
+        # nodes, assume the IP is _not_ one, and leave it unchanged.
+        # We log a warning so that this endpoint being taken out of
+        # service doesn't silently remove this functionality.
+        logger.warning("Failed to fetch TOR exit node list: %s", err)
+        pass
+    RateLimitedIPAddr(ip_addr, domain=domain).rate_limit_request(request)
+
+
+def should_rate_limit(request: HttpRequest) -> bool:
+    if not settings.RATE_LIMITING:
+        return False
+
+    if client_is_exempt_from_rate_limiting(request):
+        return False
+
+    return True
